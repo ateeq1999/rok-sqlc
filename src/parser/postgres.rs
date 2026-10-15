@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use sqlparser::ast::{
     ArrayElemTypeDef, ColumnOption, CreateTable, DataType, ExactNumberInfo, Expr, Ident,
-    IndexColumn, ObjectName, ObjectNamePart, Statement, TableConstraint, TimezoneInfo,
+    IndexColumn, ObjectName, ObjectNamePart, Spanned, Statement, TableConstraint, TimezoneInfo,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -20,42 +21,79 @@ pub struct ParsedSchema {
 /// Root modules rok-sqlc always generates next to the resource modules.
 const GENERATED_MODULES: &[&str] = &["schema", "search"];
 
-pub fn parse_schema(sql: &str) -> Result<ParsedSchema> {
-    let dialect = PostgreSqlDialect {};
-    let statements = Parser::parse_sql(&dialect, sql).context("invalid PostgreSQL SQL syntax")?;
+/// One schema input: a migration file's path and its SQL.
+pub struct SchemaSource<'a> {
+    pub path: &'a Path,
+    pub sql: &'a str,
+}
 
+/// Parses one schema text. Failures carry the line of their `CREATE TABLE`
+/// but no path.
+pub fn parse_schema(sql: &str) -> Result<ParsedSchema> {
+    let mut parsed = parse_sources(&[SchemaSource {
+        path: Path::new(""),
+        sql,
+    }])?;
+    for failure in &mut parsed.failures {
+        failure.path = None;
+    }
+    Ok(parsed)
+}
+
+/// Parses schema inputs in order, as one schema. Each file is parsed on its
+/// own, so every failure names its file and the line of its `CREATE TABLE`
+/// within that file.
+pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
+    let dialect = PostgreSqlDialect {};
     let mut tables = Vec::new();
     let mut failures = Vec::new();
     let mut seen_modules: HashSet<String> = HashSet::new();
 
-    for statement in statements {
-        let Statement::CreateTable(create) = statement else {
-            continue;
-        };
-        match build_table(&create) {
-            Ok(table) if GENERATED_MODULES.contains(&table.module_name.as_str()) => {
-                failures.push(TableFailure {
-                    table: table.sql_name.clone(),
-                    reason: format!(
-                        "module name `{}` is reserved for the generated `db/{}.rs`",
-                        table.module_name, table.module_name
-                    ),
-                });
+    for source in sources {
+        let statements = Parser::parse_sql(&dialect, source.sql).with_context(|| {
+            if source.path.as_os_str().is_empty() {
+                "invalid PostgreSQL SQL syntax".to_owned()
+            } else {
+                format!(
+                    "invalid PostgreSQL SQL syntax in `{}`",
+                    source.path.display()
+                )
             }
-            Ok(table) => {
-                if seen_modules.insert(table.module_name.clone()) {
-                    tables.push(table);
-                } else {
-                    failures.push(TableFailure {
-                        table: table.sql_name.clone(),
-                        reason: format!(
-                            "module name `{}` is already used by another table",
-                            table.module_name
+        })?;
+
+        for statement in statements {
+            let line = usize::try_from(statement.span().start.line).ok();
+            let Statement::CreateTable(create) = statement else {
+                continue;
+            };
+            let failure = match build_table(&create) {
+                Ok(table) if GENERATED_MODULES.contains(&table.module_name.as_str()) => {
+                    table_failure(
+                        &table.sql_name,
+                        format!(
+                            "module name `{}` is reserved for the generated `db/{}.rs`",
+                            table.module_name, table.module_name
                         ),
-                    });
+                    )
                 }
-            }
-            Err(failure) => failures.push(failure),
+                Ok(table) if seen_modules.insert(table.module_name.clone()) => {
+                    tables.push(table);
+                    continue;
+                }
+                Ok(table) => table_failure(
+                    &table.sql_name,
+                    format!(
+                        "module name `{}` is already used by another table",
+                        table.module_name
+                    ),
+                ),
+                Err(failure) => failure,
+            };
+            failures.push(TableFailure {
+                path: Some(source.path.to_path_buf()),
+                line,
+                ..failure
+            });
         }
     }
 
@@ -292,6 +330,8 @@ fn table_failure(table: &str, reason: String) -> TableFailure {
     TableFailure {
         table: table.to_owned(),
         reason,
+        path: None,
+        line: None,
     }
 }
 

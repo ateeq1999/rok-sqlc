@@ -26,9 +26,11 @@ enum Command {
     /// Generate Rust database modules from a schema file
     #[command(visible_alias = "g")]
     Generate {
-        /// Input schema/migration SQL file [default: from rok-sqlc.toml]
-        #[arg(short, long, value_name = "FILE")]
-        schema: Option<PathBuf>,
+        /// Schema/migration SQL file, or a directory of migrations read in
+        /// filename order (`*.down.sql` skipped); repeat to combine inputs
+        /// [default: `schema` from rok-sqlc.toml]
+        #[arg(short, long, value_name = "PATH")]
+        schema: Vec<PathBuf>,
 
         /// Output directory [default: src/db]
         #[arg(short, long, value_name = "DIR")]
@@ -103,10 +105,14 @@ where
                 },
             };
             // Flags override the file, which overrides the defaults.
-            let schema = match schema {
-                Some(schema) => vec![schema],
-                None if !file.schema.is_empty() => file.schema,
-                None => return Err(missing_schema().into()),
+            // `--schema` (given any number of times) replaces the file's
+            // whole `schema` list; an empty Vec means the flag was not given.
+            let schema = if !schema.is_empty() {
+                schema
+            } else if !file.schema.is_empty() {
+                file.schema
+            } else {
+                return Err(missing_schema().into());
             };
             let defaults = Config::default();
             generate(&Config {
@@ -136,7 +142,7 @@ fn missing_schema() -> clap::Error {
     generate.error(
         clap::error::ErrorKind::MissingRequiredArgument,
         format!(
-            "no schema given: pass --schema <FILE> or set `schema` in {}",
+            "no schema given: pass --schema <PATH> or set `schema` in {}",
             config_file::FILE_NAME
         ),
     )
@@ -169,8 +175,10 @@ fn print_report(config: &Config, report: &Report) {
     for failure in &report.table_failures {
         if config.lenient {
             eprintln!(
-                "warning: table `{}` skipped: {}",
-                failure.table, failure.reason
+                "warning: {}table `{}` skipped: {}",
+                failure.location(),
+                failure.table,
+                failure.reason
             );
         } else {
             eprintln!("error: {failure}");
@@ -179,8 +187,10 @@ fn print_report(config: &Config, report: &Report) {
     for failure in &report.query_failures {
         if config.lenient {
             eprintln!(
-                "warning: query `{}` skipped: {}",
-                failure.query, failure.reason
+                "warning: {}query `{}` skipped: {}",
+                failure.location(),
+                failure.query,
+                failure.reason
             );
         } else {
             eprintln!("error: {failure}");

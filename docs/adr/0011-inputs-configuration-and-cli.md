@@ -1,6 +1,6 @@
 # Inputs, configuration, and CLI: one model, layered sources
 
-Every way of configuring rok-sqlc fills the same `Config` (ADR 0012). The CLI builds it from layered sources, and the most specific source wins: **flags > JSON payload (`-j/--json`, later) > `rok-sqlc.toml` > defaults**. A source that leaves a key unset defers to the next one down; a flag given on the command line always replaces the file's value for that key (`--schema` replaces the file's whole `schema` list, it does not append).
+Every way of configuring rok-sqlc fills the same `Config` (ADR 0012). The CLI builds it from layered sources, and the most specific source wins: **flags > JSON payload (`-j/--json`, later) > `rok-sqlc.toml` > defaults**. A source that leaves a key unset defers to the next one down; a flag given on the command line always replaces the file's value for that key (`--schema`, which may be repeated, replaces the file's whole `schema` list, it does not append). Each `schema` entry, from a flag or the file, is a SQL file or a directory of migrations read in filename order with `*.down.sql` skipped.
 
 **`rok-sqlc.toml` is optional and discovered like Cargo.** Without `-c/--config`, the CLI looks for `rok-sqlc.toml` in the current directory and then each parent, and uses the first one it finds. `-c path/to/file.toml` names the file explicitly and turns discovery off. With no file, behavior is exactly the flags-and-defaults behavior of earlier releases. A run with neither `--schema` nor a `schema` key is a usage error that mentions both.
 
