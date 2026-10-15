@@ -1,3 +1,3 @@
 pub mod writer;
 
-pub use writer::{WriteReport, apply_files, is_generated_file};
+pub use writer::{apply_files, is_generated_file};
