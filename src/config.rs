@@ -18,8 +18,14 @@ use std::path::PathBuf;
 pub struct Config {
     /// Schema files (migrations), combined in the order given.
     pub schema: Vec<PathBuf>,
-    /// Annotated query files. At most one is supported for now; it becomes
-    /// the generated `queries.rs`.
+    /// Annotated query files or directories. A single file becomes the
+    /// generated `queries.rs`. A directory (its `*.sql` files) or several
+    /// inputs become one `queries/<stem>.rs` module per file, declared by a
+    /// generated `queries/mod.rs`; each stem must be a snake_case Rust
+    /// module name, and stems must be unique.
+    ///
+    /// Switching between the two layouts does not yet remove the old one
+    /// (`queries.rs` or `queries/`); delete it by hand.
     pub queries: Vec<PathBuf>,
     /// The directory generated modules are written to. Defaults to `src/db`.
     pub output: PathBuf,

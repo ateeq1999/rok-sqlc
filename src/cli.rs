@@ -45,9 +45,10 @@ enum Command {
         #[arg(short, long)]
         force: bool,
 
-        /// SQLC-style annotated query file to generate `queries.rs` from
-        #[arg(short, long, value_name = "FILE")]
-        queries: Option<PathBuf>,
+        /// Annotated query file (generates `queries.rs`) or directory (one
+        /// `queries/<stem>.rs` module per `.sql` file); repeatable
+        #[arg(short, long, value_name = "PATH")]
+        queries: Vec<PathBuf>,
 
         /// Skip unsupported tables and queries with warnings instead of failing
         #[arg(short, long)]
@@ -89,7 +90,7 @@ where
             lenient,
         } => generate(&Config {
             schema: vec![schema],
-            queries: queries.into_iter().collect(),
+            queries,
             output,
             resource,
             dry_run,

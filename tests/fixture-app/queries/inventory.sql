@@ -1,5 +1,5 @@
--- Annotated queries generated into tests/fixture-app/src/db/queries.rs by
--- tests/fixture_compile.rs; tests/fixture-app/tests/postgres.rs runs them.
+-- Annotated queries generated into tests/fixture-app/src/db/queries/inventory.rs
+-- by tests/fixture_compile.rs; tests/fixture-app/tests/postgres.rs runs them.
 
 -- name: CreateCategory :one
 INSERT INTO categories (name, description)

@@ -30,9 +30,19 @@ fn generate_fixture() -> Result<Vec<PathBuf>> {
         manifest_dir().join("modules/inventory/schema.sql"),
         app_dir().join("extra_schema.sql"),
     ];
-    config.queries = vec![app_dir().join("queries.sql")];
+    // A directory: each query file becomes its own `db::queries::<stem>` module.
+    config.queries = vec![app_dir().join("queries")];
     config.output = app_dir().join("src/db");
     config.force = true;
+
+    // The fixture once generated a single `db/queries.rs`; next to the
+    // generated `db/queries/mod.rs` it would make the module ambiguous, and
+    // generation does not remove stale files yet.
+    let legacy = config.output.join("queries.rs");
+    if legacy.is_file() {
+        std::fs::remove_file(&legacy)
+            .with_context(|| format!("failed to remove stale `{}`", legacy.display()))?;
+    }
 
     let report = rok_sqlc::generate(&config)?;
     Ok(report.written.into_iter().chain(report.unchanged).collect())
