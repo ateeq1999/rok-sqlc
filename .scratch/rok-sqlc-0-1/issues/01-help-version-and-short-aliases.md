@@ -4,9 +4,13 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Running the binary with `--help`, `-h`, `--version`, `-V`, and `g --help` exits 0 and prints to stdout (CLI seam, binary invocation).
-- [ ] `rok-sqlc g -s schema.sql -o out` behaves exactly like the long form.
-- [ ] A CLI test walks the command definition and fails if any command or flag lacks a short alias, or if two aliases collide.
-- [ ] Existing CLI tests still pass.
+- [x] Running the binary with `--help`, `-h`, `--version`, `-V`, and `g --help` exits 0 and prints to stdout (CLI seam, binary invocation).
+- [x] `rok-sqlc g -s schema.sql -o out` behaves exactly like the long form.
+- [x] A CLI test walks the command definition and fails if any command or flag lacks a short alias, or if two aliases collide.
+- [x] Existing CLI tests still pass.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-1` (90dc138, 0f581f5). Help/version exit 0 via stdout; `g` and all short flags added; alias-walk tests in `tests/cli.rs` reserve `-j`/`-c`/`-k`. Code review follow-up: clap usage errors now print once (no `Error: error:` prefix) and still exit 1, since the spec defines no usage-error code. `cli::command()` is `#[doc(hidden)]`, so ticket 02 can decide whether it stays public.
