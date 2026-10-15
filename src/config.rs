@@ -16,7 +16,9 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Config {
-    /// Schema files (migrations), combined in the order given.
+    /// Schema inputs, combined in the order given: a file, or a directory
+    /// whose `*.sql` migrations are read in filename order, skipping
+    /// `*.down.sql`.
     pub schema: Vec<PathBuf>,
     /// Annotated query files or directories. A single file becomes the
     /// generated `queries.rs`. A directory (its `*.sql` files) or several

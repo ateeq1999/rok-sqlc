@@ -96,6 +96,8 @@ pub struct QueryFailure {
     /// The query name, or `line N` when no valid name was annotated.
     pub query: String,
     pub reason: String,
+    /// 1-based line of the query's `-- name:` annotation, when known.
+    pub line: Option<usize>,
 }
 
 impl fmt::Display for QueryFailure {
@@ -109,7 +111,14 @@ impl QueryFailure {
         Self {
             query: query.into(),
             reason: reason.into(),
+            line: None,
         }
+    }
+
+    /// The same failure, located at the query's annotation line.
+    pub fn at_line(mut self, line: usize) -> Self {
+        self.line = Some(line);
+        self
     }
 }
 
@@ -117,6 +126,8 @@ struct Pending {
     def: Option<QueryDef>,
     errors: Vec<String>,
     label: String,
+    /// Line of the `-- name:` annotation.
+    line: usize,
 }
 
 /// Splits `text` into annotated queries. Malformed annotations and queries
@@ -157,10 +168,13 @@ pub fn parse_query_file(text: &str) -> (Vec<QueryDef>, Vec<QueryFailure>) {
                             }
                         }
                         Some(_) => {}
-                        None => failures.push(QueryFailure::new(
-                            format!("line {line_number}"),
-                            format!("`-- {prefix}` appears before any `-- name:` annotation"),
-                        )),
+                        None => failures.push(
+                            QueryFailure::new(
+                                format!("line {line_number}"),
+                                format!("`-- {prefix}` appears before any `-- name:` annotation"),
+                            )
+                            .at_line(line_number),
+                        ),
                     }
                 }
             }
@@ -175,10 +189,13 @@ pub fn parse_query_file(text: &str) -> (Vec<QueryDef>, Vec<QueryFailure>) {
             Some(_) => {}
             None if !line.is_empty() && !reported_stray_sql => {
                 reported_stray_sql = true;
-                failures.push(QueryFailure::new(
-                    format!("line {line_number}"),
-                    "SQL appears before the first `-- name:` annotation",
-                ));
+                failures.push(
+                    QueryFailure::new(
+                        format!("line {line_number}"),
+                        "SQL appears before the first `-- name:` annotation",
+                    )
+                    .at_line(line_number),
+                );
             }
             None => {}
         }
@@ -191,13 +208,16 @@ pub fn parse_query_file(text: &str) -> (Vec<QueryDef>, Vec<QueryFailure>) {
         if seen.insert(query.name.clone()) {
             unique.push(query);
         } else {
-            failures.push(QueryFailure::new(
-                query.name.clone(),
-                format!(
-                    "line {}: the name is already used by another query",
-                    query.line
-                ),
-            ));
+            failures.push(
+                QueryFailure::new(
+                    query.name.clone(),
+                    format!(
+                        "line {}: the name is already used by another query",
+                        query.line
+                    ),
+                )
+                .at_line(query.line),
+            );
         }
     }
     (unique, failures)
@@ -213,6 +233,7 @@ fn start(header: &str, line: usize) -> Pending {
         def: None,
         errors: vec![format!("line {line}: {error}")],
         label: label.clone(),
+        line,
     };
 
     let [name, mode] = parts.as_slice() else {
@@ -247,6 +268,7 @@ fn start(header: &str, line: usize) -> Pending {
         }),
         errors: Vec::new(),
         label,
+        line,
     }
 }
 
@@ -267,7 +289,9 @@ fn finish(pending: Option<Pending>, queries: &mut Vec<QueryDef>, failures: &mut 
     {
         queries.push(def);
     } else {
-        failures.push(QueryFailure::new(pending.label, pending.errors.join("; ")));
+        failures.push(
+            QueryFailure::new(pending.label, pending.errors.join("; ")).at_line(pending.line),
+        );
     }
 }
 

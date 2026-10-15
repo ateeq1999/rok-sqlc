@@ -25,9 +25,10 @@ enum Command {
     /// Generate Rust database modules from a schema file
     #[command(visible_alias = "g")]
     Generate {
-        /// Input schema/migration SQL file
-        #[arg(short, long, value_name = "FILE")]
-        schema: PathBuf,
+        /// Schema/migration SQL file, or a directory of migrations read in
+        /// filename order (`*.down.sql` skipped); repeat to combine inputs
+        #[arg(short, long, value_name = "PATH", required = true)]
+        schema: Vec<PathBuf>,
 
         /// Output directory
         #[arg(short, long, default_value = "src/db", value_name = "DIR")]
@@ -89,7 +90,7 @@ where
             queries,
             lenient,
         } => generate(&Config {
-            schema: vec![schema],
+            schema,
             queries,
             output,
             resource,
@@ -127,8 +128,10 @@ fn print_report(config: &Config, report: &Report) {
     for failure in &report.table_failures {
         if config.lenient {
             eprintln!(
-                "warning: table `{}` skipped: {}",
-                failure.table, failure.reason
+                "warning: {}table `{}` skipped: {}",
+                failure.location(),
+                failure.table,
+                failure.reason
             );
         } else {
             eprintln!("error: {failure}");
@@ -137,8 +140,10 @@ fn print_report(config: &Config, report: &Report) {
     for failure in &report.query_failures {
         if config.lenient {
             eprintln!(
-                "warning: query `{}` skipped: {}",
-                failure.query, failure.reason
+                "warning: {}query `{}` skipped: {}",
+                failure.location(),
+                failure.query,
+                failure.reason
             );
         } else {
             eprintln!("error: {failure}");

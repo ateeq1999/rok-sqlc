@@ -1067,3 +1067,243 @@ fn usage_errors_print_one_error_prefix_and_exit_non_zero() {
         );
     }
 }
+
+#[test]
+fn unsupported_ctes_fail_with_path_and_line_diagnostics() -> Result<()> {
+    let dir = TempDir::new()?;
+    let schema = dir.path().join("schema.sql");
+    let queries = dir.path().join("queries.sql");
+    fs::write(&schema, SIMPLE_SCHEMA)?;
+    fs::write(
+        &queries,
+        "-- name: Emails :many\n\
+         WITH e AS (SELECT email FROM users) SELECT email FROM e;\n\
+         \n\
+         -- name: Countdown :many\n\
+         WITH RECURSIVE t (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM t) SELECT n FROM t;\n\
+         \n\
+         -- name: Purge :many\n\
+         WITH gone AS (DELETE FROM users RETURNING id) SELECT id FROM gone;\n",
+    )?;
+    let out = output_dir(&dir);
+
+    let output = run_binary(&[
+        "generate",
+        "--schema",
+        schema.to_str().unwrap(),
+        "--queries",
+        queries.to_str().unwrap(),
+        "--output",
+        out.to_str().unwrap(),
+    ]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let path = queries.display().to_string();
+    assert!(
+        stderr.contains(&format!(
+            "{path}:4: query `Countdown`: WITH RECURSIVE is not supported"
+        )),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "{path}:7: query `Purge`: data-modifying CTE `gone`"
+        )),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("Emails"), "{stderr}");
+    assert!(stderr.contains("2 unsupported queries"), "{stderr}");
+    Ok(())
+}
+
+/// Generates from `args` (paths already absolute) into `out`, returning the
+/// schema snapshot.
+fn generate_snapshot(schema_args: &[&Path], out: &Path) -> Result<String> {
+    let mut args = vec!["generate".to_owned()];
+    for path in schema_args {
+        args.push("--schema".to_owned());
+        args.push(path.to_str().unwrap().to_owned());
+    }
+    args.push("--output".to_owned());
+    args.push(out.to_str().unwrap().to_owned());
+    run(&args.iter().map(String::as_str).collect::<Vec<_>>())?;
+    Ok(fs::read_to_string(out.join("schema.rs"))?)
+}
+
+#[test]
+fn migration_directory_generates_from_up_migrations_in_filename_order() -> Result<()> {
+    let dir = TempDir::new()?;
+    let migrations = dir.path().join("migrations");
+    fs::create_dir(&migrations)?;
+    fs::write(
+        migrations.join("0002_posts.up.sql"),
+        "CREATE TABLE posts (id UUID PRIMARY KEY, author_id UUID NOT NULL REFERENCES users (id));\n",
+    )?;
+    fs::write(
+        migrations.join("0002_posts.down.sql"),
+        "DROP TABLE posts;\n",
+    )?;
+    fs::write(
+        migrations.join("0001_users.up.sql"),
+        "CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);\n",
+    )?;
+    // A down migration that would fail generation if it were read.
+    fs::write(
+        migrations.join("0001_users.down.sql"),
+        "CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, duration INTERVAL NOT NULL);\n",
+    )?;
+    let out = output_dir(&dir);
+
+    let snapshot = generate_snapshot(&[&migrations], &out)?;
+
+    assert!(out.join("users/models.rs").exists());
+    assert!(out.join("posts/models.rs").exists());
+    assert!(!out.join("spans").exists());
+    assert!(!snapshot.contains("DROP TABLE"), "{snapshot}");
+    let users = snapshot.find("CREATE TABLE users").unwrap();
+    let posts = snapshot.find("CREATE TABLE posts").unwrap();
+    assert!(users < posts, "migrations applied in filename order");
+    Ok(())
+}
+
+#[test]
+fn repeated_schema_flags_combine_inputs_in_the_order_given() -> Result<()> {
+    let dir = TempDir::new()?;
+    let shared = dir.path().join("shared.sql");
+    let module = dir.path().join("module");
+    fs::create_dir(&module)?;
+    fs::write(&shared, "CREATE TABLE users (id UUID PRIMARY KEY);")?;
+    fs::write(
+        module.join("0001_posts.up.sql"),
+        "CREATE TABLE posts (id UUID PRIMARY KEY, author_id UUID NOT NULL REFERENCES users (id));",
+    )?;
+    let out = output_dir(&dir);
+
+    let snapshot = generate_snapshot(&[&shared, &module], &out)?;
+
+    assert!(out.join("users/models.rs").exists());
+    assert!(out.join("posts/models.rs").exists());
+    let users = snapshot.find("CREATE TABLE users").unwrap();
+    let posts = snapshot.find("CREATE TABLE posts").unwrap();
+    assert!(users < posts, "inputs combined in the order given");
+
+    let reversed = generate_snapshot(&[&module, &shared], &dir.path().join("reversed"))?;
+    assert!(
+        reversed.find("CREATE TABLE posts").unwrap() < reversed.find("CREATE TABLE users").unwrap()
+    );
+    Ok(())
+}
+
+#[test]
+fn unsupported_table_in_a_migration_cites_its_file_and_line() -> Result<()> {
+    let dir = TempDir::new()?;
+    let migrations = dir.path().join("migrations");
+    fs::create_dir(&migrations)?;
+    fs::write(
+        migrations.join("0001_users.up.sql"),
+        "CREATE TABLE users (id UUID PRIMARY KEY);\n",
+    )?;
+    fs::write(
+        migrations.join("0002_tags.up.sql"),
+        "CREATE TABLE tags (id UUID PRIMARY KEY);\n",
+    )?;
+    let third = migrations.join("0003_spans.up.sql");
+    fs::write(
+        &third,
+        "-- Spans measure durations.\n\
+         \n\
+         CREATE INDEX tags_id ON tags (id);\n\
+         \n\
+         CREATE TABLE spans (\n\
+         \x20   id BIGSERIAL PRIMARY KEY,\n\
+         \x20   duration INTERVAL NOT NULL\n\
+         );\n",
+    )?;
+    let out = output_dir(&dir);
+    let args = |lenient: bool| {
+        let mut args = vec![
+            "generate",
+            "--schema",
+            migrations.to_str().unwrap(),
+            "--output",
+            out.to_str().unwrap(),
+        ];
+        if lenient {
+            args.push("--lenient");
+        }
+        run_binary(&args)
+    };
+    let located = format!("{}:5: table `spans`", third.display());
+
+    let strict = args(false);
+    assert!(!strict.status.success());
+    let stderr = String::from_utf8_lossy(&strict.stderr);
+    assert!(stderr.contains(&format!("error: {located}: ")), "{stderr}");
+
+    let lenient = args(true);
+    assert!(lenient.status.success());
+    let stderr = String::from_utf8_lossy(&lenient.stderr);
+    assert!(
+        stderr.contains(&format!("warning: {located} skipped: ")),
+        "{stderr}"
+    );
+    Ok(())
+}
+
+#[test]
+fn query_failures_cite_the_query_file_and_annotation_line() -> Result<()> {
+    let dir = TempDir::new()?;
+    let schema = dir.path().join("schema.sql");
+    let queries = dir.path().join("queries.sql");
+    fs::write(&schema, SIMPLE_SCHEMA)?;
+    fs::write(
+        &queries,
+        format!(
+            "{QUERY_FILE}\n-- name: Broken :many\nSELECT colour FROM users;\n\n-- name: BadMode :sometimes\nSELECT id FROM users;\n"
+        ),
+    )?;
+    let broken_line = QUERY_FILE.lines().count() + 2;
+    let out = output_dir(&dir);
+    let args = |lenient: bool| {
+        let mut args = vec![
+            "generate",
+            "--schema",
+            schema.to_str().unwrap(),
+            "--queries",
+            queries.to_str().unwrap(),
+            "--output",
+            out.to_str().unwrap(),
+        ];
+        if lenient {
+            args.push("--lenient");
+        }
+        run_binary(&args)
+    };
+    let path = queries.display().to_string();
+
+    let strict = args(false);
+    assert!(!strict.status.success());
+    let stderr = String::from_utf8_lossy(&strict.stderr);
+    assert!(
+        stderr.contains(&format!("error: {path}:{broken_line}: query `Broken`: ")),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "error: {path}:{}: query `BadMode`: ",
+            broken_line + 3
+        )),
+        "{stderr}"
+    );
+
+    let lenient = args(true);
+    assert!(lenient.status.success());
+    let stderr = String::from_utf8_lossy(&lenient.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "warning: {path}:{broken_line}: query `Broken` skipped: "
+        )),
+        "{stderr}"
+    );
+    Ok(())
+}

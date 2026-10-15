@@ -1,5 +1,5 @@
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// What a [`generate`](crate::generate) run did, or would do in a dry run.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -32,11 +32,36 @@ pub struct TableFailure {
     /// The table's SQL name.
     pub table: String,
     pub reason: String,
+    /// The schema file (migration) that defines the table.
+    pub path: Option<PathBuf>,
+    /// 1-based line of the table's `CREATE TABLE` in that file.
+    pub line: Option<usize>,
+}
+
+impl TableFailure {
+    /// `path:line: ` when the failure is located, else empty.
+    pub(crate) fn location(&self) -> String {
+        location(self.path.as_deref(), self.line)
+    }
 }
 
 impl fmt::Display for TableFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "table `{}`: {}", self.table, self.reason)
+        write!(
+            f,
+            "{}table `{}`: {}",
+            self.location(),
+            self.table,
+            self.reason
+        )
+    }
+}
+
+/// The `path:line: ` prefix of a located diagnostic.
+fn location(path: Option<&Path>, line: Option<usize>) -> String {
+    match (path, line) {
+        (Some(path), Some(line)) => format!("{}:{line}: ", path.display()),
+        _ => String::new(),
     }
 }
 
@@ -47,11 +72,29 @@ pub struct QueryFailure {
     /// The query name, or `line N` when no valid name was annotated.
     pub query: String,
     pub reason: String,
+    /// The query file, when the failure is located in it.
+    pub path: Option<PathBuf>,
+    /// 1-based line of the query's `-- name:` annotation (or of the
+    /// offending line when there is no valid annotation), when known.
+    pub line: Option<usize>,
+}
+
+impl QueryFailure {
+    /// `path:line: ` when the failure is located, else empty.
+    pub(crate) fn location(&self) -> String {
+        location(self.path.as_deref(), self.line)
+    }
 }
 
 impl fmt::Display for QueryFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "query `{}`: {}", self.query, self.reason)
+        write!(
+            f,
+            "{}query `{}`: {}",
+            self.location(),
+            self.query,
+            self.reason
+        )
     }
 }
 
