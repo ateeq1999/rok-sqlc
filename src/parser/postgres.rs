@@ -90,6 +90,8 @@ fn build_table(create: &CreateTable) -> std::result::Result<Table, TableFailure>
             )
         });
 
+        let mut is_generated = is_serial_type(&column_def.data_type);
+        let mut has_default = is_generated;
         for option in &column_def.options {
             if let ColumnOption::ForeignKey {
                 foreign_table,
@@ -103,6 +105,14 @@ fn build_table(create: &CreateTable) -> std::result::Result<Table, TableFailure>
                     referenced_table: object_leaf_name(foreign_table),
                     referenced_column: ident_name(&referred_columns[0]),
                 });
+            }
+            match &option.option {
+                ColumnOption::Default(_) => has_default = true,
+                ColumnOption::Generated { .. } | ColumnOption::Identity(_) => {
+                    has_default = true;
+                    is_generated = true;
+                }
+                _ => {}
             }
         }
 
@@ -131,6 +141,8 @@ fn build_table(create: &CreateTable) -> std::result::Result<Table, TableFailure>
             base_type,
             sqlx_type,
             nullable,
+            has_default,
+            is_generated,
         });
     }
 
@@ -213,6 +225,8 @@ fn build_table(create: &CreateTable) -> std::result::Result<Table, TableFailure>
             sqlx_type: raw.sqlx_type,
             nullable: raw.nullable,
             is_primary_key,
+            has_default: raw.has_default,
+            is_generated: raw.is_generated,
         });
     }
 
@@ -245,6 +259,8 @@ struct RawColumn {
     base_type: String,
     sqlx_type: String,
     nullable: bool,
+    has_default: bool,
+    is_generated: bool,
 }
 
 fn ident_name(ident: &Ident) -> String {
@@ -324,6 +340,17 @@ fn custom_type_leaf(name: &ObjectName) -> std::result::Result<&'static str, Stri
         "FLOAT4" => Ok("f32"),
         other => Err(format!("type `{other}` is not supported yet")),
     }
+}
+
+fn is_serial_type(data_type: &DataType) -> bool {
+    matches!(
+        data_type,
+        DataType::Custom(name, _)
+            if matches!(
+                object_leaf_name(name).to_ascii_uppercase().as_str(),
+                "SERIAL" | "BIGSERIAL" | "SMALLSERIAL"
+            )
+    )
 }
 
 fn array_element_type(element: &ArrayElemTypeDef) -> std::result::Result<&DataType, String> {
@@ -529,6 +556,36 @@ mod tests {
         assert_eq!(table.columns[2].rust_type, "chrono::DateTime<chrono::Utc>");
         assert_eq!(table.columns[3].rust_type, "Option<chrono::NaiveDateTime>");
         assert_eq!(table.columns[4].rust_type, "Option<String>");
+    }
+
+    #[test]
+    fn flags_serial_columns_as_generated_with_default() {
+        let table = one_table("CREATE TABLE events (id BIGSERIAL PRIMARY KEY, note TEXT);");
+        assert!(table.columns[0].is_generated);
+        assert!(table.columns[0].has_default);
+        assert!(!table.columns[1].is_generated);
+        assert!(!table.columns[1].has_default);
+    }
+
+    #[test]
+    fn flags_default_clause_columns() {
+        let table = one_table(
+            "CREATE TABLE events (id UUID PRIMARY KEY, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), note TEXT);",
+        );
+        assert!(table.columns[1].has_default);
+        assert!(!table.columns[1].is_generated);
+        assert!(!table.columns[2].has_default);
+    }
+
+    #[test]
+    fn flags_generated_and_identity_columns() {
+        let table = one_table(
+            "CREATE TABLE events (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, total INT GENERATED ALWAYS AS (1) STORED);",
+        );
+        assert!(table.columns[0].is_generated);
+        assert!(table.columns[0].has_default);
+        assert!(table.columns[1].is_generated);
+        assert!(table.columns[1].has_default);
     }
 
     #[test]

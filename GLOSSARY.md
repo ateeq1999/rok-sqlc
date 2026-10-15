@@ -24,6 +24,24 @@ _Avoid_: test schema, sample
 SQLC-annotated SQL authored alongside a module fixture (`modules/<module>/queries.sql`) describing application-specific statements: data manipulation, filtered reads, pagination, transactions.
 _Avoid_: schema (for DML content), script
 
+## Writes
+
+**Generated column**:
+A column whose value the database always owns: `SERIAL`, identity, or `GENERATED`. Never present in a create input or update patch.
+_Avoid_: auto column, computed (for identity/serial)
+
+**Defaulted column**:
+A column the database can supply a value for (`DEFAULT`, serial, identity, or `GENERATED`), but which a caller may still set explicitly.
+_Avoid_: optional column
+
+**Create input**:
+The `NewXxx` struct a caller passes to `create`; generated columns are omitted and defaulted columns are optional, so an omitted value lets the database default apply.
+_Avoid_: insert model, DTO
+
+**Update patch**:
+The `UpdateXxx` struct a caller passes to `update`; each field is optional, where `None` means "leave unchanged" and, for a nullable column, `Some(None)` means "set NULL".
+_Avoid_: update model, diff
+
 ## Relationships
 
 **Relationship**:

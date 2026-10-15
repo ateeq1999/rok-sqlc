@@ -22,6 +22,11 @@ pub struct Column {
     pub sqlx_type: String,
     pub nullable: bool,
     pub is_primary_key: bool,
+    /// The database can supply a value (DEFAULT clause, serial, or identity).
+    pub has_default: bool,
+    /// The database always owns the value (serial, identity, or GENERATED);
+    /// the column is never inserted or updated by generated code.
+    pub is_generated: bool,
 }
 
 #[derive(Debug, Clone)]

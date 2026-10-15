@@ -36,6 +36,7 @@ fn generates_resource_modules() -> Result<()> {
     assert!(out.join("users/mod.rs").exists());
     assert!(out.join("users/models.rs").exists());
     assert!(out.join("users/read.rs").exists());
+    assert!(out.join("users/write.rs").exists());
     assert!(out.join("mod.rs").exists());
     assert!(out.join("schema.rs").exists());
 
@@ -48,6 +49,11 @@ fn generates_resource_modules() -> Result<()> {
     assert!(
         read.contains("SELECT \\\"id\\\", \\\"email\\\" FROM \\\"users\\\" WHERE \\\"id\\\" = $1")
     );
+
+    let write = fs::read_to_string(out.join("users/write.rs"))?;
+    assert!(write.contains("pub async fn create(pool: &PgPool, input: NewUsers)"));
+    assert!(write.contains("pub async fn update(pool: &PgPool, id: uuid::Uuid"));
+    assert!(write.contains("pub async fn delete(pool: &PgPool, id: uuid::Uuid)"));
 
     let db_mod = fs::read_to_string(out.join("mod.rs"))?;
     assert!(db_mod.contains("pub mod users;"));
@@ -92,6 +98,48 @@ fn generates_composite_keys_arrays_and_time() -> Result<()> {
     assert!(read.contains("WHERE \\\"order_id\\\" = $1 AND \\\"product_id\\\" = $2"));
     assert!(read.contains(".bind(order_id)"));
     assert!(read.contains(".bind(product_id)"));
+    Ok(())
+}
+
+#[test]
+fn generates_write_helpers_with_defaults_and_serial() -> Result<()> {
+    let dir = TempDir::new()?;
+    let schema = dir.path().join("schema.sql");
+    fs::write(
+        &schema,
+        "CREATE TABLE events (
+            id BIGSERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            note TEXT,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );",
+    )?;
+
+    run(&[
+        "generate",
+        "--schema",
+        schema.to_str().unwrap(),
+        "--output",
+        output_dir(&dir).to_str().unwrap(),
+    ])?;
+
+    let out = output_dir(&dir);
+    let models = fs::read_to_string(out.join("events/models.rs"))?;
+    assert!(models.contains("pub struct NewEvents {"));
+    assert!(!models.contains("pub id: Option<i64>"));
+    assert!(models.contains("pub name: String,"));
+    assert!(models.contains("pub note: Option<String>,"));
+    assert!(models.contains("pub is_active: Option<bool>,"));
+    assert!(models.contains("pub struct UpdateEvents {"));
+    assert!(models.contains("pub note: Option<Option<String>>,"));
+
+    let write = fs::read_to_string(out.join("events/write.rs"))?;
+    assert!(!write.contains("columns.push(\"\\\"id\\\"\")"));
+    assert!(write.contains("if input.is_active.is_some() {"));
+    assert!(write.contains("if let Some(value) = &input.is_active {"));
+    assert!(write.contains("if columns.is_empty() {"));
+    assert!(write.contains("\"INSERT INTO {} DEFAULT VALUES RETURNING {}\""));
     Ok(())
 }
 

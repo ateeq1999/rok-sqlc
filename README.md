@@ -34,7 +34,7 @@ files.
     nullability, and simple defaults.
 -   Generate `get_by_id` with one parameter per primary key column
     (single-column and composite keys alike); `update` and `delete`
-    follow the same rule when they land.
+    take the same key parameters.
 -   Do not attempt to infer arbitrary business queries from schema
     alone.
 -   Preserve the input schema as a migration artifact; do not
@@ -111,7 +111,7 @@ Responsibilities:
   `read.rs`                           `get_by_id`, `list`, and
                                       count/query helpers
 
-  `write.rs`                          `insert`, `update`, and `delete`
+  `write.rs`                          `create`, `update`, and `delete`
                                       helpers
 
   `tx.rs`                             Transaction-oriented helper
