@@ -1,2 +1,3 @@
 /target
 tests/fixture-app/src/db/
+tests/modules-app/src/db/
