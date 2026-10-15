@@ -42,6 +42,12 @@ _Avoid_: insert model, DTO
 The `UpdateXxx` struct a caller passes to `update`; each field is optional, where `None` means "leave unchanged" and, for a nullable column, `Some(None)` means "set NULL".
 _Avoid_: update model, diff
 
+## Execution
+
+**Executor**:
+The generic `sqlx::PgExecutor` a generated CRUD function runs against; a caller passes `&pool` or `&mut *tx`, keeping the transaction boundary theirs.
+_Avoid_: pool (when it may be a transaction), connection
+
 ## Relationships
 
 **Relationship**:

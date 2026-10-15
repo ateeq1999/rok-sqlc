@@ -123,7 +123,8 @@ Responsibilities:
 
 **Important:** avoid generating a second pool configuration if the
 parent application already owns pool lifecycle. In that case, generated
-functions should accept `&PgPool` or `&mut Transaction<'_, Postgres>`.
+functions take a generic `sqlx::PgExecutor`, so callers pass `&PgPool` or
+`&mut *tx`.
 
 ## 4. Create the project
 
@@ -787,11 +788,25 @@ overrides in a config file.
 
 ## 12. Transaction generation
 
-Generated transaction functions should accept an existing SQLx
-transaction instead of creating and committing one implicitly. This lets
-the application decide the transaction boundary.
+Generated CRUD functions take their executor generically
+(`E: sqlx::PgExecutor`) rather than a concrete `&PgPool`, so the same
+function accepts a pool or a caller-owned transaction. The caller decides
+the transaction boundary and owns `commit()` / `rollback()`; rok-sqlc
+never opens or commits a transaction implicitly.
 
-Example:
+``` rust
+// pool
+db::users::read::get_by_id(&pool, id).await?;
+
+// caller-owned transaction
+let mut tx = pool.begin().await?;
+db::users::write::delete(&mut *tx, id).await?;
+tx.commit().await?;
+```
+
+Application-specific transaction functions (for example
+`mark_user_active`) are not schema-derived; they belong to the query-file
+phase, where SQLC-style annotations describe them.
 
 ``` rust
 use sqlx::{Postgres, Transaction};
@@ -809,9 +824,7 @@ pub async fn mark_user_active(
 }
 ```
 
-SQLx transaction executor details vary by SQLx version; compile this
-example against the selected version and test it. The caller owns
-`commit()` or `rollback()`.
+The caller owns `commit()` or `rollback()`.
 
 ## 13. Testing strategy
 

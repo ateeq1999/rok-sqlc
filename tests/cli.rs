@@ -51,9 +51,9 @@ fn generates_resource_modules() -> Result<()> {
     );
 
     let write = fs::read_to_string(out.join("users/write.rs"))?;
-    assert!(write.contains("pub async fn create(pool: &PgPool, input: NewUsers)"));
-    assert!(write.contains("pub async fn update(pool: &PgPool, id: uuid::Uuid"));
-    assert!(write.contains("pub async fn delete(pool: &PgPool, id: uuid::Uuid)"));
+    assert!(write.contains("pub async fn create<'e, E>(executor: E, input: NewUsers)"));
+    assert!(write.contains("pub async fn update<'e, E>(executor: E, id: uuid::Uuid"));
+    assert!(write.contains("pub async fn delete<'e, E>(executor: E, id: uuid::Uuid)"));
 
     let db_mod = fs::read_to_string(out.join("mod.rs"))?;
     assert!(db_mod.contains("pub mod users;"));
@@ -93,7 +93,7 @@ fn generates_composite_keys_arrays_and_time() -> Result<()> {
 
     let read = fs::read_to_string(out.join("line_items/read.rs"))?;
     assert!(read.contains(
-        "pub async fn get_by_id(pool: &PgPool, order_id: uuid::Uuid, product_id: uuid::Uuid)"
+        "pub async fn get_by_id<'e, E>(executor: E, order_id: uuid::Uuid, product_id: uuid::Uuid)"
     ));
     assert!(read.contains("WHERE \\\"order_id\\\" = $1 AND \\\"product_id\\\" = $2"));
     assert!(read.contains(".bind(order_id)"));
