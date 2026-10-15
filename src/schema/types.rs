@@ -69,6 +69,18 @@ pub struct Column {
     /// The database always owns the value (serial, identity, or GENERATED);
     /// the column is never inserted or updated by generated code.
     pub is_generated: bool,
+    /// The typed id the generated code uses in place of `sqlx_type`: the
+    /// table's own id for a single-column primary key, or the referenced
+    /// table's id for a foreign key to it. The parser leaves it `None`; the
+    /// generator fills it in for the tables it generates.
+    pub typed_id: Option<TypedId>,
+}
+
+/// A generated typed id: `name` is defined in `<module>/models.rs`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypedId {
+    pub module: String,
+    pub name: String,
 }
 
 /// How a column can be filtered by the generated `search` API.
@@ -134,11 +146,57 @@ impl Column {
     pub fn is_updatable(&self) -> bool {
         !self.is_generated && !self.is_primary_key
     }
+
+    /// The Rust type of one non-null value: the typed id when the column has
+    /// one, otherwise `sqlx_type`.
+    pub fn value_type(&self) -> &str {
+        match &self.typed_id {
+            Some(id) => &id.name,
+            None => &self.sqlx_type,
+        }
+    }
+
+    /// The Rust type of the column's field: `value_type`, wrapped in
+    /// `Option` when the column is nullable.
+    pub fn field_type(&self) -> String {
+        if self.nullable {
+            format!("Option<{}>", self.value_type())
+        } else {
+            self.value_type().to_owned()
+        }
+    }
+
+    /// Whether a typed id can wrap this column's type: the type must be
+    /// `Eq`, `Ord`, `Hash`, and `Display`.
+    pub fn supports_typed_id(&self) -> bool {
+        matches!(
+            self.sqlx_type.as_str(),
+            "i16"
+                | "i32"
+                | "i64"
+                | "bool"
+                | "String"
+                | "uuid::Uuid"
+                | "rust_decimal::Decimal"
+                | "chrono::NaiveDate"
+                | "chrono::NaiveTime"
+                | "chrono::NaiveDateTime"
+                | "chrono::DateTime<chrono::Utc>"
+        )
+    }
+
+    /// Whether the column's value type is `Copy`.
+    pub fn is_copy(&self) -> bool {
+        self.supports_typed_id() && self.sqlx_type != "String"
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct ForeignKey {
     pub column: String,
+    /// The referenced table's schema qualifier as written; `None` when the
+    /// reference is unqualified.
+    pub referenced_schema: Option<String>,
     pub referenced_table: String,
     pub referenced_column: String,
 }

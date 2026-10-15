@@ -1,3 +1,4 @@
+pub mod keys;
 pub mod models;
 pub mod queries;
 pub mod read;
@@ -57,6 +58,8 @@ pub fn plan_files_with_queries(
     output: &Path,
 ) -> Vec<(PathBuf, String)> {
     let mut files = Vec::new();
+    let resolved = keys::resolve(tables);
+    let tables = resolved.as_slice();
 
     for table in tables {
         let dir = output.join(&table.module_name);
@@ -103,16 +106,16 @@ fn render_resource_mod(has_filter: bool) -> String {
 /// becomes `Option<Option<T>>`.
 pub fn insert_field_type(column: &Column) -> String {
     if column.is_omittable_on_insert() {
-        format!("Option<{}>", column.rust_type)
+        format!("Option<{}>", column.field_type())
     } else {
-        column.rust_type.clone()
+        column.field_type()
     }
 }
 
 /// The update-patch field type: `None` leaves the column unchanged, so a
 /// nullable column becomes `Option<Option<T>>` and `Some(None)` sets `NULL`.
 pub fn update_field_type(column: &Column) -> String {
-    format!("Option<{}>", column.rust_type)
+    format!("Option<{}>", column.field_type())
 }
 
 /// Names the generated functions use for their own parameters and locals.
@@ -140,11 +143,48 @@ pub fn param_name(column: &Column) -> String {
     }
 }
 
-/// `name: Type` parameters for the key columns, in key order.
-pub fn key_params(keys: &[&Column]) -> Vec<String> {
-    keys.iter()
-        .map(|column| format!("{}: {}", param_name(column), column.sqlx_type))
-        .collect()
+/// `use {prefix}::...;` for sorted `names`, wrapped like rustfmt wraps a use
+/// list that does not fit on one line.
+pub fn use_list(prefix: &str, names: &[String]) -> String {
+    if let [name] = names {
+        return format!("use {prefix}::{name};\n");
+    }
+    let one_line = format!("use {prefix}::{{{}}};", names.join(", "));
+    // rustfmt keeps a use list on one line only up to 98 columns, and packs
+    // the wrapped items greedily into lines of up to 99 columns.
+    if one_line.len() < MAX_WIDTH - 1 {
+        return format!("{one_line}\n");
+    }
+    let mut output = format!("use {prefix}::{{\n");
+    let mut line = String::new();
+    for name in names {
+        if !line.is_empty() && line.len() + 1 + name.len() + 1 > MAX_WIDTH - 1 {
+            output.push_str(&line);
+            output.push('\n');
+            line.clear();
+        }
+        if line.is_empty() {
+            line.push_str(&format!("    {name},"));
+        } else {
+            line.push_str(&format!(" {name},"));
+        }
+    }
+    output.push_str(&line);
+    output.push_str("\n};\n");
+    output
+}
+
+/// `use` lines for full paths (one item each), in rustfmt's order: `super`
+/// segments before named modules.
+pub fn use_paths(paths: &[String]) -> String {
+    let mut sorted: Vec<&String> = paths.iter().collect();
+    sorted.sort_by_key(|path| {
+        path.split("::")
+            .map(|segment| (segment != "super", segment.to_owned()))
+            .collect::<Vec<_>>()
+    });
+    sorted.dedup();
+    sorted.iter().map(|path| format!("use {path};\n")).collect()
 }
 
 /// Appends `/// line` doc comments at `indent`.
@@ -381,6 +421,7 @@ pub(crate) mod test_support {
             is_primary_key: false,
             has_default: false,
             is_generated: false,
+            typed_id: None,
         }
     }
 
@@ -534,9 +575,8 @@ pub mod users;"
 
     #[test]
     fn key_params_avoid_generated_local_names() {
-        let keys = [column("query", "i64"), column("id", "i64")];
-        let keys: Vec<&Column> = keys.iter().collect();
-        assert_eq!(key_params(&keys), ["query_key: i64", "id: i64"]);
+        assert_eq!(param_name(&column("query", "i64")), "query_key");
+        assert_eq!(param_name(&column("id", "i64")), "id");
     }
 
     #[test]

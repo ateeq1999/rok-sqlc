@@ -1,3 +1,3 @@
 pub mod types;
 
-pub use types::{Column, FilterKind, ForeignKey, Schema, Table, UniqueKey};
+pub use types::{Column, FilterKind, ForeignKey, Schema, Table, TypedId, UniqueKey};

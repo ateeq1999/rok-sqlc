@@ -63,3 +63,13 @@ CREATE TABLE revised_notes (
     title TEXT NOT NULL,
     legacy TEXT NOT NULL
 );
+
+-- Foreign keys to two tables named `patch_targets` in different schemas.
+-- `app.patch_targets` is generated, so `target_id` uses its typed id;
+-- `legacy.patch_targets` is created by tests/fixture-app/tests/postgres.rs
+-- before this schema and is not generated, so `legacy_target_id` keeps `i64`.
+CREATE TABLE app.patch_links (
+    id BIGSERIAL PRIMARY KEY,
+    target_id BIGINT NOT NULL REFERENCES app.patch_targets (id),
+    legacy_target_id BIGINT REFERENCES legacy.patch_targets (id)
+);

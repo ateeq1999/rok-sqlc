@@ -2,6 +2,9 @@
 
 pub mod db;
 
+#[cfg(feature = "typed-id-mixup")]
+mod typed_id_mixup;
+
 // Compile-only smoke check for the generated executor-generic API. The
 // fixture_compile test runs `cargo check`, so this proves callers can pass
 // either a pool or a caller-owned transaction to the generated functions.
@@ -11,7 +14,7 @@ async fn executor_smoke(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
 
     let mut tx = pool.begin().await?;
     let _ = db::suppliers::read::list(&mut *tx).await?;
-    db::suppliers::write::delete(&mut *tx, uuid::Uuid::nil()).await?;
+    db::suppliers::write::delete(&mut *tx, uuid::Uuid::nil().into()).await?;
     tx.commit().await?;
 
     Ok(())

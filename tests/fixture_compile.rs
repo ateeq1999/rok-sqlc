@@ -65,6 +65,35 @@ fn generated_code_compiles_without_warnings() -> Result<()> {
     Ok(())
 }
 
+/// Typed ids make mixing up keys a compile error: the fixture crate's
+/// `typed-id-mixup` feature adds code passing a `CategoryId` where a
+/// `ProductId` is expected, and `cargo check` must reject exactly that.
+#[test]
+fn passing_another_tables_typed_id_fails_to_compile() -> Result<()> {
+    let _guard = FIXTURE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    generate_fixture()?;
+
+    let output = cargo(
+        &app_dir(),
+        &["check", "--quiet", "--lib", "--features", "typed-id-mixup"],
+    )
+    .output()
+    .context("failed to run cargo check in tests/fixture-app")?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    ensure!(
+        !output.status.success(),
+        "a CategoryId was accepted where a ProductId is expected"
+    );
+    ensure!(
+        stderr.contains("expected `ProductId`, found `CategoryId`")
+            && stderr.contains("typed_id_mixup.rs"),
+        "cargo check failed for another reason:\n{stderr}"
+    );
+    Ok(())
+}
+
 #[test]
 fn generated_code_is_rustfmt_clean() -> Result<()> {
     let _guard = FIXTURE

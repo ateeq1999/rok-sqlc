@@ -2,14 +2,15 @@ use crate::schema::Table;
 
 use super::search::SearchApi;
 use super::sql::{column_clause, key_order, key_predicate, table_ref};
-use super::{
-    HEADER, StaticQuery, key_params, param_name, push_build_and_fetch, push_doc, push_fn_head,
-};
+use super::{HEADER, StaticQuery, keys, push_build_and_fetch, push_doc, push_fn_head, use_list};
 
 pub fn render(table: &Table) -> String {
     let api = SearchApi::for_table(table);
     let mut output = format!("{HEADER}\n{}", search_imports(table, api));
-    output.push_str(&format!("use super::models::{};\n", table.struct_name));
+    let mut models = vec![table.struct_name.clone()];
+    models.extend(keys::key_items(table));
+    models.sort();
+    output.push_str(&use_list("super::models", &models));
 
     if table.primary_key.is_empty() {
         output.push_str(
@@ -64,14 +65,6 @@ fn search_imports(table: &Table, api: SearchApi) -> String {
     imports
 }
 
-/// `(a, b)` for several items, or the single item itself.
-fn tuple_or_single(items: Vec<String>) -> String {
-    match items.as_slice() {
-        [single] => single.clone(),
-        _ => format!("({})", items.join(", ")),
-    }
-}
-
 /// Starts a search body: the `QueryBuilder` over the explicit column list,
 /// then the filter's `WHERE` clause.
 fn push_search_preamble(output: &mut String, table: &Table) {
@@ -84,19 +77,25 @@ fn push_search_preamble(output: &mut String, table: &Table) {
 }
 
 fn render_search_after(output: &mut String, table: &Table) {
-    let keys = table.primary_key_columns();
+    let key_columns = table.primary_key_columns();
     let name = &table.struct_name;
-    let key_type = tuple_or_single(keys.iter().map(|key| key.sqlx_type.clone()).collect());
-    let key_pattern = tuple_or_single(keys.iter().map(|key| param_name(key)).collect());
+    let key_type = keys::key_type(table);
+    let key_pattern = keys::key_binding(table);
+    let binds = keys::key_binds(table);
 
     output.push('\n');
+    let next_page = if key_columns.len() > 1 {
+        "row's `key()` to fetch the next page."
+    } else {
+        "row's key to fetch the next page."
+    };
     push_doc(
         output,
         0,
         &[
             "Keyset pagination in primary-key order: up to `limit` rows matching `filter`",
             "whose key comes after `after` (from the start when `None`). Pass the last",
-            "row's key to fetch the next page.",
+            next_page,
         ],
     );
     push_fn_head(
@@ -111,24 +110,24 @@ fn render_search_after(output: &mut String, table: &Table) {
     );
     push_search_preamble(output, table);
     output.push_str(&format!("    if let Some({key_pattern}) = after {{\n"));
-    match keys.as_slice() {
+    match key_columns.as_slice() {
         [key] => {
             output.push_str(&format!(
                 "        query.push({});\n        query.push_bind({});\n",
                 super::sql::str_literal(&format!(" AND {} > ", super::sql::ident(&key.sql_name))),
-                param_name(key)
+                binds[0]
             ));
         }
         _ => {
             output.push_str(&format!(
                 "        query.push({});\n",
-                super::sql::str_literal(&format!(" AND ({}) > (", key_order(&keys)))
+                super::sql::str_literal(&format!(" AND ({}) > (", key_order(&key_columns)))
             ));
-            for (index, key) in keys.iter().enumerate() {
+            for (index, bind) in binds.iter().enumerate() {
                 if index > 0 {
                     output.push_str("        query.push(\", \");\n");
                 }
-                output.push_str(&format!("        query.push_bind({});\n", param_name(key)));
+                output.push_str(&format!("        query.push_bind({bind});\n"));
             }
             output.push_str("        query.push(\")\");\n");
         }
@@ -136,7 +135,7 @@ fn render_search_after(output: &mut String, table: &Table) {
     output.push_str("    }\n");
     output.push_str(&format!(
         "    query.push({});\n",
-        super::sql::str_literal(&format!(" ORDER BY {} LIMIT ", key_order(&keys)))
+        super::sql::str_literal(&format!(" ORDER BY {} LIMIT ", key_order(&key_columns)))
     ));
     output.push_str("    query.push_bind(limit.get());\n");
     push_build_and_fetch(output, table, "fetch_all");
@@ -204,13 +203,13 @@ fn render_get_by_id(output: &mut String, table: &Table) {
     push_fn_head(
         output,
         "get_by_id",
-        &key_params(&keys),
+        &[keys::key_param(table)],
         &format!("Result<Option<{}>, sqlx::Error>", table.struct_name),
     );
     StaticQuery {
         call: &format!("sqlx::query_as::<_, {}>", table.struct_name),
         sql,
-        binds: keys.iter().map(|column| param_name(column)).collect(),
+        binds: keys::key_binds(table),
         execute: "fetch_optional(executor)",
     }
     .push(output, 4, "", "");
@@ -236,13 +235,13 @@ fn render_exists_by_id(output: &mut String, table: &Table) {
     push_fn_head(
         output,
         "exists_by_id",
-        &key_params(&keys),
+        &[keys::key_param(table)],
         "Result<bool, sqlx::Error>",
     );
     StaticQuery {
         call: "sqlx::query_scalar::<_, bool>",
         sql,
-        binds: keys.iter().map(|column| param_name(column)).collect(),
+        binds: keys::key_binds(table),
         execute: "fetch_one(executor)",
     }
     .push(output, 4, "", "");
@@ -374,10 +373,10 @@ mod tests {
             &["order_id", "product_id"],
         ));
         assert!(rendered.contains(
-            "pub async fn get_by_id<'e, E>(\n    executor: E,\n    order_id: uuid::Uuid,\n    product_id: uuid::Uuid,\n) -> Result<Option<User>, sqlx::Error>"
+            "pub async fn get_by_id<'e, E>(executor: E, key: UserKey) -> Result<Option<User>, sqlx::Error>"
         ));
         assert!(rendered.contains("WHERE order_id = $1 AND product_id = $2"));
-        assert!(rendered.contains("    .bind(order_id)\n    .bind(product_id)\n"));
+        assert!(rendered.contains("    .bind(key.order_id)\n    .bind(key.product_id)\n"));
         assert!(rendered.contains("ORDER BY order_id, product_id"));
     }
 

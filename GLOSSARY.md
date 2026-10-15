@@ -80,6 +80,10 @@ _Avoid_: orphan, leftover
 A distinct Rust type for one table's key, used wherever that key appears, so keys of different tables cannot be mixed up.
 _Avoid_: id wrapper, newtype (in user-facing text)
 
+**Key struct**:
+A struct naming each column of a composite primary key, taken by lookups and keyset pagination in place of separate parameters.
+_Avoid_: key tuple, compound id
+
 **Managed column**:
 A column the database maintains itself on write (for example, a last-updated time); callers never supply it.
 _Avoid_: system column, audit column

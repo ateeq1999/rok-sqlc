@@ -12,3 +12,8 @@ rust_decimal = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[features]
+# Compiles src/typed_id_mixup.rs, which must fail to compile (see
+# tests/fixture_compile.rs in rok-sqlc).
+typed-id-mixup = []
