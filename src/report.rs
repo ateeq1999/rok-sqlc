@@ -11,10 +11,24 @@ pub struct Report {
     pub unchanged: Vec<PathBuf>,
     /// Existing files rok-sqlc did not generate and would not overwrite.
     pub refused: Vec<RefusedFile>,
+    /// Stale files: generated files that are no longer part of the plan.
+    /// Removed after a successful run; a dry run or check only lists them.
+    pub stale: Vec<PathBuf>,
+    /// Check only: planned files that do not exist.
+    pub missing: Vec<PathBuf>,
+    /// Check only: existing planned files whose contents differ from the plan.
+    pub changed: Vec<PathBuf>,
     /// Unsupported tables: skipped when lenient, fatal otherwise.
     pub table_failures: Vec<TableFailure>,
     /// Unsupported queries: skipped when lenient, fatal otherwise.
     pub query_failures: Vec<QueryFailure>,
+}
+
+impl Report {
+    /// Whether the run found drift: missing, changed, or stale files.
+    pub fn has_drift(&self) -> bool {
+        !(self.missing.is_empty() && self.changed.is_empty() && self.stale.is_empty())
+    }
 }
 
 /// An existing file that generation would not overwrite.

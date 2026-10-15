@@ -2,7 +2,7 @@
 //! inputs, parse and analyze them, plan the files, and write them.
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use heck::ToSnakeCase;
@@ -109,6 +109,28 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
     };
 
     let files = generator::plan_files_with_queries(&sql, &selected, queries_module, output_dir);
+
+    // Every file this run produces or deliberately keeps; any other
+    // generated file under the output directory is stale.
+    let mut keep: HashSet<PathBuf> = files.iter().map(|(path, _)| path.clone()).collect();
+    if matches!(queries_module, generator::QueriesModule::Keep) {
+        keep.insert(output_dir.join("queries.rs"));
+    }
+    let stale = output::find_stale(output_dir, &keep)?;
+
+    if config.check {
+        (report.missing, report.changed) = output::compare_files(&files)?;
+        report.stale = stale;
+        if report.has_drift() {
+            let count = report.missing.len() + report.changed.len() + report.stale.len();
+            bail!(
+                "generated code is out of date: {count} file(s) drifted; run `rok-sqlc generate` to update them"
+            );
+        }
+        report.unchanged = files.into_iter().map(|(path, _)| path).collect();
+        return Ok(());
+    }
+
     let applied = output::apply_files(&files, dry_run, force)?;
 
     report.unchanged = applied.unchanged;
@@ -124,6 +146,10 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
         );
     }
     report.written = applied.written;
+    if !dry_run {
+        output::remove_stale(output_dir, &stale)?;
+    }
+    report.stale = stale;
     Ok(())
 }
 

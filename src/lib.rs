@@ -47,6 +47,11 @@ pub use report::{Error, QueryFailure, RefusedFile, Report, Result, TableFailure}
 /// under [`Config::lenient`]. Unsupported tables or queries (unless lenient)
 /// and refused files fail the run before anything is written;
 /// [`Error::report`] then says what was known when the run stopped.
+///
+/// After a successful run, stale files (generated files no longer in the
+/// plan) are removed and listed in [`Report::stale`]. With
+/// [`Config::check`] nothing is written or removed; any drift (missing,
+/// changed, or stale files) fails the run, and the report lists it.
 pub fn generate(config: &Config) -> Result<Report> {
     generate::generate(config)
 }
