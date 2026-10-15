@@ -443,6 +443,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
             columns,
             primary_key: Vec::new(),
             foreign_keys: Vec::new(),
+            unique_keys: Vec::new(),
         }));
         Ok(())
     }

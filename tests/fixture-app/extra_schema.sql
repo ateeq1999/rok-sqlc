@@ -55,3 +55,11 @@ CREATE TABLE tag_sets (
     labels TEXT[] NOT NULL,
     scores INTEGER[]
 );
+
+-- Changed by alter_schema.sql: `title` is renamed, `legacy` dropped, and
+-- `body` added, so the model must carry only the final columns.
+CREATE TABLE revised_notes (
+    id BIGSERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    legacy TEXT NOT NULL
+);

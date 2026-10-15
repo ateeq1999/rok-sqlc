@@ -5,9 +5,11 @@ use std::path::PathBuf;
 pub struct TableFailure {
     pub table: String,
     pub reason: String,
-    /// The schema file the table's `CREATE TABLE` is in, when parsed from one.
+    /// The schema file of the statement that failed the table, when parsed
+    /// from one.
     pub path: Option<PathBuf>,
-    /// 1-based line of the table's `CREATE TABLE` in its file.
+    /// 1-based line, in its file, of the statement that failed the table: its
+    /// `CREATE TABLE`, or an `ALTER TABLE` that could not be applied.
     pub line: Option<usize>,
 }
 

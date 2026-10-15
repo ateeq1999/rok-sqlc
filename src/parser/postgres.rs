@@ -3,15 +3,16 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use sqlparser::ast::{
-    ArrayElemTypeDef, ColumnOption, CreateTable, DataType, ExactNumberInfo, Expr, Ident,
-    IndexColumn, ObjectName, ObjectNamePart, Spanned, Statement, TableConstraint, TimezoneInfo,
+    AlterTableOperation, ArrayElemTypeDef, ColumnDef, ColumnOption, CreateIndex, CreateTable,
+    DataType, ExactNumberInfo, Expr, Ident, IndexColumn, ObjectName, ObjectNamePart, Spanned,
+    Statement, TableConstraint, TimezoneInfo,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 
 use super::diagnostics::TableFailure;
 use super::naming;
-use crate::schema::{Column, ForeignKey, Schema, Table};
+use crate::schema::{Column, ForeignKey, Schema, Table, UniqueKey};
 
 pub struct ParsedSchema {
     pub schema: Schema,
@@ -27,8 +28,8 @@ pub struct SchemaSource<'a> {
     pub sql: &'a str,
 }
 
-/// Parses one schema text. Failures carry the line of their `CREATE TABLE`
-/// but no path.
+/// Parses one schema text. Failures carry the line of the statement that
+/// failed but no path.
 pub fn parse_schema(sql: &str) -> Result<ParsedSchema> {
     let mut parsed = parse_sources(&[SchemaSource {
         path: Path::new(""),
@@ -41,11 +42,20 @@ pub fn parse_schema(sql: &str) -> Result<ParsedSchema> {
 }
 
 /// Parses schema inputs in order, as one schema. Each file is parsed on its
-/// own, so every failure names its file and the line of its `CREATE TABLE`
-/// within that file.
+/// own, so every failure names its file and the line, within that file, of
+/// the statement that failed: a table's `CREATE TABLE`, or the `ALTER TABLE`
+/// it could not apply.
+///
+/// Later statements change earlier tables: `ALTER TABLE` adds, drops, and
+/// renames columns and adds primary key, unique, and foreign key
+/// constraints, and `CREATE UNIQUE INDEX` on plain columns records a unique
+/// key. Any other `ALTER TABLE` clause on a known table fails that table.
+/// Statements that leave the model unchanged (row-level security, policies,
+/// non-unique indexes, grants, triggers, comments, functions, `SELECT`
+/// calls) and statements on unknown tables are ignored on purpose.
 pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
     let dialect = PostgreSqlDialect {};
-    let mut tables = Vec::new();
+    let mut tables: Vec<Table> = Vec::new();
     let mut failures = Vec::new();
     let mut seen_modules: HashSet<String> = HashSet::new();
 
@@ -63,31 +73,49 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
 
         for statement in statements {
             let line = usize::try_from(statement.span().start.line).ok();
-            let Statement::CreateTable(create) = statement else {
-                continue;
-            };
-            let failure = match build_table(&create) {
-                Ok(table) if GENERATED_MODULES.contains(&table.module_name.as_str()) => {
-                    table_failure(
+            let failure = match statement {
+                Statement::CreateTable(create) => match build_table(&create) {
+                    Ok(table) if GENERATED_MODULES.contains(&table.module_name.as_str()) => {
+                        table_failure(
+                            &table.sql_name,
+                            format!(
+                                "module name `{}` is reserved for the generated `db/{}.rs`",
+                                table.module_name, table.module_name
+                            ),
+                        )
+                    }
+                    Ok(table) if seen_modules.insert(table.module_name.clone()) => {
+                        tables.push(table);
+                        continue;
+                    }
+                    Ok(table) => table_failure(
                         &table.sql_name,
                         format!(
-                            "module name `{}` is reserved for the generated `db/{}.rs`",
-                            table.module_name, table.module_name
+                            "module name `{}` is already used by another table",
+                            table.module_name
                         ),
-                    )
+                    ),
+                    Err(failure) => failure,
+                },
+                Statement::AlterTable {
+                    name, operations, ..
+                } => {
+                    let Some(index) = find_table(&tables, &name) else {
+                        continue;
+                    };
+                    match apply_alter(&mut tables[index], &operations) {
+                        Ok(()) => continue,
+                        Err(reason) => {
+                            let table = tables.remove(index);
+                            table_failure(&table.sql_name, reason)
+                        }
+                    }
                 }
-                Ok(table) if seen_modules.insert(table.module_name.clone()) => {
-                    tables.push(table);
+                Statement::CreateIndex(index) => {
+                    record_unique_index(&mut tables, &index);
                     continue;
                 }
-                Ok(table) => table_failure(
-                    &table.sql_name,
-                    format!(
-                        "module name `{}` is already used by another table",
-                        table.module_name
-                    ),
-                ),
-                Err(failure) => failure,
+                _ => continue,
             };
             failures.push(TableFailure {
                 path: Some(source.path.to_path_buf()),
@@ -107,6 +135,247 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
     })
 }
 
+/// The known table an `ALTER TABLE` or `CREATE INDEX` names. An unqualified
+/// name and a `public.` one refer to the same table.
+fn find_table(tables: &[Table], name: &ObjectName) -> Option<usize> {
+    let leaf = object_leaf_name(name);
+    let schema = object_schema_name(name);
+    fn normalize(schema: Option<&str>) -> Option<&str> {
+        schema.filter(|schema| *schema != "public")
+    }
+    tables.iter().position(|table| {
+        table.sql_name == leaf && normalize(table.schema.as_deref()) == normalize(schema.as_deref())
+    })
+}
+
+/// Applies an `ALTER TABLE`'s clauses to a known table, in order. An error
+/// names the clause that could not be applied.
+fn apply_alter(
+    table: &mut Table,
+    operations: &[AlterTableOperation],
+) -> std::result::Result<(), String> {
+    for operation in operations {
+        match operation {
+            AlterTableOperation::AddColumn {
+                if_not_exists,
+                column_def,
+                ..
+            } => add_column(table, column_def, *if_not_exists)?,
+            AlterTableOperation::DropColumn {
+                column_names,
+                if_exists,
+                ..
+            } => {
+                for name in column_names {
+                    drop_column(table, &ident_name(name), *if_exists)?;
+                }
+            }
+            AlterTableOperation::RenameColumn {
+                old_column_name,
+                new_column_name,
+            } => rename_column(
+                table,
+                &ident_name(old_column_name),
+                &ident_name(new_column_name),
+            )?,
+            AlterTableOperation::AddConstraint { constraint, .. } => {
+                add_constraint(table, constraint)?;
+            }
+            AlterTableOperation::EnableRowLevelSecurity
+            | AlterTableOperation::DisableRowLevelSecurity => {}
+            other => {
+                return Err(format!("unsupported ALTER TABLE clause `{other}`"));
+            }
+        }
+    }
+    check_search_names(&table.columns)
+}
+
+fn column_index(table: &Table, name: &str) -> Option<usize> {
+    table
+        .columns
+        .iter()
+        .position(|column| column.sql_name == name)
+}
+
+fn missing_column(clause: &str, name: &str) -> String {
+    format!("{clause}: column `{name}` does not exist")
+}
+
+fn add_column(
+    table: &mut Table,
+    column_def: &ColumnDef,
+    if_not_exists: bool,
+) -> std::result::Result<(), String> {
+    let name = ident_name(&column_def.name);
+    if column_index(table, &name).is_some() {
+        if if_not_exists {
+            return Ok(());
+        }
+        return Err(format!("ADD COLUMN: column `{name}` already exists"));
+    }
+    let built = build_column(column_def).map_err(|reason| format!("ADD COLUMN: {reason}"))?;
+    if table
+        .columns
+        .iter()
+        .any(|column| column.rust_name == built.raw.rust_name)
+    {
+        return Err(format!("ADD COLUMN: {}", field_taken(&built.raw)));
+    }
+    if built.inline_pk {
+        if !table.primary_key.is_empty() {
+            return Err(format!(
+                "ADD COLUMN: column `{name}` adds a second primary key"
+            ));
+        }
+        table.primary_key = vec![name.clone()];
+    }
+    if built.unique {
+        table.unique_keys.push(UniqueKey::new(vec![name.clone()]));
+    }
+    table.foreign_keys.extend(built.foreign_key);
+    table.columns.push(built.raw.into_column(built.inline_pk));
+    Ok(())
+}
+
+/// Drops a column. Like PostgreSQL, dropping a key column drops the primary
+/// key, unique keys, and foreign keys it belongs to.
+fn drop_column(table: &mut Table, name: &str, if_exists: bool) -> std::result::Result<(), String> {
+    let Some(index) = column_index(table, name) else {
+        if if_exists {
+            return Ok(());
+        }
+        return Err(missing_column("DROP COLUMN", name));
+    };
+    table.columns.remove(index);
+    if table.primary_key.iter().any(|key| key == name) {
+        table.primary_key.clear();
+        for column in &mut table.columns {
+            column.is_primary_key = false;
+        }
+    }
+    table
+        .unique_keys
+        .retain(|key| !key.columns.iter().any(|column| column == name));
+    table.foreign_keys.retain(|key| key.column != name);
+    Ok(())
+}
+
+fn rename_column(table: &mut Table, old: &str, new: &str) -> std::result::Result<(), String> {
+    let index = column_index(table, old).ok_or_else(|| missing_column("RENAME COLUMN", old))?;
+    if column_index(table, new).is_some() {
+        return Err(format!("RENAME COLUMN: column `{new}` already exists"));
+    }
+    let rust_name =
+        naming::rust_identifier(new).map_err(|reason| format!("RENAME COLUMN: {reason}"))?;
+    if let Some(other) = table
+        .columns
+        .iter()
+        .find(|column| column.sql_name != old && column.rust_name == rust_name)
+    {
+        return Err(format!(
+            "RENAME COLUMN: column `{new}` maps to Rust field `{rust_name}`, which is already taken by column `{}`",
+            other.sql_name
+        ));
+    }
+    let column = &mut table.columns[index];
+    column.sql_name = new.to_owned();
+    column.rust_name = rust_name;
+
+    let rename = |column: &mut String| {
+        if column == old {
+            *column = new.to_owned();
+        }
+    };
+    table.primary_key.iter_mut().for_each(rename);
+    for key in &mut table.unique_keys {
+        key.columns.iter_mut().for_each(rename);
+    }
+    for key in &mut table.foreign_keys {
+        rename(&mut key.column);
+    }
+    Ok(())
+}
+
+/// Adds a primary key, unique, or foreign key constraint. Other constraint
+/// kinds fail, so a constraint that might change the model is never dropped
+/// silently.
+fn add_constraint(
+    table: &mut Table,
+    constraint: &TableConstraint,
+) -> std::result::Result<(), String> {
+    let clause = |reason: String| format!("ADD CONSTRAINT: {reason}");
+    let known_columns = |table: &Table, keys: &[String]| match keys
+        .iter()
+        .find(|key| column_index(table, key).is_none())
+    {
+        Some(key) => Err(clause(format!("column `{key}` does not exist"))),
+        None => Ok(()),
+    };
+    match constraint {
+        TableConstraint::PrimaryKey { columns, .. } => {
+            let keys = key_columns(columns, "PRIMARY KEY").map_err(clause)?;
+            if !table.primary_key.is_empty() {
+                return Err(clause("the table already has a primary key".to_owned()));
+            }
+            known_columns(table, &keys)?;
+            for column in &mut table.columns {
+                if keys.contains(&column.sql_name) {
+                    column.is_primary_key = true;
+                    column.nullable = false;
+                    column.rust_type = rust_type(&column.sqlx_type, false);
+                }
+            }
+            table.primary_key = keys;
+        }
+        TableConstraint::Unique { columns, .. } => {
+            let keys = key_columns(columns, "UNIQUE").map_err(clause)?;
+            known_columns(table, &keys)?;
+            table.unique_keys.push(UniqueKey::new(keys));
+        }
+        TableConstraint::ForeignKey { columns, .. } => {
+            let keys: Vec<String> = columns.iter().map(ident_name).collect();
+            known_columns(table, &keys)?;
+            table
+                .foreign_keys
+                .extend(constraint_foreign_key(constraint));
+        }
+        other => return Err(format!("unsupported ALTER TABLE clause `ADD {other}`")),
+    }
+    Ok(())
+}
+
+/// Records a `CREATE UNIQUE INDEX` on plain columns of a known table as a
+/// unique key, keeping a partial index's condition. Expression indexes and
+/// non-unique indexes change nothing.
+fn record_unique_index(tables: &mut [Table], index: &CreateIndex) {
+    if !index.unique {
+        return;
+    }
+    let Some(position) = find_table(tables, &index.table_name) else {
+        return;
+    };
+    let Some(columns) = index
+        .columns
+        .iter()
+        .map(index_column_name)
+        .collect::<Option<Vec<String>>>()
+    else {
+        return;
+    };
+    let table = &mut tables[position];
+    if columns
+        .iter()
+        .any(|column| column_index(table, column).is_none())
+    {
+        return;
+    }
+    table.unique_keys.push(UniqueKey {
+        columns,
+        predicate: index.predicate.as_ref().map(ToString::to_string),
+    });
+}
+
 fn build_table(create: &CreateTable) -> std::result::Result<Table, TableFailure> {
     let sql_name = object_leaf_name(&create.name);
     let fail = |reason: String| table_failure(&sql_name, reason);
@@ -115,82 +384,25 @@ fn build_table(create: &CreateTable) -> std::result::Result<Table, TableFailure>
         return Err(fail("table has no columns".to_owned()));
     }
 
-    let mut columns = Vec::new();
     let mut raw_columns: Vec<RawColumn> = Vec::new();
     let mut seen_fields: HashSet<String> = HashSet::new();
     let mut foreign_keys = Vec::new();
+    let mut unique_keys = Vec::new();
     let mut inline_primary_keys: Vec<String> = Vec::new();
 
     for column_def in &create.columns {
-        let column_name = ident_name(&column_def.name);
-        let column_fail =
-            |reason: String| table_failure(&sql_name, format!("column `{column_name}`: {reason}"));
-
-        let nullable = !column_def
-            .options
-            .iter()
-            .any(|option| matches!(option.option, ColumnOption::NotNull));
-        let inline_pk = column_def.options.iter().any(|option| {
-            matches!(
-                option.option,
-                ColumnOption::Unique {
-                    is_primary: true,
-                    ..
-                }
-            )
-        });
-
-        let mut is_generated = is_serial_type(&column_def.data_type);
-        let mut has_default = is_generated;
-        for option in &column_def.options {
-            if let ColumnOption::ForeignKey {
-                foreign_table,
-                referred_columns,
-                ..
-            } = &option.option
-                && referred_columns.len() == 1
-            {
-                foreign_keys.push(ForeignKey {
-                    column: column_name.clone(),
-                    referenced_table: object_leaf_name(foreign_table),
-                    referenced_column: ident_name(&referred_columns[0]),
-                });
-            }
-            match &option.option {
-                ColumnOption::Default(_) => has_default = true,
-                ColumnOption::Generated { .. } | ColumnOption::Identity(_) => {
-                    has_default = true;
-                    is_generated = true;
-                }
-                _ => {}
-            }
+        let built = build_column(column_def).map_err(fail)?;
+        if !seen_fields.insert(built.raw.rust_name.clone()) {
+            return Err(fail(field_taken(&built.raw)));
         }
-
-        if inline_pk {
-            inline_primary_keys.push(column_name.clone());
+        if built.inline_pk {
+            inline_primary_keys.push(built.raw.sql_name.clone());
         }
-
-        let (base_type, sqlx_type) = map_type(&column_def.data_type).map_err(column_fail)?;
-
-        let rust_name = naming::rust_identifier(&column_name).map_err(column_fail)?;
-        if !seen_fields.insert(rust_name.clone()) {
-            return Err(table_failure(
-                &sql_name,
-                format!(
-                    "column `{column_name}` maps to Rust field `{rust_name}`, which is already taken by another column"
-                ),
-            ));
+        if built.unique {
+            unique_keys.push(UniqueKey::new(vec![built.raw.sql_name.clone()]));
         }
-
-        raw_columns.push(RawColumn {
-            sql_name: column_name,
-            rust_name,
-            base_type,
-            sqlx_type,
-            nullable,
-            has_default,
-            is_generated,
-        });
+        foreign_keys.extend(built.foreign_key);
+        raw_columns.push(built.raw);
     }
 
     if inline_primary_keys.len() > 1 {
@@ -204,41 +416,14 @@ fn build_table(create: &CreateTable) -> std::result::Result<Table, TableFailure>
     for constraint in &create.constraints {
         match constraint {
             TableConstraint::PrimaryKey { columns: keys, .. } => {
-                let mut names = Vec::with_capacity(keys.len());
-                for key in keys {
-                    match index_column_name(key) {
-                        Some(name) => names.push(name),
-                        None => {
-                            return Err(fail(
-                                "PRIMARY KEY constraint contains a non-column expression"
-                                    .to_owned(),
-                            ));
-                        }
-                    }
-                }
-                let mut seen_keys: HashSet<&str> = HashSet::new();
-                for name in &names {
-                    if !seen_keys.insert(name.as_str()) {
-                        return Err(fail(format!(
-                            "PRIMARY KEY lists column `{name}` more than once"
-                        )));
-                    }
-                }
-                table_primary_key = names;
+                table_primary_key = key_columns(keys, "PRIMARY KEY").map_err(fail)?;
             }
-            TableConstraint::ForeignKey {
-                columns,
-                foreign_table,
-                referred_columns,
-                ..
-            } if columns.len() == 1 && referred_columns.len() == 1 => {
-                foreign_keys.push(ForeignKey {
-                    column: ident_name(&columns[0]),
-                    referenced_table: object_leaf_name(foreign_table),
-                    referenced_column: ident_name(&referred_columns[0]),
-                });
+            TableConstraint::Unique { columns: keys, .. } => {
+                if let Ok(keys) = key_columns(keys, "UNIQUE") {
+                    unique_keys.push(UniqueKey::new(keys));
+                }
             }
-            _ => {}
+            other => foreign_keys.extend(constraint_foreign_key(other)),
         }
     }
 
@@ -256,26 +441,13 @@ fn build_table(create: &CreateTable) -> std::result::Result<Table, TableFailure>
         }
     }
 
-    for mut raw in raw_columns {
-        let is_primary_key = primary_key.contains(&raw.sql_name);
-        if is_primary_key {
-            raw.nullable = false;
-        }
-        columns.push(Column {
-            sql_name: raw.sql_name,
-            rust_name: raw.rust_name,
-            rust_type: if raw.nullable {
-                format!("Option<{}>", raw.base_type)
-            } else {
-                raw.base_type
-            },
-            sqlx_type: raw.sqlx_type,
-            nullable: raw.nullable,
-            is_primary_key,
-            has_default: raw.has_default,
-            is_generated: raw.is_generated,
-        });
-    }
+    let columns: Vec<Column> = raw_columns
+        .into_iter()
+        .map(|raw| {
+            let is_primary_key = primary_key.contains(&raw.sql_name);
+            raw.into_column(is_primary_key)
+        })
+        .collect();
 
     check_search_names(&columns).map_err(fail)?;
     let module_name = naming::rust_identifier(&sql_name).map_err(fail)?;
@@ -289,7 +461,115 @@ fn build_table(create: &CreateTable) -> std::result::Result<Table, TableFailure>
         columns,
         primary_key,
         foreign_keys,
+        unique_keys,
     })
+}
+
+/// A column definition from `CREATE TABLE` or `ALTER TABLE … ADD COLUMN`,
+/// with the constraints declared inline on it.
+struct BuiltColumn {
+    raw: RawColumn,
+    inline_pk: bool,
+    unique: bool,
+    foreign_key: Option<ForeignKey>,
+}
+
+fn build_column(column_def: &ColumnDef) -> std::result::Result<BuiltColumn, String> {
+    let column_name = ident_name(&column_def.name);
+    let column_fail = |reason: String| format!("column `{column_name}`: {reason}");
+
+    let mut nullable = true;
+    let mut inline_pk = false;
+    let mut unique = false;
+    let mut foreign_key = None;
+    let mut is_generated = is_serial_type(&column_def.data_type);
+    let mut has_default = is_generated;
+    for option in &column_def.options {
+        match &option.option {
+            ColumnOption::NotNull => nullable = false,
+            ColumnOption::Unique { is_primary, .. } => {
+                if *is_primary {
+                    inline_pk = true;
+                } else {
+                    unique = true;
+                }
+            }
+            ColumnOption::ForeignKey {
+                foreign_table,
+                referred_columns,
+                ..
+            } if referred_columns.len() == 1 => {
+                foreign_key = Some(ForeignKey {
+                    column: column_name.clone(),
+                    referenced_table: object_leaf_name(foreign_table),
+                    referenced_column: ident_name(&referred_columns[0]),
+                });
+            }
+            ColumnOption::Default(_) => has_default = true,
+            ColumnOption::Generated { .. } | ColumnOption::Identity(_) => {
+                has_default = true;
+                is_generated = true;
+            }
+            _ => {}
+        }
+    }
+
+    let (base_type, sqlx_type) = map_type(&column_def.data_type).map_err(column_fail)?;
+    let rust_name = naming::rust_identifier(&column_name).map_err(column_fail)?;
+
+    Ok(BuiltColumn {
+        raw: RawColumn {
+            sql_name: column_name,
+            rust_name,
+            base_type,
+            sqlx_type,
+            nullable,
+            has_default,
+            is_generated,
+        },
+        inline_pk,
+        unique,
+        foreign_key,
+    })
+}
+
+fn field_taken(raw: &RawColumn) -> String {
+    format!(
+        "column `{}` maps to Rust field `{}`, which is already taken by another column",
+        raw.sql_name, raw.rust_name
+    )
+}
+
+/// The plain column names of a `PRIMARY KEY` or `UNIQUE` column list.
+fn key_columns(keys: &[IndexColumn], what: &str) -> std::result::Result<Vec<String>, String> {
+    let mut names = Vec::with_capacity(keys.len());
+    for key in keys {
+        let name = index_column_name(key)
+            .ok_or_else(|| format!("{what} constraint contains a non-column expression"))?;
+        if names.contains(&name) {
+            return Err(format!("{what} lists column `{name}` more than once"));
+        }
+        names.push(name);
+    }
+    Ok(names)
+}
+
+/// A single-column `FOREIGN KEY` table constraint; composite keys are not
+/// recorded.
+fn constraint_foreign_key(constraint: &TableConstraint) -> Option<ForeignKey> {
+    match constraint {
+        TableConstraint::ForeignKey {
+            columns,
+            foreign_table,
+            referred_columns,
+            ..
+        } if columns.len() == 1 && referred_columns.len() == 1 => Some(ForeignKey {
+            column: ident_name(&columns[0]),
+            referenced_table: object_leaf_name(foreign_table),
+            referenced_column: ident_name(&referred_columns[0]),
+        }),
+        _ => None,
+    }
 }
 
 /// Rejects tables whose generated search names would collide: a nullable
@@ -343,6 +623,32 @@ struct RawColumn {
     nullable: bool,
     has_default: bool,
     is_generated: bool,
+}
+
+impl RawColumn {
+    fn into_column(mut self, is_primary_key: bool) -> Column {
+        if is_primary_key {
+            self.nullable = false;
+        }
+        Column {
+            rust_type: rust_type(&self.base_type, self.nullable),
+            sql_name: self.sql_name,
+            rust_name: self.rust_name,
+            sqlx_type: self.sqlx_type,
+            nullable: self.nullable,
+            is_primary_key,
+            has_default: self.has_default,
+            is_generated: self.is_generated,
+        }
+    }
+}
+
+fn rust_type(base_type: &str, nullable: bool) -> String {
+    if nullable {
+        format!("Option<{base_type}>")
+    } else {
+        base_type.to_owned()
+    }
 }
 
 pub(crate) fn ident_name(ident: &Ident) -> String {
@@ -801,5 +1107,217 @@ mod tests {
     #[test]
     fn reports_empty_schema() {
         assert!(parse_schema("SELECT 1;").is_err());
+    }
+
+    fn parse_files(files: &[(&str, &str)]) -> ParsedSchema {
+        let sources: Vec<SchemaSource<'_>> = files
+            .iter()
+            .map(|(path, sql)| SchemaSource {
+                path: Path::new(path),
+                sql,
+            })
+            .collect();
+        parse_sources(&sources).expect("schema should parse")
+    }
+
+    fn column_names(table: &Table) -> Vec<&str> {
+        table
+            .columns
+            .iter()
+            .map(|column| column.sql_name.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn applies_column_changes_from_later_migrations() {
+        let parsed = parse_files(&[
+            (
+                "0001_create.up.sql",
+                "CREATE TABLE notes (id BIGSERIAL PRIMARY KEY, title TEXT NOT NULL, legacy TEXT);",
+            ),
+            (
+                "0002_alter.up.sql",
+                "ALTER TABLE notes ADD COLUMN body TEXT NOT NULL DEFAULT '';
+                 ALTER TABLE notes RENAME COLUMN title TO headline;
+                 ALTER TABLE notes DROP COLUMN legacy;",
+            ),
+        ]);
+        assert!(parsed.failures.is_empty(), "{:?}", parsed.failures);
+        let table = &parsed.schema.tables[0];
+        assert_eq!(column_names(table), ["id", "headline", "body"]);
+        assert_eq!(table.columns[1].rust_name, "headline");
+        assert_eq!(table.columns[1].rust_type, "String");
+        assert_eq!(table.columns[2].rust_type, "String");
+        assert!(table.columns[2].has_default);
+    }
+
+    #[test]
+    fn records_constraints_added_by_alter_table_like_inline_ones() {
+        let table = one_table(
+            "CREATE TABLE app.posts (id UUID NOT NULL, author_id UUID, slug TEXT NOT NULL);
+             ALTER TABLE app.posts ADD CONSTRAINT posts_pk PRIMARY KEY (id);
+             ALTER TABLE app.posts ADD CONSTRAINT posts_author_fk
+               FOREIGN KEY (author_id) REFERENCES app.users (id);
+             ALTER TABLE app.posts ADD CONSTRAINT posts_slug_key UNIQUE (slug);",
+        );
+        assert_eq!(table.primary_key, ["id"]);
+        assert!(table.columns[0].is_primary_key);
+        assert_eq!(table.foreign_keys.len(), 1);
+        assert_eq!(table.foreign_keys[0].column, "author_id");
+        assert_eq!(table.foreign_keys[0].referenced_table, "users");
+        assert_eq!(table.foreign_keys[0].referenced_column, "id");
+        assert_eq!(table.unique_keys, [UniqueKey::new(vec!["slug".to_owned()])]);
+    }
+
+    #[test]
+    fn primary_key_added_later_makes_its_column_required() {
+        let table = one_table(
+            "CREATE TABLE tags (code TEXT, label TEXT);
+             ALTER TABLE tags ADD PRIMARY KEY (code);",
+        );
+        assert!(!table.columns[0].nullable);
+        assert_eq!(table.columns[0].rust_type, "String");
+        assert_eq!(table.columns[1].rust_type, "Option<String>");
+    }
+
+    #[test]
+    fn renaming_a_key_column_renames_it_in_every_key() {
+        let table = one_table(
+            "CREATE TABLE posts (id BIGSERIAL PRIMARY KEY, author_id UUID REFERENCES users (id) UNIQUE);
+             ALTER TABLE posts RENAME COLUMN id TO post_id;
+             ALTER TABLE posts RENAME COLUMN author_id TO writer_id;",
+        );
+        assert_eq!(table.primary_key, ["post_id"]);
+        assert_eq!(table.foreign_keys[0].column, "writer_id");
+        assert_eq!(table.unique_keys[0].columns, ["writer_id"]);
+    }
+
+    #[test]
+    fn dropping_a_key_column_drops_its_keys() {
+        let table = one_table(
+            "CREATE TABLE posts (id BIGINT PRIMARY KEY, author_id UUID REFERENCES users (id), title TEXT UNIQUE);
+             ALTER TABLE posts DROP COLUMN id, DROP COLUMN author_id, DROP COLUMN title, ADD COLUMN body TEXT;",
+        );
+        assert!(table.primary_key.is_empty());
+        assert!(table.foreign_keys.is_empty());
+        assert!(table.unique_keys.is_empty());
+        assert_eq!(column_names(&table), ["body"]);
+    }
+
+    #[test]
+    fn ignores_statements_that_leave_the_model_unchanged() {
+        let parsed = parse(
+            "CREATE TABLE notes (id BIGSERIAL PRIMARY KEY, body TEXT);
+             ALTER TABLE notes ENABLE ROW LEVEL SECURITY;
+             CREATE POLICY notes_tenant ON notes USING (true);
+             CREATE INDEX notes_body_index ON notes (body);
+             GRANT SELECT ON notes TO reader;
+             CREATE FUNCTION touch() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;
+             CREATE TRIGGER notes_touch BEFORE UPDATE ON notes FOR EACH ROW EXECUTE FUNCTION touch();
+             COMMENT ON TABLE notes IS 'Notes';
+             SELECT prepare_table('notes');",
+        );
+        assert!(parsed.failures.is_empty(), "{:?}", parsed.failures);
+        let table = &parsed.schema.tables[0];
+        assert_eq!(column_names(table), ["id", "body"]);
+        assert!(table.unique_keys.is_empty());
+    }
+
+    #[test]
+    fn rejects_unsupported_alter_table_on_a_known_table_with_its_location() {
+        let parsed = parse_files(&[
+            (
+                "migrations/0001_create.up.sql",
+                "CREATE TABLE prices (id BIGSERIAL PRIMARY KEY, amount INTEGER NOT NULL);",
+            ),
+            (
+                "migrations/0002_widen.up.sql",
+                "-- widen prices\n\nALTER TABLE prices ALTER COLUMN amount TYPE BIGINT;",
+            ),
+        ]);
+        assert!(parsed.schema.tables.is_empty());
+        assert_eq!(parsed.failures.len(), 1);
+        let message = parsed.failures[0].to_string();
+        assert!(
+            message.starts_with(&format!(
+                "{}:3: table `prices`: unsupported ALTER TABLE clause `ALTER COLUMN amount",
+                Path::new("migrations/0002_widen.up.sql").display()
+            )),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn rejects_constraints_that_are_not_keys() {
+        let parsed = parse(
+            "CREATE TABLE prices (id BIGSERIAL PRIMARY KEY, amount INTEGER NOT NULL);
+             ALTER TABLE prices ADD CONSTRAINT positive CHECK (amount > 0);",
+        );
+        assert!(parsed.schema.tables.is_empty());
+        assert!(
+            parsed.failures[0]
+                .reason
+                .contains("unsupported ALTER TABLE clause `ADD CONSTRAINT positive CHECK"),
+            "{:?}",
+            parsed.failures
+        );
+    }
+
+    #[test]
+    fn rejects_alter_table_naming_a_missing_column() {
+        let parsed = parse(
+            "CREATE TABLE notes (id BIGSERIAL PRIMARY KEY);
+             ALTER TABLE notes RENAME COLUMN title TO headline;",
+        );
+        assert!(parsed.schema.tables.is_empty());
+        assert!(
+            parsed.failures[0]
+                .reason
+                .contains("RENAME COLUMN: column `title` does not exist")
+        );
+    }
+
+    #[test]
+    fn ignores_alter_table_on_unknown_tables() {
+        let table = one_table(
+            "CREATE TABLE notes (id BIGSERIAL PRIMARY KEY);
+             ALTER TABLE other.notes ALTER COLUMN id TYPE BIGINT;
+             ALTER TABLE elsewhere ADD COLUMN x INTERVAL;",
+        );
+        assert_eq!(column_names(&table), ["id"]);
+    }
+
+    #[test]
+    fn rejects_columns_added_with_unsupported_types() {
+        let parsed = parse(
+            "CREATE TABLE shifts (id BIGSERIAL PRIMARY KEY);
+             ALTER TABLE public.shifts ADD COLUMN span INTERVAL;",
+        );
+        assert!(parsed.schema.tables.is_empty());
+        assert_eq!(parsed.failures[0].line, Some(2));
+        assert!(
+            parsed.failures[0]
+                .reason
+                .contains("ADD COLUMN: column `span`: type `INTERVAL` is not supported yet"),
+            "{:?}",
+            parsed.failures
+        );
+    }
+
+    #[test]
+    fn records_unique_indexes_on_plain_columns() {
+        let table = one_table(
+            "CREATE TABLE users (id BIGSERIAL PRIMARY KEY, email TEXT, deleted_at TIMESTAMPTZ);
+             CREATE UNIQUE INDEX users_email_live ON users (email) WHERE deleted_at IS NULL;
+             CREATE UNIQUE INDEX users_email_lower ON users (lower(email));
+             CREATE INDEX users_deleted ON users (deleted_at);",
+        );
+        assert_eq!(
+            table.unique_keys,
+            [UniqueKey {
+                columns: vec!["email".to_owned()],
+                predicate: Some("deleted_at IS NULL".to_owned()),
+            }]
+        );
     }
 }

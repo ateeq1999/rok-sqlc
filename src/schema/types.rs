@@ -17,6 +17,9 @@ pub struct Table {
     /// Primary key columns in declaration order; empty when the table has no primary key.
     pub primary_key: Vec<String>,
     pub foreign_keys: Vec<ForeignKey>,
+    /// Unique constraints and unique indexes on plain columns, in the order
+    /// the migrations declare them; the primary key is not repeated here.
+    pub unique_keys: Vec<UniqueKey>,
 }
 
 impl Table {
@@ -138,4 +141,25 @@ pub struct ForeignKey {
     pub column: String,
     pub referenced_table: String,
     pub referenced_column: String,
+}
+
+/// Columns no two rows share, from a unique constraint or a unique index on
+/// plain columns. Input to unique-key lookups; nothing reads it yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UniqueKey {
+    /// Key columns in declaration order.
+    pub columns: Vec<String>,
+    /// The `WHERE` condition of a partial unique index, as SQL text; `None`
+    /// for a constraint or a full index.
+    pub predicate: Option<String>,
+}
+
+impl UniqueKey {
+    /// A unique key with no partial-index condition.
+    pub fn new(columns: Vec<String>) -> Self {
+        Self {
+            columns,
+            predicate: None,
+        }
+    }
 }

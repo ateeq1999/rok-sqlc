@@ -29,6 +29,7 @@ fn generate_fixture() -> Result<Vec<PathBuf>> {
     config.schema = vec![
         manifest_dir().join("modules/inventory/schema.sql"),
         app_dir().join("extra_schema.sql"),
+        app_dir().join("alter_schema.sql"),
     ];
     // A directory: each query file becomes its own `db::queries::<stem>` module.
     config.queries = vec![app_dir().join("queries")];

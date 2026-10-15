@@ -418,6 +418,7 @@ pub(crate) mod test_support {
             columns,
             primary_key: primary_key.iter().map(|key| (*key).to_owned()).collect(),
             foreign_keys: Vec::new(),
+            unique_keys: Vec::new(),
         }
     }
 }
