@@ -61,10 +61,17 @@ pub struct QueryFailure {
     /// The query name, or `line N` when no valid name was annotated.
     pub query: String,
     pub reason: String,
+    /// The query file, when the failure is located in it.
+    pub path: Option<PathBuf>,
+    /// 1-based line of the query's `-- name:` annotation, when known.
+    pub line: Option<usize>,
 }
 
 impl fmt::Display for QueryFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let (Some(path), Some(line)) = (&self.path, self.line) {
+            write!(f, "{}:{line}: ", path.display())?;
+        }
         write!(f, "query `{}`: {}", self.query, self.reason)
     }
 }

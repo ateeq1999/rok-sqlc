@@ -96,6 +96,8 @@ pub struct QueryFailure {
     /// The query name, or `line N` when no valid name was annotated.
     pub query: String,
     pub reason: String,
+    /// 1-based line of the query's `-- name:` annotation, when known.
+    pub line: Option<usize>,
 }
 
 impl fmt::Display for QueryFailure {
@@ -109,7 +111,14 @@ impl QueryFailure {
         Self {
             query: query.into(),
             reason: reason.into(),
+            line: None,
         }
+    }
+
+    /// The same failure, located at the query's annotation line.
+    pub fn at_line(mut self, line: usize) -> Self {
+        self.line = Some(line);
+        self
     }
 }
 
