@@ -6,7 +6,7 @@ use tempfile::TempDir;
 
 const SIMPLE_SCHEMA: &str = "CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);";
 const MIXED_SCHEMA: &str = "CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);\n\
-     CREATE TABLE money (id BIGSERIAL PRIMARY KEY, amount NUMERIC(12, 2) NOT NULL);";
+     CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, duration INTERVAL NOT NULL);";
 
 fn run(args: &[&str]) -> Result<()> {
     let mut full: Vec<String> = vec!["rok-sqlc".to_owned()];
@@ -96,6 +96,34 @@ fn generates_composite_keys_arrays_and_time() -> Result<()> {
 }
 
 #[test]
+fn generates_decimal_columns_with_dependency_hints() -> Result<()> {
+    let dir = TempDir::new()?;
+    let schema = dir.path().join("schema.sql");
+    fs::write(
+        &schema,
+        "CREATE TABLE money (id BIGSERIAL PRIMARY KEY, amount NUMERIC(18, 2) NOT NULL, fee DECIMAL);",
+    )?;
+
+    run(&[
+        "generate",
+        "--schema",
+        schema.to_str().unwrap(),
+        "--output",
+        output_dir(&dir).to_str().unwrap(),
+    ])?;
+
+    let out = output_dir(&dir);
+    let models = fs::read_to_string(out.join("money/models.rs"))?;
+    assert!(models.contains("pub amount: rust_decimal::Decimal,"));
+    assert!(models.contains("pub fee: Option<rust_decimal::Decimal>,"));
+
+    let db_mod = fs::read_to_string(out.join("mod.rs"))?;
+    assert!(db_mod.contains("\"rust_decimal\""));
+    assert!(db_mod.contains("rust_decimal = \"1\""));
+    Ok(())
+}
+
+#[test]
 fn dry_run_writes_nothing() -> Result<()> {
     let dir = TempDir::new()?;
     let schema = dir.path().join("schema.sql");
@@ -150,7 +178,7 @@ fn lenient_skips_unsupported_and_generates_rest() -> Result<()> {
 
     let out = output_dir(&dir);
     assert!(out.join("users/models.rs").exists());
-    assert!(!out.join("money").exists());
+    assert!(!out.join("spans").exists());
     Ok(())
 }
 

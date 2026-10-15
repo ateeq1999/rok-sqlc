@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use anyhow::{Context, Result, bail};
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use sqlparser::ast::{
-    ArrayElemTypeDef, ColumnOption, CreateTable, DataType, Expr, Ident, IndexColumn, ObjectName,
-    ObjectNamePart, Statement, TableConstraint, TimezoneInfo,
+    ArrayElemTypeDef, ColumnOption, CreateTable, DataType, ExactNumberInfo, Expr, Ident,
+    IndexColumn, ObjectName, ObjectNamePart, Statement, TableConstraint, TimezoneInfo,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -300,6 +300,10 @@ fn map_type(data_type: &DataType) -> std::result::Result<(String, String), Strin
             "chrono::DateTime<chrono::Utc>"
         }
         DataType::JSON | DataType::JSONB => "serde_json::Value",
+        DataType::Numeric(info) | DataType::Decimal(info) => {
+            check_decimal_precision(info)?;
+            "rust_decimal::Decimal"
+        }
         DataType::Array(element) => {
             let inner = array_element_type(element)?;
             let (base, _) = map_type(inner)?;
@@ -329,6 +333,22 @@ fn array_element_type(element: &ArrayElemTypeDef) -> std::result::Result<&DataTy
         | ArrayElemTypeDef::Parenthesis(inner) => Ok(inner),
         ArrayElemTypeDef::None => Err("array type has no element type".to_owned()),
     }
+}
+
+const DECIMAL_MAX_PRECISION: u64 = 28;
+
+fn check_decimal_precision(info: &ExactNumberInfo) -> std::result::Result<(), String> {
+    let precision = match info {
+        ExactNumberInfo::None => return Ok(()),
+        ExactNumberInfo::Precision(precision)
+        | ExactNumberInfo::PrecisionAndScale(precision, _) => *precision,
+    };
+    if precision > DECIMAL_MAX_PRECISION {
+        return Err(format!(
+            "NUMERIC precision {precision} exceeds rust_decimal's {DECIMAL_MAX_PRECISION} significant digits"
+        ));
+    }
+    Ok(())
 }
 
 fn is_rust_keyword(name: &str) -> bool {
@@ -462,9 +482,26 @@ mod tests {
     #[test]
     fn rejects_unsupported_type() {
         let parsed =
-            parse("CREATE TABLE money (id BIGSERIAL PRIMARY KEY, amount NUMERIC(12, 2) NOT NULL);");
+            parse("CREATE TABLE shifts (id BIGSERIAL PRIMARY KEY, span INTERVAL NOT NULL);");
         assert_eq!(parsed.schema.tables.len(), 0);
-        assert!(parsed.failures[0].reason.contains("NUMERIC(12,2)"));
+        assert!(parsed.failures[0].reason.contains("not supported"));
+    }
+
+    #[test]
+    fn maps_numeric_and_decimal_columns() {
+        let table = one_table(
+            "CREATE TABLE money (amount NUMERIC(12, 2) NOT NULL, fee DECIMAL, rate NUMERIC(6,3));",
+        );
+        assert_eq!(table.columns[0].rust_type, "rust_decimal::Decimal");
+        assert_eq!(table.columns[1].rust_type, "Option<rust_decimal::Decimal>");
+        assert_eq!(table.columns[2].rust_type, "Option<rust_decimal::Decimal>");
+    }
+
+    #[test]
+    fn rejects_decimal_precision_beyond_rust_decimal() {
+        let parsed = parse("CREATE TABLE money (amount NUMERIC(50, 10) NOT NULL);");
+        assert_eq!(parsed.schema.tables.len(), 0);
+        assert!(parsed.failures[0].reason.contains("exceeds"));
     }
 
     #[test]
@@ -515,9 +552,9 @@ mod tests {
 
     #[test]
     fn rejects_arrays_of_unsupported_elements() {
-        let parsed = parse("CREATE TABLE money (amounts NUMERIC[] NOT NULL);");
+        let parsed = parse("CREATE TABLE shifts (spans INTERVAL[] NOT NULL);");
         assert_eq!(parsed.schema.tables.len(), 0);
-        assert!(parsed.failures[0].reason.contains("NUMERIC"));
+        assert!(parsed.failures[0].reason.contains("not supported"));
     }
 
     #[test]
@@ -564,7 +601,7 @@ mod tests {
     #[test]
     fn collects_failures_per_table() {
         let parsed =
-            parse("CREATE TABLE good (id BIGSERIAL PRIMARY KEY); CREATE TABLE bad (x NUMERIC);");
+            parse("CREATE TABLE good (id BIGSERIAL PRIMARY KEY); CREATE TABLE bad (x INTERVAL);");
         assert_eq!(parsed.schema.tables.len(), 1);
         assert_eq!(parsed.failures.len(), 1);
         assert_eq!(parsed.failures[0].table, "bad");

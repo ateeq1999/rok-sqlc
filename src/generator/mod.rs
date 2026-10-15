@@ -40,6 +40,7 @@ fn dependency_hints(tables: &[Table]) -> String {
     let mut uses_uuid = false;
     let mut uses_chrono = false;
     let mut uses_serde_json = false;
+    let mut uses_rust_decimal = false;
 
     for table in tables {
         for column in &table.columns {
@@ -51,6 +52,9 @@ fn dependency_hints(tables: &[Table]) -> String {
             }
             if column.rust_type.contains("serde_json::") {
                 uses_serde_json = true;
+            }
+            if column.rust_type.contains("rust_decimal::") {
+                uses_rust_decimal = true;
             }
         }
     }
@@ -65,6 +69,9 @@ fn dependency_hints(tables: &[Table]) -> String {
     if uses_serde_json {
         features.push_str(", \"json\"");
     }
+    if uses_rust_decimal {
+        features.push_str(", \"rust_decimal\"");
+    }
 
     let mut hints = format!("//   sqlx = {{ version = \"0.8\", features = [{features}] }}\n");
     if uses_uuid {
@@ -75,6 +82,9 @@ fn dependency_hints(tables: &[Table]) -> String {
     }
     if uses_serde_json {
         hints.push_str("//   serde_json = \"1\"\n");
+    }
+    if uses_rust_decimal {
+        hints.push_str("//   rust_decimal = \"1\"\n");
     }
     hints
 }
@@ -134,6 +144,15 @@ mod tests {
         assert!(rendered.contains("\"uuid\""));
         assert!(!rendered.contains("\"chrono\""));
         assert!(rendered.contains("uuid = \"1\""));
+    }
+
+    #[test]
+    fn db_mod_hints_rust_decimal_when_used() {
+        let tables = vec![sample_table("rust_decimal::Decimal")];
+        let rendered = render_db_mod(&tables);
+        assert!(rendered.contains("\"rust_decimal\""));
+        assert!(rendered.contains("rust_decimal = \"1\""));
+        assert!(!rendered.contains("\"uuid\""));
     }
 
     #[test]

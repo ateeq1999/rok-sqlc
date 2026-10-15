@@ -29,8 +29,9 @@ files.
 
 -   Start with PostgreSQL DDL and SQLx's `postgres` feature.
 -   Support straightforward `CREATE TABLE` statements, common scalar
-    types, array columns of those scalars, primary keys (single or
-    composite), nullability, and simple defaults.
+    types (including `NUMERIC`/`DECIMAL` as `rust_decimal::Decimal`),
+    array columns of those scalars, primary keys (single or composite),
+    nullability, and simple defaults.
 -   Generate `get_by_id` with one parameter per primary key column
     (single-column and composite keys alike); `update` and `delete`
     follow the same rule when they land.

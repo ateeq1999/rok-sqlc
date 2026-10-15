@@ -12,6 +12,7 @@ CREATE TABLE feature_line_items (
     weekdays INTEGER[],
     reporter_ids UUID[],
     cut_off TIME,
+    unit_price NUMERIC(18,2) NOT NULL,
     PRIMARY KEY (order_id, product_id)
 );
 "#;

@@ -26,8 +26,8 @@ const CORPUS: &[Expected] = &[
     },
     Expected {
         module: "accounting",
-        tables: &["accounts"],
-        failures: &["journal_entries", "ledger_lines"],
+        tables: &["accounts", "journal_entries", "ledger_lines"],
+        failures: &[],
     },
     Expected {
         module: "hr",
