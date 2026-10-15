@@ -12,6 +12,11 @@ pub struct WriteReport {
     pub refused: Vec<(PathBuf, String)>,
 }
 
+/// Whether `path` is an existing file carrying the rok-sqlc generated header.
+pub fn is_generated_file(path: &Path) -> bool {
+    fs::read_to_string(path).is_ok_and(|contents| contents.starts_with(GENERATED_MARKER))
+}
+
 pub fn apply_files(files: &[(PathBuf, String)], dry_run: bool, force: bool) -> Result<WriteReport> {
     let mut report = WriteReport::default();
     let mut writes: Vec<(&PathBuf, &String)> = Vec::new();

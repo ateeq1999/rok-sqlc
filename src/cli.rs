@@ -5,7 +5,10 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use heck::ToSnakeCase;
 
-use crate::{generator, output, parser};
+use crate::output::is_generated_file;
+use crate::queries::AnalyzedQuery;
+use crate::schema::Table;
+use crate::{generator, output, parser, queries};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -42,7 +45,11 @@ enum Command {
         #[arg(long)]
         force: bool,
 
-        /// Skip unsupported tables with warnings instead of failing
+        /// SQLC-style annotated query file to generate `queries.rs` from
+        #[arg(short, long, value_name = "FILE")]
+        queries: Option<PathBuf>,
+
+        /// Skip unsupported tables and queries with warnings instead of failing
         #[arg(long)]
         lenient: bool,
     },
@@ -65,26 +72,40 @@ where
             resource,
             dry_run,
             force,
+            queries,
             lenient,
-        } => generate(
-            &schema,
-            &output,
-            resource.as_deref(),
+        } => generate(&GenerateOptions {
+            schema_path: &schema,
+            output_dir: &output,
+            resource: resource.as_deref(),
+            queries_path: queries.as_deref(),
             dry_run,
             force,
             lenient,
-        ),
+        }),
     }
 }
 
-fn generate(
-    schema_path: &Path,
-    output_dir: &Path,
-    resource: Option<&str>,
+struct GenerateOptions<'a> {
+    schema_path: &'a Path,
+    output_dir: &'a Path,
+    resource: Option<&'a str>,
+    queries_path: Option<&'a Path>,
     dry_run: bool,
     force: bool,
     lenient: bool,
-) -> Result<()> {
+}
+
+fn generate(options: &GenerateOptions<'_>) -> Result<()> {
+    let GenerateOptions {
+        schema_path,
+        output_dir,
+        resource,
+        queries_path,
+        dry_run,
+        force,
+        lenient,
+    } = *options;
     let sql = std::fs::read_to_string(schema_path)
         .with_context(|| format!("failed to read schema `{}`", schema_path.display()))?;
 
@@ -163,7 +184,17 @@ fn generate(
         bail!("all tables are unsupported; see warnings above");
     }
 
-    let files = generator::plan_files(&sql, &selected, output_dir);
+    let analyzed = match queries_path {
+        Some(path) => Some(analyze_query_file(path, &parsed, &selected, lenient)?),
+        None => None,
+    };
+    let queries_module = match &analyzed {
+        Some(analyzed) => generator::QueriesModule::Generate(analyzed),
+        None if is_generated_file(&output_dir.join("queries.rs")) => generator::QueriesModule::Keep,
+        None => generator::QueriesModule::None,
+    };
+
+    let files = generator::plan_files_with_queries(&sql, &selected, queries_module, output_dir);
     let report = output::apply_files(&files, dry_run, force)?;
 
     for path in &report.written {
@@ -192,4 +223,62 @@ fn generate(
     }
 
     Ok(())
+}
+
+/// Parses and analyzes the query file. Unsupported queries abort the run
+/// unless `lenient`, in which case they are skipped with a warning.
+fn analyze_query_file(
+    path: &Path,
+    parsed: &parser::ParsedSchema,
+    selected: &[Table],
+    lenient: bool,
+) -> Result<Vec<AnalyzedQuery>> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read query file `{}`", path.display()))?;
+    if selected.iter().any(|table| table.module_name == "queries") {
+        bail!(
+            "table module `queries` collides with the generated `queries.rs`; rename the table or omit --queries"
+        );
+    }
+
+    let (defs, mut failures) = queries::parse_query_file(&text);
+    if defs.is_empty() && failures.is_empty() {
+        bail!(
+            "query file `{}` contains no `-- name:` annotated queries",
+            path.display()
+        );
+    }
+    let generated_modules = selected
+        .iter()
+        .map(|table| table.module_name.clone())
+        .collect();
+    let (analyzed, analysis_failures) = queries::analyze_queries(
+        &defs,
+        &parsed.schema.tables,
+        &generated_modules,
+        &parsed.failures,
+    );
+    failures.extend(analysis_failures);
+
+    if !failures.is_empty() {
+        if lenient {
+            for failure in &failures {
+                eprintln!(
+                    "warning: query `{}` skipped: {}",
+                    failure.query, failure.reason
+                );
+            }
+        } else {
+            for failure in &failures {
+                eprintln!("error: {failure}");
+            }
+            bail!(
+                "{} unsupported quer{} in `{}`; pass --lenient to skip them",
+                failures.len(),
+                if failures.len() == 1 { "y" } else { "ies" },
+                path.display()
+            );
+        }
+    }
+    Ok(analyzed)
 }

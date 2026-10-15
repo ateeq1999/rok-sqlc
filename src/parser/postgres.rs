@@ -258,14 +258,14 @@ struct RawColumn {
     is_generated: bool,
 }
 
-fn ident_name(ident: &Ident) -> String {
+pub(crate) fn ident_name(ident: &Ident) -> String {
     match ident.quote_style {
         Some('"') => ident.value.clone(),
         _ => ident.value.to_lowercase(),
     }
 }
 
-fn object_leaf_name(name: &ObjectName) -> String {
+pub(crate) fn object_leaf_name(name: &ObjectName) -> String {
     name.0
         .iter()
         .rev()
@@ -300,7 +300,7 @@ fn index_column_name(column: &IndexColumn) -> Option<String> {
     }
 }
 
-fn map_type(data_type: &DataType) -> std::result::Result<(String, String), String> {
+pub(crate) fn map_type(data_type: &DataType) -> std::result::Result<(String, String), String> {
     let base = match data_type {
         DataType::SmallInt(_) | DataType::Int2(_) => "i16",
         DataType::Int(_) | DataType::Int4(_) | DataType::Integer(_) => "i32",

@@ -55,6 +55,9 @@ rok-sqlc generate --schema ./schema.sql --output ./src/db --resource users
 # Show planned output without writing files
 rok-sqlc generate --schema ./schema.sql --output ./src/db --dry-run
 
+# Also generate typed functions for annotated queries (db/queries.rs)
+rok-sqlc generate --schema ./schema.sql --queries ./queries.sql --output ./src/db
+
 # Print version/help
 rok-sqlc --help
 rok-sqlc generate --help
@@ -834,6 +837,15 @@ In particular, `BIGSERIAL` maps to `i64`, UUID columns map to
 `uuid::Uuid`, and nullable columns map to `Option<T>`.
 
 ## 11. Better SQLC-like workflow: schema + query files
+
+> **Implemented (ADR 0008).** Pass `--queries queries.sql` to generate
+> `db/queries.rs`. Supported return modes are `:one` (`fetch_one`),
+> `:maybe_one` (`fetch_optional`), `:many`, `:exec`, and `:execrows`.
+> Parameter and result types are inferred from the schema where the SQL
+> determines them; elsewhere, declare them with `-- param: $N name Type`
+> or `-- column: name Type`. Untypable queries fail with a diagnostic
+> instead of being guessed. The design notes below predate the
+> implementation.
 
 After schema-based CRUD generation works, add query files:
 

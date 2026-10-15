@@ -46,6 +46,115 @@ async fn generated_crud_against_postgres() {
     table_without_primary_key(&pool).await;
     uuid_keys_listing_and_pagination(&pool).await;
     composite_keys_arrays_and_numeric(&pool).await;
+    annotated_queries(&pool).await;
+}
+
+async fn annotated_queries(pool: &PgPool) {
+    use db::queries::{self, CreateProductsParams};
+
+    let category = queries::create_category(pool, "query-cat".to_owned(), None)
+        .await
+        .unwrap();
+    assert_eq!(category.name, "query-cat");
+    assert_eq!(category.description, None);
+
+    let supplier = db::suppliers::write::create(
+        pool,
+        db::suppliers::models::NewSupplier {
+            id: uuid::Uuid::from_u128(900),
+            name: "Acme".to_owned(),
+            contact_email: None,
+            is_active: None,
+            created_at: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let inserted = queries::create_products(
+        pool,
+        CreateProductsParams {
+            id: uuid::Uuid::from_u128(101),
+            sku: "Q-1".to_owned(),
+            name: "Query hammer".to_owned(),
+            category_id: category.id,
+            supplier_id: Some(supplier.id),
+            id_2: uuid::Uuid::from_u128(102),
+            sku_2: "Q-2".to_owned(),
+            name_2: "Query anvil".to_owned(),
+            category_id_2: category.id,
+            supplier_id_2: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(inserted, 2, "both VALUES rows bind to the right placeholders");
+
+    let hammer = queries::get_product_by_sku(pool, "Q-1".to_owned())
+        .await
+        .unwrap()
+        .expect("Q-1 exists");
+    assert_eq!(hammer.id, uuid::Uuid::from_u128(101));
+    assert_eq!(hammer.name, "Query hammer");
+    assert_eq!(
+        queries::get_product_by_sku(pool, "missing".to_owned())
+            .await
+            .unwrap(),
+        None
+    );
+
+    queries::update_product_stock(pool, uuid::Uuid::from_u128(101), 50)
+        .await
+        .unwrap();
+    let low_stock: Vec<String> = queries::list_products_by_category(pool, category.id, 10)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.sku)
+        .collect();
+    assert_eq!(low_stock, ["Q-2"], "only the anvil has stock <= 10");
+
+    let joined = queries::list_products_with_category(
+        pool,
+        vec!["Q-1".to_owned(), "Q-2".to_owned()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(joined.len(), 2);
+    assert_eq!(joined[0].category_name, "query-cat");
+    assert_eq!(joined[0].supplier_name.as_deref(), Some("Acme"));
+    assert_eq!(joined[1].supplier_name, None, "LEFT JOIN without a supplier");
+
+    assert_eq!(
+        queries::count_products_in_category(pool, category.id)
+            .await
+            .unwrap(),
+        2
+    );
+    let stock = queries::category_stock(pool).await.unwrap();
+    let ours = stock
+        .iter()
+        .find(|row| row.category_id == category.id)
+        .expect("category has stock");
+    assert_eq!(ours.total_stock, 50);
+
+    let found = queries::search_products(pool, "%ANVIL%".to_owned())
+        .await
+        .unwrap();
+    assert_eq!(found, ["Q-2"]);
+
+    assert_eq!(
+        queries::delete_product_by_sku(pool, "Q-2".to_owned())
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        queries::delete_product_by_sku(pool, "Q-2".to_owned())
+            .await
+            .unwrap(),
+        0
+    );
 }
 
 fn base_patch_target() -> NewPatchTarget {

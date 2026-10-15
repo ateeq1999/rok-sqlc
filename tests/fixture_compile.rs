@@ -44,8 +44,34 @@ fn generate_fixture() -> Result<Vec<PathBuf>> {
         parsed.failures
     );
 
-    let files =
-        rok_sqlc::generator::plan_files(&schema, &parsed.schema.tables, &app_dir().join("src/db"));
+    let queries_path = app_dir().join("queries.sql");
+    let queries = fs::read_to_string(&queries_path)
+        .with_context(|| format!("failed to read {}", queries_path.display()))?;
+    let (defs, mut query_failures) = rok_sqlc::queries::parse_query_file(&queries);
+    let modules = parsed
+        .schema
+        .tables
+        .iter()
+        .map(|table| table.module_name.clone())
+        .collect();
+    let (analyzed, analysis_failures) = rok_sqlc::queries::analyze_queries(
+        &defs,
+        &parsed.schema.tables,
+        &modules,
+        &parsed.failures,
+    );
+    query_failures.extend(analysis_failures);
+    ensure!(
+        query_failures.is_empty(),
+        "fixture queries must all be supported, got failures: {query_failures:?}"
+    );
+
+    let files = rok_sqlc::generator::plan_files_with_queries(
+        &schema,
+        &parsed.schema.tables,
+        rok_sqlc::generator::QueriesModule::Generate(&analyzed),
+        &app_dir().join("src/db"),
+    );
     rok_sqlc::output::apply_files(&files, false, true)?;
     Ok(files.into_iter().map(|(path, _)| path).collect())
 }

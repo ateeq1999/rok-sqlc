@@ -24,6 +24,14 @@ _Avoid_: test schema, sample
 SQLC-annotated SQL authored alongside a module fixture (`modules/<module>/queries.sql`) describing application-specific statements: data manipulation, filtered reads, pagination, transactions.
 _Avoid_: schema (for DML content), script
 
+**Return mode**:
+The `:one`, `:maybe_one`, `:many`, `:exec`, or `:execrows` suffix of a query annotation, choosing how rows are fetched and what the generated function returns.
+_Avoid_: command, kind
+
+**Query override**:
+A `-- param: $N name Type` or `-- column: name Type` line that declares a type the generator cannot infer from the SQL and schema.
+_Avoid_: hint, annotation (reserved for `-- name:`)
+
 ## Writes
 
 **Generated column**:

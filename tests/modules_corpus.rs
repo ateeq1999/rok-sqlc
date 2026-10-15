@@ -99,3 +99,97 @@ fn every_module_has_a_query_file() -> Result<()> {
     }
     Ok(())
 }
+
+/// Expected query-file outcome for one module fixture.
+struct ExpectedQueries {
+    module: &'static str,
+    /// Generated function names, in file order.
+    functions: &'static [&'static str],
+    /// Rejected queries with a fragment of the reason.
+    rejected: &'static [(&'static str, &'static str)],
+}
+
+const QUERY_CORPUS: &[ExpectedQueries] = &[
+    ExpectedQueries {
+        module: "inventory",
+        functions: &[
+            "create_product",
+            "create_products",
+            "update_product_stock",
+            "delete_product",
+            "list_products_by_category",
+            "list_products_offset",
+            "upsert_product",
+        ],
+        rejected: &[],
+    },
+    ExpectedQueries {
+        module: "sales",
+        functions: &[
+            "create_customer",
+            "list_orders_cursor",
+            "update_order_status",
+        ],
+        rejected: &[("CreateOrderWithItems", "contains 4 statements")],
+    },
+    ExpectedQueries {
+        module: "accounting",
+        functions: &["create_account", "list_accounts", "deactivate_account"],
+        rejected: &[],
+    },
+    ExpectedQueries {
+        module: "hr",
+        functions: &["create_department"],
+        rejected: &[(
+            "ListEmployeesByDepartment",
+            "table `employees` is not generatable",
+        )],
+    },
+];
+
+#[test]
+fn module_query_files_match_expected_outcomes() -> Result<()> {
+    for ExpectedQueries {
+        module,
+        functions,
+        rejected,
+    } in QUERY_CORPUS
+    {
+        let dir = modules_dir().join(module);
+        let parsed = parse_schema(&fs::read_to_string(dir.join("schema.sql"))?)?;
+        let (defs, mut failures) =
+            rok_sqlc::queries::parse_query_file(&fs::read_to_string(dir.join("queries.sql"))?);
+        let modules = parsed
+            .schema
+            .tables
+            .iter()
+            .map(|table| table.module_name.clone())
+            .collect();
+        let (analyzed, analysis_failures) = rok_sqlc::queries::analyze_queries(
+            &defs,
+            &parsed.schema.tables,
+            &modules,
+            &parsed.failures,
+        );
+        failures.extend(analysis_failures);
+
+        let actual: Vec<&str> = analyzed
+            .iter()
+            .map(|query| query.fn_name.as_str())
+            .collect();
+        if actual != *functions {
+            bail!("module `{module}`: expected functions {functions:?}, got {actual:?}");
+        }
+        if failures.len() != rejected.len() {
+            bail!("module `{module}`: expected rejections {rejected:?}, got {failures:?}");
+        }
+        for (failure, (query, reason)) in failures.iter().zip(rejected.iter()) {
+            if failure.query != *query || !failure.reason.contains(reason) {
+                bail!(
+                    "module `{module}`: expected `{query}` rejected with `{reason}`, got {failure}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
