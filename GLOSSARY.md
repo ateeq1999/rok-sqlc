@@ -1,6 +1,6 @@
 # rok-sqlc
 
-A CLI that reads PostgreSQL schema files and generates SQLx-based Rust modules.
+A tool that turns SQL a developer writes (schema migrations and annotated queries) into SQLx-based Rust code for querying PostgreSQL.
 
 ## Language
 
@@ -17,11 +17,11 @@ A verbatim copy of the input schema SQL embedded in generated code as a constant
 _Avoid_: migration
 
 **Module fixture**:
-An ERP database schema under `modules/` used as a test input; each carries an explicit expected outcome.
+An ERP schema and query set under `modules/` used only as test input; never a layout users are expected to follow.
 _Avoid_: test schema, sample
 
 **Query file**:
-SQLC-annotated SQL authored alongside a module fixture (`modules/<module>/queries.sql`) describing application-specific statements: data manipulation, filtered reads, pagination, transactions.
+A file of annotated SQL statements a developer writes; each annotated statement becomes one generated function.
 _Avoid_: schema (for DML content), script
 
 **Return mode**:
@@ -31,6 +31,58 @@ _Avoid_: command, kind
 **Query override**:
 A `-- param: $N name Type` or `-- column: name Type` line that declares a type the generator cannot infer from the SQL and schema.
 _Avoid_: hint, annotation (reserved for `-- name:`)
+
+**Migration**:
+One schema file a developer writes; taken in order, a project's migrations describe its tables.
+_Avoid_: schema file (when several are meant)
+
+**Convention**:
+An opt-in rule about what certain columns mean across tables (for example, which column scopes rows to a tenant), changing what is generated for every table that has the column.
+_Avoid_: rule, policy (reserved for PostgreSQL row-level security)
+
+**Preset**:
+A named bundle of conventions, such as the conventions of the Rok ERP.
+_Avoid_: profile, template
+
+**Tenant column**:
+The column that says which tenant (organization) a row belongs to; under the tenant convention, every generated operation on such a table is scoped to one tenant given by the caller.
+_Avoid_: owner, account
+
+**Soft delete**:
+Marking a row deleted by recording when it was deleted, instead of removing it; soft-deleted rows are invisible to generated reads unless asked for, and can be restored.
+_Avoid_: archive, trash
+
+**Permanent delete**:
+Removing a row from the table, as opposed to a soft delete.
+_Avoid_: hard delete, purge
+
+**Unique key**:
+A set of columns no two live rows share (the primary key, a unique constraint, or an eligible unique index); each one gets a generated lookup.
+_Avoid_: natural key, alternate key
+
+**Drift**:
+A difference between the generated files on disk and what the current SQL would generate.
+_Avoid_: out of sync, dirty
+
+**Stale file**:
+A generated file whose source no longer exists (for example, a dropped table); generation removes it.
+_Avoid_: orphan, leftover
+
+**Typed id**:
+A distinct Rust type for one table's key, used wherever that key appears, so keys of different tables cannot be mixed up.
+_Avoid_: id wrapper, newtype (in user-facing text)
+
+**Managed column**:
+A column the database maintains itself on write (for example, a last-updated time); callers never supply it.
+_Avoid_: system column, audit column
+
+**Version column**:
+A column the database advances on every update, letting an update proceed only when the row is still at the version the caller last saw (optimistic concurrency).
+_Avoid_: revision, lock column
+
+**Value-list column**:
+A text column restricted to a fixed list of values, treated like an enumerated type.
+_Avoid_: check enum, status string
 
 ## Writes
 
@@ -95,9 +147,17 @@ Two has-many-through relationships over a shared join table.
 _Avoid_: m2m
 
 **Join table**:
-An intermediate table holding two foreign keys that implements a many-to-many.
+A table whose two (non-tenant) foreign keys together form a unique key, implementing a many-to-many; it may carry columns of its own.
 _Avoid_: pivot, junction
 
 **Polymorphic association**:
 A declared (never inferred) association whose foreign key and type discriminator may point at one of several tables.
 _Avoid_: FK (for this construct)
+
+**Loader**:
+A generated function that fetches one relationship for many already-fetched rows in a single round trip ("with" loading), instead of one query per row.
+_Avoid_: eager load (for the function itself), include
+
+**Relationship filter**:
+A condition on a related table that decides which rows match, without adding the related rows to the result.
+_Avoid_: join filter, nested where
