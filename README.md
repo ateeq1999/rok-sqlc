@@ -78,13 +78,17 @@ For `users` and `posts` tables:
 src/db/
 ├── mod.rs
 ├── schema.rs
+├── search.rs
+├── queries.rs        # only with --queries
 ├── users/
 │   ├── mod.rs
+│   ├── filter.rs
 │   ├── models.rs
 │   ├── read.rs
 │   └── write.rs
 └── posts/
     ├── mod.rs
+    ├── filter.rs
     ├── models.rs
     ├── read.rs
     └── write.rs
@@ -100,12 +104,23 @@ Responsibilities:
   `db/schema.rs`                      Verbatim snapshot of the input
                                       schema; never executed
 
+  `db/search.rs`                      Shared `Page`, `Sort`, and typed
+                                      filter conditions (`Ordered`,
+                                      `Text`, `Equality`)
+
+  `db/queries.rs`                     Functions for annotated queries
+                                      (`--queries`, ADR 0008)
+
+  `filter.rs`                         `XFilter` (per-column conditions
+                                      and null checks) and `XSortKey`
+
   `models.rs`                         Structs mapped from table columns
                                       (`X`, `NewX`, `UpdateX`; `X` is the
                                       singular table name)
 
   `read.rs`                           `get_by_id`, `exists_by_id`, `list`,
-                                      `list_page`, and `count` helpers
+                                      `list_page`, `count`, `search`, and
+                                      `search_after` helpers
 
   `write.rs`                          `create`, `update`, and `delete`
                                       helpers

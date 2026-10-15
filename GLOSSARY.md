@@ -52,6 +52,18 @@ _Avoid_: update model, diff
 
 ## Execution
 
+**Filter**:
+The generated `XFilter` struct a caller passes to `search`/`search_after`: one list of typed conditions per filterable column, all combined with `AND`, plus `x_is_null` checks for nullable columns.
+_Avoid_: where clause, query (for this struct)
+
+**Sort key**:
+A variant of the generated `XSortKey` enum: the allowlist of columns `search` may order by.
+_Avoid_: order-by string, sort column
+
+**Keyset pagination**:
+Paging by "rows after this primary key" (`search_after`) instead of by offset, so pages stay correct while rows are inserted or deleted.
+_Avoid_: cursor (when it means an offset)
+
 **Executor**:
 The generic `sqlx::PgExecutor` a generated CRUD function runs against; a caller passes `&pool` or `&mut *tx`, keeping the transaction boundary theirs.
 _Avoid_: pool (when it may be a transaction), connection

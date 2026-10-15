@@ -300,7 +300,7 @@ fn push_returning(output: &mut String, table: &Table) {
 
 /// The final `build_query_as().fetch_*().await` chain, kept on one line when
 /// it fits rustfmt's default `chain_width` of 60 and split per call otherwise.
-fn push_build_and_fetch(output: &mut String, table: &Table, fetch: &str) {
+pub(super) fn push_build_and_fetch(output: &mut String, table: &Table, fetch: &str) {
     let calls = [
         format!(".build_query_as::<{}>()", table.struct_name),
         format!(".{fetch}(executor)"),

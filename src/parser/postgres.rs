@@ -17,6 +17,9 @@ pub struct ParsedSchema {
     pub failures: Vec<TableFailure>,
 }
 
+/// Root modules rok-sqlc always generates next to the resource modules.
+const GENERATED_MODULES: &[&str] = &["schema", "search"];
+
 pub fn parse_schema(sql: &str) -> Result<ParsedSchema> {
     let dialect = PostgreSqlDialect {};
     let statements = Parser::parse_sql(&dialect, sql).context("invalid PostgreSQL SQL syntax")?;
@@ -30,6 +33,15 @@ pub fn parse_schema(sql: &str) -> Result<ParsedSchema> {
             continue;
         };
         match build_table(&create) {
+            Ok(table) if GENERATED_MODULES.contains(&table.module_name.as_str()) => {
+                failures.push(TableFailure {
+                    table: table.sql_name.clone(),
+                    reason: format!(
+                        "module name `{}` is reserved for the generated `db/{}.rs`",
+                        table.module_name, table.module_name
+                    ),
+                });
+            }
             Ok(table) => {
                 if seen_modules.insert(table.module_name.clone()) {
                     tables.push(table);
@@ -654,6 +666,20 @@ mod tests {
         assert_eq!(parsed.schema.tables.len(), 1);
         assert_eq!(parsed.failures.len(), 1);
         assert_eq!(parsed.failures[0].table, "bad");
+    }
+
+    #[test]
+    fn rejects_tables_named_after_generated_modules() {
+        let parsed = parse(
+            "CREATE TABLE search (id BIGSERIAL PRIMARY KEY); CREATE TABLE schema (id BIGSERIAL PRIMARY KEY);",
+        );
+        assert!(parsed.schema.tables.is_empty());
+        assert_eq!(parsed.failures.len(), 2);
+        assert!(
+            parsed.failures[0]
+                .reason
+                .contains("reserved for the generated `db/search.rs`")
+        );
     }
 
     #[test]

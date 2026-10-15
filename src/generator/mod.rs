@@ -1,6 +1,7 @@
 pub mod models;
 pub mod queries;
 pub mod read;
+pub mod search;
 pub mod sql;
 pub mod write;
 
@@ -48,6 +49,7 @@ pub fn plan_files_with_queries(
         let dir = output.join(&table.module_name);
         files.push((dir.join("mod.rs"), render_resource_mod()));
         files.push((dir.join("models.rs"), models::render(table)));
+        files.push((dir.join("filter.rs"), search::render_filter(table)));
         files.push((dir.join("read.rs"), read::render(table)));
         files.push((dir.join("write.rs"), write::render(table)));
     }
@@ -55,6 +57,7 @@ pub fn plan_files_with_queries(
     if let QueriesModule::Generate(analyzed) = queries {
         files.push((output.join("queries.rs"), queries::render(analyzed)));
     }
+    files.push((output.join("search.rs"), search::render_shared()));
     files.push((output.join("mod.rs"), render_db_mod(tables, queries)));
     files.push((output.join("schema.rs"), render_schema_snapshot(schema_sql)));
 
@@ -62,7 +65,10 @@ pub fn plan_files_with_queries(
 }
 
 fn render_resource_mod() -> String {
-    format!("{HEADER}\npub mod models;\npub mod read;\npub mod write;\n")
+    format!(
+        "{HEADER}\npub mod filter;
+pub mod models;\npub mod read;\npub mod write;\n"
+    )
 }
 
 /// The insert-input field type: columns with a database default are wrapped
@@ -252,6 +258,7 @@ pub fn render_db_mod(tables: &[Table], queries: QueriesModule<'_>) -> String {
         .map(|table| table.module_name.as_str())
         .collect();
     modules.push("schema");
+    modules.push("search");
     if queries.is_declared() {
         modules.push("queries");
     }
@@ -400,6 +407,7 @@ mod tests {
         assert!(render_db_mod(&tables, QueriesModule::Keep).contains(
             "pub mod queries;
 pub mod schema;
+pub mod search;
 pub mod users;"
         ));
         assert!(render_db_mod(&tables, QueriesModule::Generate(&[])).contains("pub mod queries;"));
