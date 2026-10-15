@@ -4,6 +4,7 @@ use super::search::SearchApi;
 use super::sql::{column_clause, key_order, key_predicate, table_ref};
 use super::{
     HEADER, StaticQuery, key_params, param_name, push_build_and_fetch, push_doc, push_fn_head,
+    types_import,
 };
 
 pub fn render(table: &Table) -> String {
@@ -34,8 +35,8 @@ pub fn render(table: &Table) -> String {
     output
 }
 
-/// The `use` lines for the search types `read.rs` needs, sorted the way
-/// rustfmt sorts them (`super::super::` before `super::filter`).
+/// The `use` lines for the search and enum types `read.rs` needs, sorted the
+/// way rustfmt sorts them (`super::super::` before `super::filter`).
 fn search_imports(table: &Table, api: SearchApi) -> String {
     let name = &table.struct_name;
     let mut shared = Vec::new();
@@ -59,6 +60,16 @@ fn search_imports(table: &Table, api: SearchApi) -> String {
     if !shared.is_empty() {
         let shared = shared.into_iter().map(str::to_owned).collect();
         imports.push_str(&format!("use super::super::search::{};\n", braced(shared)));
+    }
+    // Key parameters and the keyset cursor use the key columns' types.
+    imports.push_str(&types_import(
+        "super::super",
+        table
+            .primary_key_columns()
+            .iter()
+            .map(|key| key.sqlx_type.as_str()),
+    ));
+    if !local.is_empty() {
         imports.push_str(&format!("use super::filter::{};\n", braced(local)));
     }
     imports

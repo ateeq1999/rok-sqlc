@@ -47,6 +47,35 @@ pub fn struct_name(module_name: &str) -> String {
     }
 }
 
+/// Derives a type name (an enum type's Rust name) from a SQL name:
+/// UpperCamelCase, prefixed with `T` when it would start with a digit.
+/// Empty when the name has no usable characters.
+pub fn type_name(sql_name: &str) -> String {
+    let camel = sql_name.to_upper_camel_case();
+    if camel.starts_with(|character: char| character.is_ascii_digit()) {
+        format!("T{camel}")
+    } else {
+        camel
+    }
+}
+
+/// Derives an enum variant name from a database label: UpperCamelCase
+/// (`Very High` → `VeryHigh`), prefixed with `V` when it would start with a
+/// digit, and suffixed with `_` for the keyword `Self`. `None` when the label
+/// has no usable characters.
+pub fn variant_name(label: &str) -> Option<String> {
+    let camel = label.to_upper_camel_case();
+    if camel.is_empty() {
+        None
+    } else if camel.starts_with(|character: char| character.is_ascii_digit()) {
+        Some(format!("V{camel}"))
+    } else if camel == "Self" {
+        Some("Self_".to_owned())
+    } else {
+        Some(camel)
+    }
+}
+
 /// Singularizes one lowercase English word using a small rule set plus the
 /// irregular forms that commonly appear in table names. Unknown shapes are
 /// returned unchanged rather than guessed at.

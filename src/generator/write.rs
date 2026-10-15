@@ -12,7 +12,7 @@ use crate::schema::{Column, Table};
 use super::sql::{column_clause, ident, key_predicate, str_literal, table_ref};
 use super::{
     HEADER, MAX_WIDTH, StaticQuery, key_params, param_name, push_and_chain, push_build_and_fetch,
-    push_doc, push_fn_head, push_let_call,
+    push_doc, push_fn_head, push_let_call, types_import,
 };
 
 pub fn render(table: &Table) -> String {
@@ -29,7 +29,12 @@ pub fn render(table: &Table) -> String {
         imports.push(format!("Update{}", table.struct_name));
     }
     imports.sort();
-    let mut output = format!("{HEADER}\n{}", use_models(&imports));
+    // Key parameters use the key columns' types.
+    let types = types_import(
+        "super::super",
+        keys.iter().map(|key| key.sqlx_type.as_str()),
+    );
+    let mut output = format!("{HEADER}\n{types}{}", use_models(&imports));
 
     if insert_columns.is_empty() {
         output.push_str(

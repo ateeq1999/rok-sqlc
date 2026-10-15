@@ -9,7 +9,7 @@
 use crate::schema::{Column, FilterKind, Table};
 
 use super::sql::{ident, str_literal};
-use super::{HEADER, push_doc};
+use super::{HEADER, push_doc, types_import};
 
 /// Which search functions a resource gets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,11 +124,20 @@ pub fn render_filter(table: &Table) -> Option<String> {
     imports.dedup();
     match imports.as_slice() {
         [] => {}
-        [single] => output.push_str(&format!("use super::super::search::{single};\n\n")),
+        [single] => output.push_str(&format!("use super::super::search::{single};\n")),
         many => output.push_str(&format!(
-            "use super::super::search::{{{}}};\n\n",
+            "use super::super::search::{{{}}};\n",
             many.join(", ")
         )),
+    }
+    output.push_str(&types_import(
+        "super::super",
+        filterable
+            .iter()
+            .map(|(column, _)| column.sqlx_type.as_str()),
+    ));
+    if output.len() > HEADER.len() + 1 {
+        output.push('\n');
     }
     push_doc(
         &mut output,
