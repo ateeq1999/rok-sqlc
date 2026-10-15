@@ -5,14 +5,16 @@
 //! a comparison, `IN`, `= ANY`, `BETWEEN`, or `LIKE` against a known column;
 //! an `INSERT` value or `UPDATE … SET` target; `LIMIT`/`OFFSET`; and explicit
 //! casts. Anything else must be declared with `-- param:` or `-- column:`;
-//! the generator never guesses.
+//! the generator never guesses. A non-recursive, read-only CTE is analyzed
+//! like a `SELECT` and then acts as a table for the statement that follows.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::ops::ControlFlow;
+use std::ops::{ControlFlow, Deref};
+use std::rc::Rc;
 
 use heck::ToSnakeCase;
 use sqlparser::ast::{
-    AssignmentTarget, BinaryOperator, Expr, FromTable, FunctionArg, FunctionArgExpr,
+    AssignmentTarget, BinaryOperator, Cte, Expr, FromTable, FunctionArg, FunctionArgExpr,
     FunctionArguments, Ident, JoinConstraint, JoinOperator, LimitClause, ObjectName,
     ObjectNamePart, OnConflictAction, OnInsert, Query, Select, SelectItem, SetExpr, Statement,
     TableFactor, TableObject, TableWithJoins, Value, visit_expressions,
@@ -91,17 +93,18 @@ pub fn analyze_queries(
             generated_modules,
         };
         match analyze_one(def, &context) {
-            Ok(query) if !fn_names.insert(query.fn_name.clone()) => {
-                failures.push(QueryFailure::new(
+            Ok(query) if !fn_names.insert(query.fn_name.clone()) => failures.push(
+                QueryFailure::new(
                     &def.name,
                     format!(
                         "function name `{}` is already used by another query",
                         query.fn_name
                     ),
-                ))
-            }
+                )
+                .at_line(def.line),
+            ),
             Ok(query) => analyzed.push(query),
-            Err(reason) => failures.push(QueryFailure::new(&def.name, reason)),
+            Err(reason) => failures.push(QueryFailure::new(&def.name, reason).at_line(def.line)),
         }
     }
     (analyzed, failures)
@@ -151,7 +154,7 @@ fn analyze_one(def: &QueryDef, context: &Context<'_>) -> Result<AnalyzedQuery, S
 /// A table visible to column references, under its alias or name.
 struct ScopeEntry<'a> {
     qualifier: String,
-    table: &'a Table,
+    table: TableRef<'a>,
     /// An outer join can produce rows without a match on this side.
     outer_nullable: bool,
 }
@@ -165,6 +168,39 @@ struct Output {
     nullable_origin: bool,
     /// Why the type could not be inferred, reported unless overridden.
     unknown_reason: Option<String>,
+    /// Why the column has no name, reported unless a CTE column list names
+    /// it; `sql_name` is empty then.
+    name_error: Option<String>,
+}
+
+/// What a `FROM` item names: a schema table, or a CTE's result columns
+/// shaped as a table.
+#[derive(Clone)]
+enum TableRef<'a> {
+    Schema(&'a Table),
+    Cte(Rc<Table>),
+}
+
+impl TableRef<'_> {
+    /// The resource module whose row struct could be reused for this
+    /// table's columns; a CTE has none.
+    fn module(&self) -> Option<&str> {
+        match self {
+            TableRef::Schema(table) => Some(&table.module_name),
+            TableRef::Cte(_) => None,
+        }
+    }
+}
+
+impl Deref for TableRef<'_> {
+    type Target = Table;
+
+    fn deref(&self) -> &Table {
+        match self {
+            TableRef::Schema(table) => table,
+            TableRef::Cte(table) => table,
+        }
+    }
 }
 
 struct Slot {
@@ -176,6 +212,8 @@ struct Slot {
 struct Analysis<'a, 'c> {
     context: &'c Context<'a>,
     scope: Vec<ScopeEntry<'a>>,
+    /// CTEs visible by name, in definition order.
+    ctes: Vec<Rc<Table>>,
     slots: BTreeMap<usize, Slot>,
 }
 
@@ -184,6 +222,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
         Self {
             context,
             scope: Vec::new(),
+            ctes: Vec::new(),
             slots: BTreeMap::new(),
         }
     }
@@ -203,7 +242,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
                     .as_ref()
                     .map(ident_name)
                     .unwrap_or_else(|| table.sql_name.clone());
-                self.push_scope(qualifier, table, false);
+                self.push_scope(qualifier, TableRef::Schema(table), false);
 
                 let columns: Vec<&Column> = if insert.columns.is_empty() {
                     table.columns.iter().collect()
@@ -236,7 +275,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
                 if let Some(OnInsert::OnConflict(on_conflict)) = &insert.on
                     && let OnConflictAction::DoUpdate(update) = &on_conflict.action
                 {
-                    self.push_scope("excluded".to_owned(), table, false);
+                    self.push_scope("excluded".to_owned(), TableRef::Schema(table), false);
                     for assignment in &update.assignments {
                         self.assignment(table, &assignment.target, &assignment.value)?;
                     }
@@ -262,7 +301,9 @@ impl<'a, 'c> Analysis<'a, 'c> {
                     return Err("UPDATE with joins is not supported".to_owned());
                 }
                 self.scope_table(table)?;
-                let target = self.scope[0].table;
+                let TableRef::Schema(target) = self.scope[0].table else {
+                    return Err("UPDATE must target a schema table, not a CTE".to_owned());
+                };
                 for assignment in assignments {
                     self.assignment(target, &assignment.target, &assignment.value)?;
                 }
@@ -294,8 +335,20 @@ impl<'a, 'c> Analysis<'a, 'c> {
     }
 
     fn query(&mut self, query: &Query) -> Result<Vec<Output>, String> {
-        if query.with.is_some() {
-            return Err("WITH (common table expressions) is not supported yet".to_owned());
+        let visible = self.ctes.len();
+        let outputs = self.query_body(query);
+        self.ctes.truncate(visible);
+        outputs
+    }
+
+    fn query_body(&mut self, query: &Query) -> Result<Vec<Output>, String> {
+        if let Some(with) = &query.with {
+            if with.recursive {
+                return Err("WITH RECURSIVE is not supported yet".to_owned());
+            }
+            for cte in &with.cte_tables {
+                self.cte(cte)?;
+            }
         }
         let SetExpr::Select(select) = query.body.as_ref() else {
             return Err(
@@ -320,6 +373,78 @@ impl<'a, 'c> Analysis<'a, 'c> {
             None => {}
         }
         Ok(outputs)
+    }
+
+    /// Analyzes a CTE's query in its own scope and makes its result columns
+    /// visible, under the CTE's name, to later CTEs and the main statement.
+    fn cte(&mut self, cte: &Cte) -> Result<(), String> {
+        let name = ident_name(&cte.alias.name);
+        if matches!(
+            cte.query.body.as_ref(),
+            SetExpr::Insert(_) | SetExpr::Update(_) | SetExpr::Delete(_) | SetExpr::Merge(_)
+        ) {
+            return Err(format!(
+                "data-modifying CTE `{name}` (INSERT, UPDATE, or DELETE inside WITH) is not supported yet"
+            ));
+        }
+        let outer_scope = std::mem::take(&mut self.scope);
+        let outputs = self.query(&cte.query);
+        self.scope = outer_scope;
+        let outputs = outputs?;
+
+        let aliases = &cte.alias.columns;
+        if aliases.len() > outputs.len() {
+            return Err(format!(
+                "CTE `{name}` names {} columns but its query returns {}",
+                aliases.len(),
+                outputs.len()
+            ));
+        }
+        let mut columns: Vec<Column> = Vec::with_capacity(outputs.len());
+        for (index, output) in outputs.into_iter().enumerate() {
+            let sql_name = match (aliases.get(index), output.name_error) {
+                (Some(alias), _) => ident_name(&alias.name),
+                (None, Some(name_error)) => return Err(name_error),
+                (None, None) => output.sql_name,
+            };
+            if columns.iter().any(|column| column.sql_name == sql_name) {
+                return Err(format!(
+                    "CTE `{name}` returns column `{sql_name}` more than once; alias the duplicates"
+                ));
+            }
+            let Some(rust_type) = output.rust_type else {
+                return Err(format!(
+                    "cannot infer the type of column `{sql_name}` of CTE `{name}`; cast it explicitly (`(expr)::type AS {sql_name}`)"
+                ));
+            };
+            let (sqlx_type, nullable) = match rust_type
+                .strip_prefix("Option<")
+                .and_then(|inner| inner.strip_suffix('>'))
+            {
+                Some(inner) => (inner.to_owned(), true),
+                None => (rust_type.clone(), false),
+            };
+            columns.push(Column {
+                rust_name: naming::rust_identifier(&sql_name)?,
+                sql_name,
+                rust_type,
+                sqlx_type,
+                nullable,
+                is_primary_key: false,
+                has_default: false,
+                is_generated: false,
+            });
+        }
+        self.ctes.push(Rc::new(Table {
+            schema: None,
+            module_name: String::new(),
+            struct_name: String::new(),
+            sql_name: name,
+            columns,
+            primary_key: Vec::new(),
+            foreign_keys: Vec::new(),
+        }));
+        Ok(())
     }
 
     fn select(&mut self, select: &Select) -> Result<Vec<Output>, String> {
@@ -383,7 +508,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
                 "only plain tables are supported in FROM (no subqueries or functions)".to_owned(),
             );
         };
-        let table = self.resolve_table(name)?;
+        let table = self.resolve_from(name)?;
         let qualifier = alias
             .as_ref()
             .map(|alias| ident_name(&alias.name))
@@ -397,7 +522,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
         Ok(())
     }
 
-    fn push_scope(&mut self, qualifier: String, table: &'a Table, outer_nullable: bool) {
+    fn push_scope(&mut self, qualifier: String, table: TableRef<'a>, outer_nullable: bool) {
         self.scope.push(ScopeEntry {
             qualifier,
             table,
@@ -470,9 +595,13 @@ impl<'a, 'c> Analysis<'a, 'c> {
             outputs.push(Output {
                 sql_name: column.sql_name.clone(),
                 rust_type: Some(column_type(column, entry.outer_nullable)),
-                origin: Some((entry.table.module_name.clone(), column_index)),
+                origin: entry
+                    .table
+                    .module()
+                    .map(|module| (module.to_owned(), column_index)),
                 nullable_origin: entry.outer_nullable,
                 unknown_reason: None,
+                name_error: None,
             });
         }
     }
@@ -486,9 +615,13 @@ impl<'a, 'c> Analysis<'a, 'c> {
                     .map(ident_name)
                     .unwrap_or_else(|| column.sql_name.clone()),
                 rust_type: Some(column_type(column, entry.outer_nullable)),
-                origin: Some((entry.table.module_name.clone(), reference.column)),
+                origin: entry
+                    .table
+                    .module()
+                    .map(|module| (module.to_owned(), reference.column)),
                 nullable_origin: entry.outer_nullable,
                 unknown_reason: None,
+                name_error: None,
             });
         }
 
@@ -505,14 +638,15 @@ impl<'a, 'c> Analysis<'a, 'c> {
         };
         let sql_name = match alias {
             Some(alias) => ident_name(alias),
-            None if !default_name.is_empty() => default_name,
-            None => {
-                return Err(format!(
-                    "result expression `{expr}` needs an alias (`{expr} AS name`) and a `-- column: name <RustType>` override"
-                ));
-            }
+            None => default_name,
         };
+        let name_error = sql_name.is_empty().then(|| {
+            format!(
+                "result expression `{expr}` needs an alias (`{expr} AS name`) and a `-- column: name <RustType>` override"
+            )
+        });
         Ok(Output {
+            name_error,
             unknown_reason: rust_type.is_none().then(|| {
                 format!(
                     "cannot infer the type of result column `{sql_name}` (`{expr}`); add `-- column: {sql_name} <RustType>`"
@@ -544,12 +678,11 @@ impl<'a, 'c> Analysis<'a, 'c> {
                     && let Some(index) = placeholder(right)
                 {
                     let column = self.reference_column(&reference);
-                    self.assign(
-                        index,
-                        &format!("{}_list", column.rust_name),
-                        &format!("Vec<{}>", column.sqlx_type),
-                        false,
-                    )?;
+                    let (name, base) = (
+                        format!("{}_list", column.rust_name),
+                        format!("Vec<{}>", column.sqlx_type),
+                    );
+                    self.assign(index, &name, &base, false)?;
                 }
                 self.expr(left)?;
                 self.expr(right)
@@ -734,6 +867,19 @@ impl<'a, 'c> Analysis<'a, 'c> {
 
     // ---- name resolution --------------------------------------------------
 
+    /// Resolves a `FROM` item: an unqualified name matching a visible CTE
+    /// names the CTE (shadowing a table of that name), otherwise a schema
+    /// table.
+    fn resolve_from(&self, name: &ObjectName) -> Result<TableRef<'a>, String> {
+        if let [ObjectNamePart::Identifier(ident)] = name.0.as_slice() {
+            let leaf = ident_name(ident);
+            if let Some(cte) = self.ctes.iter().rev().find(|cte| cte.sql_name == leaf) {
+                return Ok(TableRef::Cte(Rc::clone(cte)));
+            }
+        }
+        self.resolve_table(name).map(TableRef::Schema)
+    }
+
     fn resolve_table(&self, name: &ObjectName) -> Result<&'a Table, String> {
         let parts: Vec<String> = name
             .0
@@ -863,7 +1009,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
         }
     }
 
-    fn reference_column(&self, reference: &Reference) -> &'a Column {
+    fn reference_column(&self, reference: &Reference) -> &Column {
         &self.scope[reference.entry].table.columns[reference.column]
     }
 }
@@ -879,6 +1025,9 @@ fn result_shape(
     outputs: Vec<Output>,
     context: &Context<'_>,
 ) -> Result<ResultShape, String> {
+    if let Some(name_error) = outputs.iter().find_map(|output| output.name_error.clone()) {
+        return Err(name_error);
+    }
     let mut seen = HashSet::new();
     for output in &outputs {
         if !seen.insert(output.sql_name.as_str()) {
@@ -1272,5 +1421,101 @@ mod tests {
                 .contains("appears more than once")
         );
         assert!(failure("-- name: Q :many\nSELECT 1 FROM products;").contains("needs an alias"));
+    }
+
+    fn row_columns(query: &AnalyzedQuery) -> Vec<(&str, &str)> {
+        let ResultShape::Row(columns) = &query.result else {
+            panic!("expected a row struct, got {:?}", query.result);
+        };
+        columns
+            .iter()
+            .map(|column| (column.sql_name.as_str(), column.rust_type.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn cte_results_join_like_tables_and_type_their_placeholders() {
+        let query = one("-- name: StockByCategory :many\n\
+             WITH stock AS (\n\
+                 SELECT category_id, SUM(stock)::bigint AS total FROM products WHERE stock >= $1 GROUP BY category_id\n\
+             )\n\
+             SELECT c.id, c.name, s.total FROM categories c JOIN stock s ON s.category_id = c.id WHERE s.total > $2;");
+        assert_eq!(
+            row_columns(&query),
+            [("id", "i64"), ("name", "String"), ("total", "Option<i64>")]
+        );
+        assert_eq!(
+            query.params,
+            [param(1, "stock", "i32"), param(2, "total", "i64")]
+        );
+    }
+
+    #[test]
+    fn later_ctes_see_earlier_ones_and_column_lists_rename() {
+        let query = one("-- name: BigCategories :many\n\
+             WITH counted (cat, n) AS (SELECT category_id, COUNT(*) FROM products GROUP BY category_id),\n\
+                  big AS (SELECT cat, n AS product_count FROM counted WHERE n > $1)\n\
+             SELECT big.cat, big.product_count, c.name FROM big JOIN categories c ON c.id = big.cat;");
+        assert_eq!(
+            row_columns(&query),
+            [("cat", "i64"), ("product_count", "i64"), ("name", "String")]
+        );
+        assert_eq!(query.params, [param(1, "n", "i64")]);
+    }
+
+    #[test]
+    fn a_cte_column_list_names_unaliased_expressions() {
+        let query = one(
+            "-- name: Totals :many\nWITH t (category_id, total) AS (SELECT category_id, SUM(stock)::bigint FROM products GROUP BY category_id) SELECT category_id, total FROM t;",
+        );
+        assert_eq!(
+            row_columns(&query),
+            [("category_id", "i64"), ("total", "Option<i64>")]
+        );
+        assert!(
+            failure("-- name: Q :many\nWITH t AS (SELECT SUM(stock)::bigint FROM products) SELECT * FROM t;")
+                .contains("needs an alias")
+        );
+    }
+
+    #[test]
+    fn a_cte_selecting_a_whole_table_does_not_reuse_its_model() {
+        let query =
+            one("-- name: Cats :many\nWITH cats AS (SELECT * FROM categories) SELECT * FROM cats;");
+        assert_eq!(row_columns(&query), [("id", "i64"), ("name", "String")]);
+    }
+
+    #[test]
+    fn ctes_are_scoped_to_their_statement_and_must_be_typable() {
+        assert!(
+            failure("-- name: Q :many\nWITH a AS (SELECT id FROM b), b AS (SELECT id FROM categories) SELECT id FROM a;")
+                .contains("table `b` is not in the schema")
+        );
+        assert!(
+            failure("-- name: Q :many\nWITH a AS (SELECT SUM(stock) AS total FROM products) SELECT total FROM a;")
+                .contains("cannot infer the type of column `total` of CTE `a`")
+        );
+        assert!(
+            failure(
+                "-- name: Q :many\nWITH a (x, y) AS (SELECT id FROM categories) SELECT x FROM a;"
+            )
+            .contains("CTE `a` names 2 columns but its query returns 1")
+        );
+    }
+
+    #[test]
+    fn recursive_and_data_modifying_ctes_are_rejected() {
+        assert!(
+            failure(
+                "-- name: Q :many\nWITH RECURSIVE t (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM t) SELECT n FROM t;"
+            )
+            .contains("WITH RECURSIVE is not supported")
+        );
+        assert!(
+            failure(
+                "-- name: Q :many\nWITH gone AS (DELETE FROM products WHERE stock = $1 RETURNING id) SELECT id FROM gone;"
+            )
+            .contains("data-modifying CTE `gone`")
+        );
     }
 }

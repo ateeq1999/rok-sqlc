@@ -192,6 +192,8 @@ fn analyze_query_file(
         .map(|failure| QueryFailure {
             query: failure.query,
             reason: failure.reason,
+            path: failure.line.map(|_| path.to_path_buf()),
+            line: failure.line,
         })
         .collect();
     if !report.query_failures.is_empty() && !lenient {

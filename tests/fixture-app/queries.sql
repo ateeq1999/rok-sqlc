@@ -51,3 +51,16 @@ ORDER BY sku;
 
 -- name: DeleteProductBySku :execrows
 DELETE FROM products WHERE sku = $1;
+
+-- name: StockedCategories :many
+WITH stocked (category_id, product_count, total_stock) AS (
+    SELECT category_id, COUNT(*), SUM(stock_on_hand)::bigint
+    FROM products
+    WHERE stock_on_hand >= $1
+    GROUP BY category_id
+)
+SELECT c.id, c.name AS category_name, s.product_count, s.total_stock
+FROM categories c
+JOIN stocked s ON s.category_id = c.id
+WHERE c.id = $2
+ORDER BY c.id;
