@@ -47,6 +47,7 @@ async fn generated_crud_against_postgres() {
     uuid_keys_listing_and_pagination(&pool).await;
     composite_keys_arrays_and_numeric(&pool).await;
     annotated_queries(&pool).await;
+    query_modules_per_file(&pool).await;
     search_filters_and_pages(&pool).await;
 }
 
@@ -430,7 +431,7 @@ async fn text_filters_escape_like_wildcards(pool: &PgPool, category: i64) {
 }
 
 async fn annotated_queries(pool: &PgPool) {
-    use db::queries::{self, CreateProductsParams};
+    use db::queries::inventory::{self as queries, CreateProductsParams};
 
     let category = queries::create_category(pool, "query-cat".to_owned(), None)
         .await
@@ -550,6 +551,37 @@ async fn annotated_queries(pool: &PgPool) {
             .await
             .unwrap(),
         0
+    );
+}
+
+/// Each query file is its own module, so both define `search_products`.
+/// Runs after `annotated_queries`, which leaves product Q-1 supplied by Acme.
+async fn query_modules_per_file(pool: &PgPool) {
+    use db::queries::{inventory, suppliers};
+
+    let globex = suppliers::create_supplier(pool, uuid::Uuid::from_u128(901), "Globex".to_owned())
+        .await
+        .unwrap();
+    assert_eq!(globex.name, "Globex");
+    assert!(globex.is_active, "the column default applies");
+
+    assert_eq!(
+        suppliers::search_products(pool, "Acme".to_owned())
+            .await
+            .unwrap(),
+        ["Q-1"]
+    );
+    assert!(
+        suppliers::search_products(pool, "Globex".to_owned())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        inventory::search_products(pool, "%hammer%".to_owned())
+            .await
+            .unwrap(),
+        ["Q-1"]
     );
 }
 

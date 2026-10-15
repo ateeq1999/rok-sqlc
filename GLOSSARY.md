@@ -36,6 +36,14 @@ _Avoid_: hint, annotation (reserved for `-- name:`)
 One schema file a developer writes; taken in order, a project's migrations describe its tables.
 _Avoid_: schema file (when several are meant)
 
+**Config file**:
+An optional `rok-sqlc.toml` holding the same options as the CLI, found in the current directory or a parent (or named with `-c`); its paths are relative to the file, and the JSON payload and flags override it.
+_Avoid_: settings, manifest
+
+**JSON payload**:
+Configuration passed to `-j/--json` as JSON in the same shape as the config file: inline, `@path` for a file, or `-` for stdin. Its paths are relative to the current directory; it overrides the config file, and flags override it.
+_Avoid_: JSON config, JSON file (it need not be a file)
+
 **Convention**:
 An opt-in rule about what certain columns mean across tables (for example, which column scopes rows to a tenant), changing what is generated for every table that has the column.
 _Avoid_: rule, policy (reserved for PostgreSQL row-level security)

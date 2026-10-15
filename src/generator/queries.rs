@@ -1,4 +1,5 @@
-//! `db/queries.rs`: one typed function per annotated query.
+//! `db/queries.rs` (one query file) or `db/queries/<stem>.rs` (one module per
+//! query file): one typed function per annotated query.
 //!
 //! The SQL is embedded exactly as written in the query file and every
 //! placeholder is bound positionally, so `$n` always receives the n-th
@@ -6,22 +7,46 @@
 
 use crate::queries::{AnalyzedQuery, Param, ResultShape, ReturnMode};
 
-use super::{HEADER, StaticQuery, push_doc, push_fn_head, sql};
+use super::{HEADER, QueryModule, StaticQuery, push_doc, push_fn_head, sql};
 
 /// Queries with more parameters than this take a `{Name}Params` struct
 /// instead of positional arguments.
 const MAX_POSITIONAL_PARAMS: usize = 3;
 
+/// Renders `db/queries.rs`, a direct child of `db`.
 pub fn render(queries: &[AnalyzedQuery]) -> String {
-    let mut output =
-        format!("{HEADER}\n// Functions for the annotated queries in the query file.\n");
-    for query in queries {
-        render_query(&mut output, query);
+    render_at(queries, "super")
+}
+
+/// Renders `db/queries/<stem>.rs`, one level below `db/queries.rs`.
+pub fn render_nested(queries: &[AnalyzedQuery]) -> String {
+    render_at(queries, "super::super")
+}
+
+/// Renders `db/queries/mod.rs`, declaring one module per query file.
+pub fn render_mod(modules: &[QueryModule]) -> String {
+    // Sorted the way rustfmt sorts `mod` declarations.
+    let mut names: Vec<&str> = modules.iter().map(|module| module.name.as_str()).collect();
+    names.sort_unstable();
+    let mut output = format!("{HEADER}\n// One module per query file.\n\n");
+    for name in names {
+        output.push_str(&format!("pub mod {name};\n"));
     }
     output
 }
 
-fn render_query(output: &mut String, query: &AnalyzedQuery) {
+/// `db_path` is the path from the rendered file to the `db` module; row
+/// structs of generated resources are reached through it.
+fn render_at(queries: &[AnalyzedQuery], db_path: &str) -> String {
+    let mut output =
+        format!("{HEADER}\n// Functions for the annotated queries in the query file.\n");
+    for query in queries {
+        render_query(&mut output, query, db_path);
+    }
+    output
+}
+
+fn render_query(output: &mut String, query: &AnalyzedQuery, db_path: &str) {
     if let ResultShape::Row(columns) = &query.result {
         output.push('\n');
         push_doc(
@@ -78,7 +103,7 @@ fn render_query(output: &mut String, query: &AnalyzedQuery) {
         )
     };
 
-    let row_type = row_type(query);
+    let row_type = row_type(query, db_path);
     let (returns, execute) = match query.mode {
         ReturnMode::One => (row_type.clone(), "fetch_one(executor)"),
         ReturnMode::MaybeOne => (format!("Option<{row_type}>"), "fetch_optional(executor)"),
@@ -140,13 +165,13 @@ fn signature_param(param: &Param) -> String {
     format!("{}: {}", param.name, param.rust_type)
 }
 
-fn row_type(query: &AnalyzedQuery) -> String {
+fn row_type(query: &AnalyzedQuery, db_path: &str) -> String {
     match &query.result {
         ResultShape::None => "()".to_owned(),
         ResultShape::Model {
             module,
             struct_name,
-        } => format!("super::{module}::models::{struct_name}"),
+        } => format!("{db_path}::{module}::models::{struct_name}"),
         ResultShape::Scalar(rust_type) => rust_type.clone(),
         ResultShape::Row(_) => format!("{}Row", query.name),
     }
