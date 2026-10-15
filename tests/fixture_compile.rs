@@ -31,7 +31,8 @@ fn generate_fixture() -> Result<Vec<PathBuf>> {
         app_dir().join("extra_schema.sql"),
         app_dir().join("alter_schema.sql"),
     ];
-    config.queries = vec![app_dir().join("queries.sql")];
+    // A directory: each query file becomes its own `db::queries::<stem>` module.
+    config.queries = vec![app_dir().join("queries")];
     config.output = app_dir().join("src/db");
     config.force = true;
 

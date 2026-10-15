@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -14,7 +16,85 @@ pub struct WriteReport {
 
 /// Whether `path` is an existing file carrying the rok-sqlc generated header.
 pub fn is_generated_file(path: &Path) -> bool {
-    fs::read_to_string(path).is_ok_and(|contents| contents.starts_with(GENERATED_MARKER))
+    let mut prefix = [0; GENERATED_MARKER.len()];
+    fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut prefix))
+        .is_ok_and(|()| prefix == GENERATED_MARKER.as_bytes())
+}
+
+/// Planned files that do not exist yet, and planned files whose contents
+/// differ from the plan. Touches nothing.
+pub fn compare_files(files: &[(PathBuf, String)]) -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
+    let (mut missing, mut changed) = (Vec::new(), Vec::new());
+    for (path, contents) in files {
+        if !path.exists() {
+            missing.push(path.clone());
+            continue;
+        }
+        let existing = fs::read(path)
+            .with_context(|| format!("failed to read existing file `{}`", path.display()))?;
+        if existing != contents.as_bytes() {
+            changed.push(path.clone());
+        }
+    }
+    Ok((missing, changed))
+}
+
+/// Stale files: files under `output` that carry the generated header but are
+/// not in `keep`. Files without the header are never stale. Sorted.
+pub fn find_stale(output: &Path, keep: &HashSet<PathBuf>) -> Result<Vec<PathBuf>> {
+    fn walk(dir: &Path, keep: &HashSet<PathBuf>, stale: &mut Vec<PathBuf>) -> Result<()> {
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("failed to read directory `{}`", dir.display()));
+            }
+        };
+        for entry in entries {
+            let entry =
+                entry.with_context(|| format!("failed to read directory `{}`", dir.display()))?;
+            let path = entry.path();
+            // Symlinks are neither followed nor removed.
+            let file_type = entry
+                .file_type()
+                .with_context(|| format!("failed to inspect `{}`", path.display()))?;
+            if file_type.is_dir() {
+                walk(&path, keep, stale)?;
+            } else if file_type.is_file() && !keep.contains(&path) && is_generated_file(&path) {
+                stale.push(path);
+            }
+        }
+        Ok(())
+    }
+
+    let mut stale = Vec::new();
+    walk(output, keep, &mut stale)?;
+    stale.sort();
+    Ok(stale)
+}
+
+/// Removes `stale` files, then the directories under `output` they leave
+/// empty. `output` itself is kept.
+pub fn remove_stale(output: &Path, stale: &[PathBuf]) -> Result<()> {
+    for path in stale {
+        fs::remove_file(path).with_context(|| format!("failed to remove `{}`", path.display()))?;
+    }
+    for path in stale {
+        let mut dir = path.parent();
+        while let Some(current) = dir {
+            if current == output || !current.starts_with(output) {
+                break;
+            }
+            // Fails, and stops the climb, while the directory has entries.
+            if fs::remove_dir(current).is_err() {
+                break;
+            }
+            dir = current.parent();
+        }
+    }
+    Ok(())
 }
 
 pub fn apply_files(files: &[(PathBuf, String)], dry_run: bool, force: bool) -> Result<WriteReport> {
@@ -157,6 +237,35 @@ mod tests {
         let report = apply_files(&files, true, false)?;
         assert_eq!(report.written.len(), 1);
         assert!(!dir.path().join("db/mod.rs").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn stale_files_carry_the_header_and_are_not_kept() -> Result<()> {
+        let dir = TempDir::new()?;
+        let out = dir.path();
+        fs::create_dir_all(out.join("gone/deeper"))?;
+        fs::write(out.join("gone/deeper/models.rs"), generated_file("").1)?;
+        fs::write(out.join("kept.rs"), generated_file("").1)?;
+        fs::write(out.join("hand.rs"), "// hand-written\n")?;
+        fs::write(out.join("short.rs"), "//")?;
+
+        let keep = HashSet::from([out.join("kept.rs")]);
+        let stale = find_stale(out, &keep)?;
+        assert_eq!(stale, vec![out.join("gone/deeper/models.rs")]);
+
+        remove_stale(out, &stale)?;
+        assert!(!out.join("gone").exists());
+        assert!(out.join("kept.rs").is_file());
+        assert!(out.join("hand.rs").is_file());
+        assert!(out.join("short.rs").is_file());
+        Ok(())
+    }
+
+    #[test]
+    fn missing_output_directory_has_no_stale_files() -> Result<()> {
+        let dir = TempDir::new()?;
+        assert!(find_stale(&dir.path().join("nope"), &HashSet::new())?.is_empty());
         Ok(())
     }
 
