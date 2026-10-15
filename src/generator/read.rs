@@ -1,13 +1,15 @@
 use crate::schema::Table;
 
+use super::search::SearchApi;
 use super::sql::{column_clause, key_order, key_predicate, table_ref};
-use super::{HEADER, StaticQuery, key_params, param_name, push_doc, push_fn_head};
+use super::{
+    HEADER, StaticQuery, key_params, param_name, push_build_and_fetch, push_doc, push_fn_head,
+};
 
 pub fn render(table: &Table) -> String {
-    let mut output = format!(
-        "{HEADER}\nuse super::super::search::{{Page, Sort}};\nuse super::filter::{{{name}Filter, {name}SortKey}};\nuse super::models::{name};\n",
-        name = table.struct_name
-    );
+    let api = SearchApi::for_table(table);
+    let mut output = format!("{HEADER}\n{}", search_imports(table, api));
+    output.push_str(&format!("use super::models::{};\n", table.struct_name));
 
     if table.primary_key.is_empty() {
         output.push_str(
@@ -22,38 +24,70 @@ pub fn render(table: &Table) -> String {
         render_list_page(&mut output, table);
     }
     render_count(&mut output, table);
-    render_search(&mut output, table);
-    if !table.primary_key.is_empty() {
+    if api.search {
+        render_search(&mut output, table);
+    }
+    if api.search_after {
         render_search_after(&mut output, table);
     }
 
     output
 }
 
+/// The `use` lines for the search types `read.rs` needs, sorted the way
+/// rustfmt sorts them (`super::super::` before `super::filter`).
+fn search_imports(table: &Table, api: SearchApi) -> String {
+    let name = &table.struct_name;
+    let mut shared = Vec::new();
+    let mut local = Vec::new();
+    if api.search_after {
+        shared.push("Limit");
+        local.push(format!("{name}Filter"));
+    }
+    if api.search {
+        shared.extend(["Page", "Sort"]);
+        if local.is_empty() {
+            local.push(format!("{name}Filter"));
+        }
+        local.push(format!("{name}SortKey"));
+    }
+    let braced = |items: Vec<String>| match items.as_slice() {
+        [single] => single.clone(),
+        _ => format!("{{{}}}", items.join(", ")),
+    };
+    let mut imports = String::new();
+    if !shared.is_empty() {
+        let shared = shared.into_iter().map(str::to_owned).collect();
+        imports.push_str(&format!("use super::super::search::{};\n", braced(shared)));
+        imports.push_str(&format!("use super::filter::{};\n", braced(local)));
+    }
+    imports
+}
+
+/// `(a, b)` for several items, or the single item itself.
+fn tuple_or_single(items: Vec<String>) -> String {
+    match items.as_slice() {
+        [single] => single.clone(),
+        _ => format!("({})", items.join(", ")),
+    }
+}
+
+/// Starts a search body: the `QueryBuilder` over the explicit column list,
+/// then the filter's `WHERE` clause.
+fn push_search_preamble(output: &mut String, table: &Table) {
+    let mut select = column_clause("SELECT", table);
+    select.push(format!("FROM {}", table_ref(table)));
+    output.push_str("    let mut query = sqlx::QueryBuilder::<sqlx::Postgres>::new(\n");
+    output.push_str(&super::sql::raw_block(&select, 8));
+    output.push_str(",\n    );\n");
+    output.push_str("    filter.push_where(&mut query);\n");
+}
+
 fn render_search_after(output: &mut String, table: &Table) {
     let keys = table.primary_key_columns();
     let name = &table.struct_name;
-    let mut select = column_clause("SELECT", table);
-    select.push(format!("FROM {}", table_ref(table)));
-    let (key_type, key_pattern) = match keys.as_slice() {
-        [key] => (key.sqlx_type.clone(), param_name(key)),
-        _ => (
-            format!(
-                "({})",
-                keys.iter()
-                    .map(|key| key.sqlx_type.clone())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            format!(
-                "({})",
-                keys.iter()
-                    .map(|key| param_name(key))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        ),
-    };
+    let key_type = tuple_or_single(keys.iter().map(|key| key.sqlx_type.clone()).collect());
+    let key_pattern = tuple_or_single(keys.iter().map(|key| param_name(key)).collect());
 
     output.push('\n');
     push_doc(
@@ -62,7 +96,7 @@ fn render_search_after(output: &mut String, table: &Table) {
         &[
             "Keyset pagination in primary-key order: up to `limit` rows matching `filter`",
             "whose key comes after `after` (from the start when `None`). Pass the last",
-            "row's key to fetch the next page. `limit` is clamped like `Page::new`.",
+            "row's key to fetch the next page.",
         ],
     );
     push_fn_head(
@@ -71,14 +105,11 @@ fn render_search_after(output: &mut String, table: &Table) {
         &[
             format!("filter: {name}Filter"),
             format!("after: Option<{key_type}>"),
-            "limit: i64".to_owned(),
+            "limit: Limit".to_owned(),
         ],
         &format!("Result<Vec<{name}>, sqlx::Error>"),
     );
-    output.push_str("    let mut query = sqlx::QueryBuilder::<sqlx::Postgres>::new(\n");
-    output.push_str(&super::sql::raw_block(&select, 8));
-    output.push_str(",\n    );\n");
-    output.push_str("    filter.push_where(&mut query);\n");
+    push_search_preamble(output, table);
     output.push_str(&format!("    if let Some({key_pattern}) = after {{\n"));
     match keys.as_slice() {
         [key] => {
@@ -107,16 +138,14 @@ fn render_search_after(output: &mut String, table: &Table) {
         "    query.push({});\n",
         super::sql::str_literal(&format!(" ORDER BY {} LIMIT ", key_order(&keys)))
     ));
-    output.push_str("    query.push_bind(Page::first(limit).limit());\n");
-    super::write::push_build_and_fetch(output, table, "fetch_all");
+    output.push_str("    query.push_bind(limit.get());\n");
+    push_build_and_fetch(output, table, "fetch_all");
     output.push_str("}\n");
 }
 
 fn render_search(output: &mut String, table: &Table) {
     let keys = table.primary_key_columns();
     let name = &table.struct_name;
-    let mut select = column_clause("SELECT", table);
-    select.push(format!("FROM {}", table_ref(table)));
 
     output.push('\n');
     let tie_break = if keys.is_empty() {
@@ -142,10 +171,7 @@ fn render_search(output: &mut String, table: &Table) {
         ],
         &format!("Result<Vec<{name}>, sqlx::Error>"),
     );
-    output.push_str("    let mut query = sqlx::QueryBuilder::<sqlx::Postgres>::new(\n");
-    output.push_str(&super::sql::raw_block(&select, 8));
-    output.push_str(",\n    );\n");
-    output.push_str("    filter.push_where(&mut query);\n");
+    push_search_preamble(output, table);
     output.push_str("    query.push(\" ORDER BY \");\n");
     output.push_str("    query.push(sort.key.column());\n");
     output.push_str("    query.push(sort.direction.sql());\n");
@@ -159,7 +185,7 @@ fn render_search(output: &mut String, table: &Table) {
     output.push_str("    query.push_bind(page.limit());\n");
     output.push_str("    query.push(\" OFFSET \");\n");
     output.push_str("    query.push_bind(page.offset());\n");
-    super::write::push_build_and_fetch(output, table, "fetch_all");
+    push_build_and_fetch(output, table, "fetch_all");
     output.push_str("}\n");
 }
 

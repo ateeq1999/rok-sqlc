@@ -47,9 +47,12 @@ pub fn plan_files_with_queries(
 
     for table in tables {
         let dir = output.join(&table.module_name);
-        files.push((dir.join("mod.rs"), render_resource_mod()));
+        let filter = search::render_filter(table);
+        files.push((dir.join("mod.rs"), render_resource_mod(filter.is_some())));
         files.push((dir.join("models.rs"), models::render(table)));
-        files.push((dir.join("filter.rs"), search::render_filter(table)));
+        if let Some(filter) = filter {
+            files.push((dir.join("filter.rs"), filter));
+        }
         files.push((dir.join("read.rs"), read::render(table)));
         files.push((dir.join("write.rs"), write::render(table)));
     }
@@ -64,11 +67,9 @@ pub fn plan_files_with_queries(
     files
 }
 
-fn render_resource_mod() -> String {
-    format!(
-        "{HEADER}\npub mod filter;
-pub mod models;\npub mod read;\npub mod write;\n"
-    )
+fn render_resource_mod(has_filter: bool) -> String {
+    let filter = if has_filter { "pub mod filter;\n" } else { "" };
+    format!("{HEADER}\n{filter}pub mod models;\npub mod read;\npub mod write;\n")
 }
 
 /// The insert-input field type: columns with a database default are wrapped
@@ -235,6 +236,25 @@ impl StaticQuery<'_> {
         }
         output.push_str(&format!("{pad}.{}\n", self.execute));
         output.push_str(&format!("{pad}.await{trail}\n"));
+    }
+}
+
+/// The final `build_query_as().fetch_*().await` chain, kept on one line when
+/// it fits rustfmt's default `chain_width` of 60 and split per call otherwise.
+pub fn push_build_and_fetch(output: &mut String, table: &Table, fetch: &str) {
+    let calls = [
+        format!(".build_query_as::<{}>()", table.struct_name),
+        format!(".{fetch}(executor)"),
+        ".await".to_owned(),
+    ];
+    let one_line = format!("query{}", calls.concat());
+    if one_line.len() <= 60 {
+        output.push_str(&format!("    {one_line}\n"));
+    } else {
+        output.push_str("    query\n");
+        for call in calls {
+            output.push_str(&format!("        {call}\n"));
+        }
     }
 }
 

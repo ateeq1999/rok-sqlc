@@ -6,22 +6,33 @@
 //! Conditions are rendered from schema column names only; every value is
 //! bound.
 
-use heck::ToUpperCamelCase;
-
-use crate::schema::{Column, Table};
+use crate::schema::{Column, FilterKind, Table};
 
 use super::sql::{ident, str_literal};
 use super::{HEADER, push_doc};
 
-/// How a column can be filtered.
+/// Which search functions a resource gets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FilterKind {
-    /// Numbers, decimals, dates, and times: comparisons, ranges, and sets.
-    Ordered,
-    /// Text: equality, sets, and literal substring matching.
-    Text,
-    /// Booleans and UUIDs: equality and sets.
-    Equality,
+pub struct SearchApi {
+    /// `search`: needs at least one sort key, or `Sort<XSortKey>` could
+    /// never be constructed.
+    pub search: bool,
+    /// `search_after`: needs a primary key to page by.
+    pub search_after: bool,
+}
+
+impl SearchApi {
+    pub fn for_table(table: &Table) -> Self {
+        Self {
+            search: !sortable(table).is_empty(),
+            search_after: !table.primary_key.is_empty(),
+        }
+    }
+
+    /// Whether the resource gets a `filter.rs` at all.
+    pub fn any(self) -> bool {
+        self.search || self.search_after
+    }
 }
 
 impl FilterKind {
@@ -76,59 +87,28 @@ fn push_block(output: &mut String, head: &str, items: &[String], indent: usize) 
     output.push_str(&format!("{pad}}}\n"));
 }
 
-/// The filter kind for a column, or `None` when the column is not
-/// filterable (arrays and JSON).
-pub fn filter_kind(column: &Column) -> Option<FilterKind> {
-    match column.sqlx_type.as_str() {
-        "i16"
-        | "i32"
-        | "i64"
-        | "f32"
-        | "f64"
-        | "rust_decimal::Decimal"
-        | "chrono::NaiveDate"
-        | "chrono::NaiveTime"
-        | "chrono::NaiveDateTime"
-        | "chrono::DateTime<chrono::Utc>" => Some(FilterKind::Ordered),
-        "String" => Some(FilterKind::Text),
-        "bool" | "uuid::Uuid" => Some(FilterKind::Equality),
-        _ => None,
-    }
-}
-
-/// The `{Struct}SortKey` variant naming a column.
-pub fn sort_variant(column: &Column) -> String {
-    let camel = column.rust_name.trim_matches('_').to_upper_camel_case();
-    if camel.starts_with(|character: char| character.is_ascii_digit()) {
-        format!("Column{camel}")
-    } else {
-        camel
-    }
-}
-
-/// The filter field selecting rows where a nullable column is or is not
-/// `NULL` (`note_is_null`; `type_` gives `type_is_null`).
-pub fn null_check_field(column: &Column) -> String {
-    format!("{}_is_null", column.rust_name.trim_end_matches('_'))
-}
-
-/// Columns that can be sorted by.
-pub fn sort_columns(table: &Table) -> Vec<&Column> {
+/// Columns `search` may order by: every filterable column.
+pub fn sortable(table: &Table) -> Vec<&Column> {
     table
         .columns
         .iter()
-        .filter(|column| filter_kind(column).is_some())
+        .filter(|column| column.filter_kind().is_some())
         .collect()
 }
 
-/// Renders the resource's `filter.rs`.
-pub fn render_filter(table: &Table) -> String {
+/// Renders the resource's `filter.rs`, or `None` when the resource has no
+/// search function to use it.
+pub fn render_filter(table: &Table) -> Option<String> {
+    let api = SearchApi::for_table(table);
+    if !api.any() {
+        return None;
+    }
     let filter = format!("{}Filter", table.struct_name);
     let sort_key = format!("{}SortKey", table.struct_name);
     let filterable: Vec<(&Column, FilterKind)> = table
         .columns
         .iter()
-        .filter_map(|column| filter_kind(column).map(|kind| (column, kind)))
+        .filter_map(|column| column.filter_kind().map(|kind| (column, kind)))
         .collect();
 
     let mut output = format!("{HEADER}\n");
@@ -164,7 +144,7 @@ pub fn render_filter(table: &Table) -> String {
     output.push_str("#[derive(Debug, Clone, Default, PartialEq)]\n");
     let mut fields = Vec::new();
     for column in &table.columns {
-        if let Some(kind) = filter_kind(column) {
+        if let Some(kind) = column.filter_kind() {
             fields.push(format!(
                 "pub {}: Vec<{}>,",
                 column.rust_name,
@@ -172,7 +152,7 @@ pub fn render_filter(table: &Table) -> String {
             ));
         }
         if column.nullable {
-            fields.push(format!("pub {}: Option<bool>,", null_check_field(column)));
+            fields.push(format!("pub {}: Option<bool>,", column.null_check_field()));
         }
     }
     push_block(&mut output, &format!("pub struct {filter}"), &fields, 0);
@@ -190,7 +170,7 @@ pub fn render_filter(table: &Table) -> String {
     output.push_str("        query.push(\" WHERE TRUE\");\n");
     for column in &table.columns {
         let name = str_literal(&ident(&column.sql_name));
-        if filter_kind(column).is_some() {
+        if column.filter_kind().is_some() {
             output.push_str(&format!(
                 "        for condition in self.{} {{\n",
                 column.rust_name
@@ -210,20 +190,24 @@ pub fn render_filter(table: &Table) -> String {
                 "push_null_check",
                 &[
                     name,
-                    format!("self.{}", null_check_field(column)),
+                    format!("self.{}", column.null_check_field()),
                     "query".to_owned(),
                 ],
             );
         }
     }
-    output.push_str("    }\n}\n\n");
+    output.push_str("    }\n}\n");
+    if !api.search {
+        return Some(output);
+    }
 
+    output.push('\n');
     push_doc(&mut output, 0, &["Columns `search` may sort by."]);
     output.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
-    let sortable = sort_columns(table);
+    let sortable = sortable(table);
     let variants: Vec<String> = sortable
         .iter()
-        .map(|column| format!("{},", sort_variant(column)))
+        .map(|column| format!("{},", column.sort_variant()))
         .collect();
     push_block(&mut output, &format!("pub enum {sort_key}"), &variants, 0);
     output.push('\n');
@@ -235,14 +219,14 @@ pub fn render_filter(table: &Table) -> String {
         .map(|column| {
             format!(
                 "Self::{} => {},",
-                sort_variant(column),
+                column.sort_variant(),
                 str_literal(&ident(&column.sql_name))
             )
         })
         .collect();
     push_block(&mut output, "match self", &arms, 8);
     output.push_str("    }\n}\n");
-    output
+    Some(output)
 }
 
 /// Renders the shared `db/search.rs`.
@@ -258,10 +242,25 @@ use sqlx::{Postgres, QueryBuilder};
 /// The most rows a single page may hold; `Page::new` clamps larger limits.
 pub const MAX_PAGE_SIZE: i64 = 500;
 
+/// How many rows one request may return: always within `1..=MAX_PAGE_SIZE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limit(i64);
+
+impl Limit {
+    /// Clamps `rows` to `1..=MAX_PAGE_SIZE`.
+    pub fn new(rows: i64) -> Self {
+        Self(rows.clamp(1, MAX_PAGE_SIZE))
+    }
+
+    pub fn get(self) -> i64 {
+        self.0
+    }
+}
+
 /// A window of results: at most `limit` rows after skipping `offset`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Page {
-    limit: i64,
+    limit: Limit,
     offset: i64,
 }
 
@@ -269,7 +268,7 @@ impl Page {
     /// Clamps `limit` to `1..=MAX_PAGE_SIZE` and `offset` to zero or more.
     pub fn new(limit: i64, offset: i64) -> Self {
         Self {
-            limit: limit.clamp(1, MAX_PAGE_SIZE),
+            limit: Limit::new(limit),
             offset: offset.max(0),
         }
     }
@@ -281,11 +280,11 @@ impl Page {
 
     /// The page that follows this one.
     pub fn next(self) -> Self {
-        Self::new(self.limit, self.offset + self.limit)
+        Self::new(self.limit(), self.offset.saturating_add(self.limit()))
     }
 
     pub fn limit(self) -> i64 {
-        self.limit
+        self.limit.get()
     }
 
     pub fn offset(self) -> i64 {

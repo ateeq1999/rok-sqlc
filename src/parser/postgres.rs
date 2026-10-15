@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result, bail};
 use sqlparser::ast::{
@@ -239,6 +239,7 @@ fn build_table(create: &CreateTable) -> std::result::Result<Table, TableFailure>
         });
     }
 
+    check_search_names(&columns).map_err(fail)?;
     let module_name = naming::rust_identifier(&sql_name).map_err(fail)?;
     let struct_name = naming::struct_name(&module_name);
 
@@ -251,6 +252,40 @@ fn build_table(create: &CreateTable) -> std::result::Result<Table, TableFailure>
         primary_key,
         foreign_keys,
     })
+}
+
+/// Rejects tables whose generated search names would collide: a nullable
+/// column's `x_is_null` filter field against another field, or two columns
+/// mapping to the same `XSortKey` variant.
+fn check_search_names(columns: &[Column]) -> std::result::Result<(), String> {
+    let mut fields: HashMap<String, &str> = columns
+        .iter()
+        .map(|column| (column.rust_name.clone(), column.sql_name.as_str()))
+        .collect();
+    for column in columns.iter().filter(|column| column.nullable) {
+        let field = column.null_check_field();
+        if let Some(other) = fields.insert(field.clone(), &column.sql_name) {
+            return Err(format!(
+                "column `{}` needs the null-check filter field `{field}`, which column `{other}` already uses",
+                column.sql_name
+            ));
+        }
+    }
+
+    let mut variants: HashMap<String, &str> = HashMap::new();
+    for column in columns
+        .iter()
+        .filter(|column| column.filter_kind().is_some())
+    {
+        let variant = column.sort_variant();
+        if let Some(other) = variants.insert(variant.clone(), &column.sql_name) {
+            return Err(format!(
+                "columns `{other}` and `{}` both map to the sort key variant `{variant}`",
+                column.sql_name
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn table_failure(table: &str, reason: String) -> TableFailure {
@@ -666,6 +701,30 @@ mod tests {
         assert_eq!(parsed.schema.tables.len(), 1);
         assert_eq!(parsed.failures.len(), 1);
         assert_eq!(parsed.failures[0].table, "bad");
+    }
+
+    #[test]
+    fn rejects_columns_whose_generated_search_names_collide() {
+        let null_check =
+            parse("CREATE TABLE t (id BIGSERIAL PRIMARY KEY, weight INT, weight_is_null BOOLEAN);");
+        assert!(null_check.schema.tables.is_empty());
+        assert!(
+            null_check.failures[0]
+                .reason
+                .contains("null-check filter field `weight_is_null`"),
+            "{:?}",
+            null_check.failures
+        );
+
+        let sort_key = parse("CREATE TABLE t (id BIGSERIAL PRIMARY KEY, item_1 INT, item1 INT);");
+        assert!(sort_key.schema.tables.is_empty());
+        assert!(
+            sort_key.failures[0]
+                .reason
+                .contains("sort key variant `Item1`"),
+            "{:?}",
+            sort_key.failures
+        );
     }
 
     #[test]

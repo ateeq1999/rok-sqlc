@@ -1,3 +1,5 @@
+use heck::ToUpperCamelCase;
+
 #[derive(Debug, Clone)]
 pub struct Schema {
     pub tables: Vec<Table>,
@@ -66,7 +68,54 @@ pub struct Column {
     pub is_generated: bool,
 }
 
+/// How a column can be filtered by the generated `search` API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilterKind {
+    /// Numbers, decimals, dates, and times: comparisons, ranges, and sets.
+    Ordered,
+    /// Text: equality, sets, and literal substring matching.
+    Text,
+    /// Booleans and UUIDs: equality and sets.
+    Equality,
+}
+
 impl Column {
+    /// How the column can be filtered, or `None` for arrays and JSON, which
+    /// get only a null check.
+    pub fn filter_kind(&self) -> Option<FilterKind> {
+        match self.sqlx_type.as_str() {
+            "i16"
+            | "i32"
+            | "i64"
+            | "f32"
+            | "f64"
+            | "rust_decimal::Decimal"
+            | "chrono::NaiveDate"
+            | "chrono::NaiveTime"
+            | "chrono::NaiveDateTime"
+            | "chrono::DateTime<chrono::Utc>" => Some(FilterKind::Ordered),
+            "String" => Some(FilterKind::Text),
+            "bool" | "uuid::Uuid" => Some(FilterKind::Equality),
+            _ => None,
+        }
+    }
+
+    /// The `XSortKey` variant naming this column.
+    pub fn sort_variant(&self) -> String {
+        let camel = self.rust_name.trim_matches('_').to_upper_camel_case();
+        if camel.starts_with(|character: char| character.is_ascii_digit()) {
+            format!("Column{camel}")
+        } else {
+            camel
+        }
+    }
+
+    /// The `XFilter` field selecting rows where this column is or is not
+    /// `NULL` (`note_is_null`; `type_` gives `type_is_null`).
+    pub fn null_check_field(&self) -> String {
+        format!("{}_is_null", self.rust_name.trim_end_matches('_'))
+    }
+
     /// The caller may supply this column on insert.
     pub fn is_insertable(&self) -> bool {
         !self.is_generated

@@ -48,3 +48,10 @@ CREATE TABLE counters (
     hits INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Only array columns and no primary key: no sort keys and no key to page by,
+-- so neither search function (nor filter.rs) is generated.
+CREATE TABLE tag_sets (
+    labels TEXT[] NOT NULL,
+    scores INTEGER[]
+);

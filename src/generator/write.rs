@@ -11,8 +11,8 @@ use crate::schema::{Column, Table};
 
 use super::sql::{column_clause, ident, key_predicate, str_literal, table_ref};
 use super::{
-    HEADER, MAX_WIDTH, StaticQuery, key_params, param_name, push_and_chain, push_doc, push_fn_head,
-    push_let_call,
+    HEADER, MAX_WIDTH, StaticQuery, key_params, param_name, push_and_chain, push_build_and_fetch,
+    push_doc, push_fn_head, push_let_call,
 };
 
 pub fn render(table: &Table) -> String {
@@ -296,25 +296,6 @@ fn push_returning(output: &mut String, table: &Table) {
     output.push_str("    query.push(\n");
     output.push_str(&super::sql::raw_block(&returning_clause(table), 8));
     output.push_str(",\n    );\n");
-}
-
-/// The final `build_query_as().fetch_*().await` chain, kept on one line when
-/// it fits rustfmt's default `chain_width` of 60 and split per call otherwise.
-pub(super) fn push_build_and_fetch(output: &mut String, table: &Table, fetch: &str) {
-    let calls = [
-        format!(".build_query_as::<{}>()", table.struct_name),
-        format!(".{fetch}(executor)"),
-        ".await".to_owned(),
-    ];
-    let one_line = format!("query{}", calls.concat());
-    if one_line.len() <= 60 {
-        output.push_str(&format!("    {one_line}\n"));
-    } else {
-        output.push_str("    query\n");
-        for call in calls {
-            output.push_str(&format!("        {call}\n"));
-        }
-    }
 }
 
 #[cfg(test)]

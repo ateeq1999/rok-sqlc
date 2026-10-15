@@ -84,7 +84,7 @@ async fn seed_search_products(pool: &PgPool) -> i64 {
                 reorder_level: None,
                 weight_kg: (n % 2 == 1).then_some(n as f64),
                 discontinued: Some(n == 5),
-                released_on: None,
+                released_on: chrono::NaiveDate::from_ymd_opt(2024, 1, n as u32),
                 created_at: None,
             },
         )
@@ -156,7 +156,7 @@ async fn keyset_pagination_follows_the_primary_key(pool: &PgPool, category: i64)
     use db::feature_line_items::models::NewFeatureLineItem;
     use db::products::filter::ProductFilter;
     use db::products::read::search_after;
-    use db::search::{MAX_PAGE_SIZE, Ordered, Page};
+    use db::search::{Limit, MAX_PAGE_SIZE, Ordered, Page};
 
     let in_category = || ProductFilter {
         category_id: vec![Ordered::Eq(category)],
@@ -165,7 +165,7 @@ async fn keyset_pagination_follows_the_primary_key(pool: &PgPool, category: i64)
     let mut after = None;
     let mut pages = Vec::new();
     loop {
-        let page = search_after(pool, in_category(), after, 2).await.unwrap();
+        let page = search_after(pool, in_category(), after, Limit::new(2)).await.unwrap();
         let Some(last) = page.last() else {
             break;
         };
@@ -199,7 +199,7 @@ async fn keyset_pagination_follows_the_primary_key(pool: &PgPool, category: i64)
         pool,
         FeatureLineItemFilter::default(),
         Some((id(1), id(1))),
-        10,
+        Limit::new(10),
     )
     .await
     .unwrap();
@@ -211,8 +211,11 @@ async fn keyset_pagination_follows_the_primary_key(pool: &PgPool, category: i64)
 
     let clamped = Page::new(10_000, -5);
     assert_eq!((clamped.limit(), clamped.offset()), (MAX_PAGE_SIZE, 0));
-    let one = search_after(pool, in_category(), None, 0).await.unwrap();
+    let last = Page::new(MAX_PAGE_SIZE, i64::MAX - 10).next();
+    assert_eq!(last.offset(), i64::MAX, "next() saturates instead of overflowing");
+    let one = search_after(pool, in_category(), None, Limit::new(0)).await.unwrap();
     assert_eq!(one.len(), 1, "a limit below 1 is clamped to 1");
+    assert_eq!(Limit::new(10_000).get(), MAX_PAGE_SIZE);
 }
 
 async fn sorting_is_allowlisted_and_stable(pool: &PgPool, category: i64) {
@@ -307,6 +310,52 @@ async fn null_checks_and_equality_filters(pool: &PgPool, category: i64) {
     })
     .await;
     assert_eq!(by_id, ["S-1", "S-2", "S-4"], "ids 501 and 503 are S-5 and S-3");
+
+    let picked = skus_where(ProductFilter {
+        id: vec![Equality::In(vec![
+            uuid::Uuid::from_u128(501),
+            uuid::Uuid::from_u128(502),
+        ])],
+        discontinued: vec![Equality::Ne(true)],
+        ..Default::default()
+    })
+    .await;
+    assert_eq!(picked, ["S-4"], "502 is S-4; 501 (S-5) is discontinued");
+
+    let numeric_sets = skus_where(ProductFilter {
+        price_cents: vec![
+            Ordered::In(vec![100, 200, 300, 400]),
+            Ordered::NotIn(vec![200]),
+            Ordered::Ne(400),
+            Ordered::Le(300),
+        ],
+        ..Default::default()
+    })
+    .await;
+    assert_eq!(numeric_sets, ["S-1", "S-3"]);
+
+    // Product n was released on 2024-01-0n.
+    let date = |day| chrono::NaiveDate::from_ymd_opt(2024, 1, day).unwrap();
+    let released = skus_where(ProductFilter {
+        released_on: vec![Ordered::Between(date(2), date(4))],
+        ..Default::default()
+    })
+    .await;
+    assert_eq!(released, ["S-2", "S-3", "S-4"]);
+
+    let hour_ago = chrono::Utc::now() - chrono::Duration::hours(1);
+    let recent = skus_where(ProductFilter {
+        created_at: vec![Ordered::Gt(hour_ago)],
+        ..Default::default()
+    })
+    .await;
+    assert_eq!(recent.len(), 5, "timestamptz ranges bind as DateTime<Utc>");
+    let old = skus_where(ProductFilter {
+        created_at: vec![Ordered::Lt(hour_ago)],
+        ..Default::default()
+    })
+    .await;
+    assert!(old.is_empty());
 }
 
 async fn text_filters_escape_like_wildcards(pool: &PgPool, category: i64) {
@@ -364,6 +413,20 @@ async fn text_filters_escape_like_wildcards(pool: &PgPool, category: i64) {
     })
     .await;
     assert_eq!(exact, ["Drill_bit"]);
+
+    let equal = names(ProductFilter {
+        name: vec![Text::Eq("Easel".to_owned())],
+        ..Default::default()
+    })
+    .await;
+    assert_eq!(equal, ["Easel"]);
+
+    let excluded = names(ProductFilter {
+        sku: vec![Text::NotIn(vec!["S-1".to_owned(), "S-2".to_owned()])],
+        ..Default::default()
+    })
+    .await;
+    assert_eq!(excluded, ["Clamp 50%", "Drill_bit", "Easel"]);
 }
 
 async fn annotated_queries(pool: &PgPool) {
