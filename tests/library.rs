@@ -211,3 +211,24 @@ fn schema_inputs_are_combined_in_order() -> Result<()> {
     assert!(inputs.path("out/posts/models.rs").exists());
     Ok(())
 }
+
+#[test]
+fn report_failures_carry_their_source_path_and_line() -> Result<()> {
+    let inputs = Inputs::new()?;
+
+    let report = rok_sqlc::generate(&inputs.config("out"))?;
+
+    let table = &report.table_failures[0];
+    assert_eq!(
+        table.path.as_deref(),
+        Some(inputs.path("schema.sql").as_path())
+    );
+    assert_eq!(table.line, Some(2));
+    let query = &report.query_failures[0];
+    assert_eq!(
+        query.path.as_deref(),
+        Some(inputs.path("queries.sql").as_path())
+    );
+    assert_eq!(query.line, Some(4));
+    Ok(())
+}

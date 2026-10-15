@@ -888,6 +888,202 @@ fn usage_errors_print_one_error_prefix_and_exit_non_zero() {
     }
 }
 
+// --- rok-sqlc.toml -----------------------------------------------------------
+
+fn run_binary_in(cwd: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_rok-sqlc"))
+        .current_dir(cwd)
+        .args(args)
+        .output()
+        .expect("failed to spawn rok-sqlc binary")
+}
+
+#[test]
+fn config_file_in_a_parent_directory_is_discovered_and_resolved_against_its_directory() -> Result<()>
+{
+    let dir = TempDir::new()?;
+    fs::create_dir_all(dir.path().join("db"))?;
+    fs::write(dir.path().join("db/schema.sql"), SIMPLE_SCHEMA)?;
+    fs::write(
+        dir.path().join("rok-sqlc.toml"),
+        "schema = [\"db/schema.sql\"]\noutput = \"gen\"\n",
+    )?;
+    let sub = dir.path().join("crates/app");
+    fs::create_dir_all(&sub)?;
+
+    let output = run_binary_in(&sub, &["g"]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(dir.path().join("gen/users/models.rs").exists());
+    assert!(!sub.join("gen").exists());
+    Ok(())
+}
+
+#[test]
+fn explicit_config_file_is_used_instead_of_discovery() -> Result<()> {
+    let dir = TempDir::new()?;
+    fs::write(dir.path().join("schema.sql"), SIMPLE_SCHEMA)?;
+    // The discoverable file points at a schema that doesn't exist.
+    fs::write(
+        dir.path().join("rok-sqlc.toml"),
+        "schema = \"missing.sql\"\noutput = \"wrong\"\n",
+    )?;
+    fs::create_dir_all(dir.path().join("config"))?;
+    fs::write(
+        dir.path().join("config/other.toml"),
+        "schema = \"../schema.sql\"\noutput = \"../right\"\n",
+    )?;
+
+    let output = run_binary_in(dir.path(), &["g", "-c", "config/other.toml"]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(dir.path().join("right/users/models.rs").exists());
+    assert!(!dir.path().join("wrong").exists());
+    Ok(())
+}
+
+#[test]
+fn flags_override_the_config_file() -> Result<()> {
+    let dir = TempDir::new()?;
+    fs::write(dir.path().join("schema.sql"), MIXED_SCHEMA)?;
+    let config = dir.path().join("rok-sqlc.toml");
+    fs::write(
+        &config,
+        "schema = \"schema.sql\"\noutput = \"from-file\"\nresource = \"spans\"\n",
+    )?;
+    let flag_out = output_dir(&dir);
+
+    run(&[
+        "g",
+        "--config",
+        config.to_str().unwrap(),
+        "--output",
+        flag_out.to_str().unwrap(),
+        "--resource",
+        "users",
+    ])?;
+
+    assert!(flag_out.join("users/models.rs").exists());
+    assert!(!flag_out.join("spans").exists());
+    assert!(!dir.path().join("from-file").exists());
+    Ok(())
+}
+
+#[test]
+fn unknown_config_key_names_the_key_and_the_file() -> Result<()> {
+    let dir = TempDir::new()?;
+    fs::write(dir.path().join("schema.sql"), SIMPLE_SCHEMA)?;
+    let config = dir.path().join("rok-sqlc.toml");
+    // `output` stays valid so that, if the typo were ignored, the run would
+    // write into the temp dir rather than the working directory.
+    fs::write(
+        &config,
+        "schema = \"schema.sql\"\noutput = \"gen\"\nresorce = \"users\"\n",
+    )?;
+
+    let err = run(&["g", "-c", config.to_str().unwrap()]).unwrap_err();
+
+    let message = format!("{err:#}");
+    assert!(message.contains("resorce"), "{message}");
+    assert!(message.contains(&config.display().to_string()), "{message}");
+    assert!(!dir.path().join("gen").exists());
+    Ok(())
+}
+
+#[test]
+fn missing_schema_without_a_config_file_is_a_usage_error() -> Result<()> {
+    let dir = TempDir::new()?;
+    let output = run_binary_in(dir.path(), &["g"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.starts_with("error: "), "{stderr}");
+    assert!(stderr.contains("rok-sqlc.toml"), "{stderr}");
+    Ok(())
+}
+
+#[test]
+fn config_file_schema_entry_can_be_a_migration_directory() -> Result<()> {
+    let dir = TempDir::new()?;
+    let migrations = dir.path().join("db/migrations");
+    fs::create_dir_all(&migrations)?;
+    fs::write(
+        migrations.join("0002_posts.up.sql"),
+        "CREATE TABLE posts (id UUID PRIMARY KEY, author_id UUID NOT NULL REFERENCES users (id));\n",
+    )?;
+    fs::write(
+        migrations.join("0001_users.up.sql"),
+        "CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);\n",
+    )?;
+    // Would fail generation if the down migration were read.
+    fs::write(
+        migrations.join("0001_users.down.sql"),
+        "CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, duration INTERVAL NOT NULL);\n",
+    )?;
+    fs::write(
+        dir.path().join("rok-sqlc.toml"),
+        "schema = [\"db/migrations/\"]\noutput = \"gen\"\n",
+    )?;
+    let sub = dir.path().join("crates/app");
+    fs::create_dir_all(&sub)?;
+
+    let output = run_binary_in(&sub, &["g"]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let generated = dir.path().join("gen");
+    assert!(generated.join("users/models.rs").exists());
+    assert!(generated.join("posts/models.rs").exists());
+    assert!(!generated.join("spans").exists());
+    let snapshot = fs::read_to_string(generated.join("schema.rs"))?;
+    assert!(
+        snapshot.find("CREATE TABLE users").unwrap() < snapshot.find("CREATE TABLE posts").unwrap()
+    );
+    Ok(())
+}
+
+#[test]
+fn repeated_schema_flags_replace_the_config_files_schema_list() -> Result<()> {
+    let dir = TempDir::new()?;
+    // The file's schema doesn't exist: using it at all would fail the run.
+    fs::write(
+        dir.path().join("rok-sqlc.toml"),
+        "schema = [\"missing.sql\", \"missing/\"]\noutput = \"gen\"\n",
+    )?;
+    fs::write(
+        dir.path().join("users.sql"),
+        "CREATE TABLE users (id UUID PRIMARY KEY);\n",
+    )?;
+    fs::write(
+        dir.path().join("posts.sql"),
+        "CREATE TABLE posts (id UUID PRIMARY KEY, author_id UUID NOT NULL REFERENCES users (id));\n",
+    )?;
+
+    let output = run_binary_in(
+        dir.path(),
+        &["g", "-s", "users.sql", "--schema", "posts.sql"],
+    );
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(dir.path().join("gen/users/models.rs").exists());
+    assert!(dir.path().join("gen/posts/models.rs").exists());
+    Ok(())
+}
+
 #[test]
 fn unsupported_ctes_fail_with_path_and_line_diagnostics() -> Result<()> {
     let dir = TempDir::new()?;
@@ -933,5 +1129,197 @@ fn unsupported_ctes_fail_with_path_and_line_diagnostics() -> Result<()> {
     );
     assert!(!stderr.contains("Emails"), "{stderr}");
     assert!(stderr.contains("2 unsupported queries"), "{stderr}");
+    Ok(())
+}
+
+/// Generates from `args` (paths already absolute) into `out`, returning the
+/// schema snapshot.
+fn generate_snapshot(schema_args: &[&Path], out: &Path) -> Result<String> {
+    let mut args = vec!["generate".to_owned()];
+    for path in schema_args {
+        args.push("--schema".to_owned());
+        args.push(path.to_str().unwrap().to_owned());
+    }
+    args.push("--output".to_owned());
+    args.push(out.to_str().unwrap().to_owned());
+    run(&args.iter().map(String::as_str).collect::<Vec<_>>())?;
+    Ok(fs::read_to_string(out.join("schema.rs"))?)
+}
+
+#[test]
+fn migration_directory_generates_from_up_migrations_in_filename_order() -> Result<()> {
+    let dir = TempDir::new()?;
+    let migrations = dir.path().join("migrations");
+    fs::create_dir(&migrations)?;
+    fs::write(
+        migrations.join("0002_posts.up.sql"),
+        "CREATE TABLE posts (id UUID PRIMARY KEY, author_id UUID NOT NULL REFERENCES users (id));\n",
+    )?;
+    fs::write(
+        migrations.join("0002_posts.down.sql"),
+        "DROP TABLE posts;\n",
+    )?;
+    fs::write(
+        migrations.join("0001_users.up.sql"),
+        "CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);\n",
+    )?;
+    // A down migration that would fail generation if it were read.
+    fs::write(
+        migrations.join("0001_users.down.sql"),
+        "CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, duration INTERVAL NOT NULL);\n",
+    )?;
+    let out = output_dir(&dir);
+
+    let snapshot = generate_snapshot(&[&migrations], &out)?;
+
+    assert!(out.join("users/models.rs").exists());
+    assert!(out.join("posts/models.rs").exists());
+    assert!(!out.join("spans").exists());
+    assert!(!snapshot.contains("DROP TABLE"), "{snapshot}");
+    let users = snapshot.find("CREATE TABLE users").unwrap();
+    let posts = snapshot.find("CREATE TABLE posts").unwrap();
+    assert!(users < posts, "migrations applied in filename order");
+    Ok(())
+}
+
+#[test]
+fn repeated_schema_flags_combine_inputs_in_the_order_given() -> Result<()> {
+    let dir = TempDir::new()?;
+    let shared = dir.path().join("shared.sql");
+    let module = dir.path().join("module");
+    fs::create_dir(&module)?;
+    fs::write(&shared, "CREATE TABLE users (id UUID PRIMARY KEY);")?;
+    fs::write(
+        module.join("0001_posts.up.sql"),
+        "CREATE TABLE posts (id UUID PRIMARY KEY, author_id UUID NOT NULL REFERENCES users (id));",
+    )?;
+    let out = output_dir(&dir);
+
+    let snapshot = generate_snapshot(&[&shared, &module], &out)?;
+
+    assert!(out.join("users/models.rs").exists());
+    assert!(out.join("posts/models.rs").exists());
+    let users = snapshot.find("CREATE TABLE users").unwrap();
+    let posts = snapshot.find("CREATE TABLE posts").unwrap();
+    assert!(users < posts, "inputs combined in the order given");
+
+    let reversed = generate_snapshot(&[&module, &shared], &dir.path().join("reversed"))?;
+    assert!(
+        reversed.find("CREATE TABLE posts").unwrap() < reversed.find("CREATE TABLE users").unwrap()
+    );
+    Ok(())
+}
+
+#[test]
+fn unsupported_table_in_a_migration_cites_its_file_and_line() -> Result<()> {
+    let dir = TempDir::new()?;
+    let migrations = dir.path().join("migrations");
+    fs::create_dir(&migrations)?;
+    fs::write(
+        migrations.join("0001_users.up.sql"),
+        "CREATE TABLE users (id UUID PRIMARY KEY);\n",
+    )?;
+    fs::write(
+        migrations.join("0002_tags.up.sql"),
+        "CREATE TABLE tags (id UUID PRIMARY KEY);\n",
+    )?;
+    let third = migrations.join("0003_spans.up.sql");
+    fs::write(
+        &third,
+        "-- Spans measure durations.\n\
+         \n\
+         CREATE INDEX tags_id ON tags (id);\n\
+         \n\
+         CREATE TABLE spans (\n\
+         \x20   id BIGSERIAL PRIMARY KEY,\n\
+         \x20   duration INTERVAL NOT NULL\n\
+         );\n",
+    )?;
+    let out = output_dir(&dir);
+    let args = |lenient: bool| {
+        let mut args = vec![
+            "generate",
+            "--schema",
+            migrations.to_str().unwrap(),
+            "--output",
+            out.to_str().unwrap(),
+        ];
+        if lenient {
+            args.push("--lenient");
+        }
+        run_binary(&args)
+    };
+    let located = format!("{}:5: table `spans`", third.display());
+
+    let strict = args(false);
+    assert!(!strict.status.success());
+    let stderr = String::from_utf8_lossy(&strict.stderr);
+    assert!(stderr.contains(&format!("error: {located}: ")), "{stderr}");
+
+    let lenient = args(true);
+    assert!(lenient.status.success());
+    let stderr = String::from_utf8_lossy(&lenient.stderr);
+    assert!(
+        stderr.contains(&format!("warning: {located} skipped: ")),
+        "{stderr}"
+    );
+    Ok(())
+}
+
+#[test]
+fn query_failures_cite_the_query_file_and_annotation_line() -> Result<()> {
+    let dir = TempDir::new()?;
+    let schema = dir.path().join("schema.sql");
+    let queries = dir.path().join("queries.sql");
+    fs::write(&schema, SIMPLE_SCHEMA)?;
+    fs::write(
+        &queries,
+        format!(
+            "{QUERY_FILE}\n-- name: Broken :many\nSELECT colour FROM users;\n\n-- name: BadMode :sometimes\nSELECT id FROM users;\n"
+        ),
+    )?;
+    let broken_line = QUERY_FILE.lines().count() + 2;
+    let out = output_dir(&dir);
+    let args = |lenient: bool| {
+        let mut args = vec![
+            "generate",
+            "--schema",
+            schema.to_str().unwrap(),
+            "--queries",
+            queries.to_str().unwrap(),
+            "--output",
+            out.to_str().unwrap(),
+        ];
+        if lenient {
+            args.push("--lenient");
+        }
+        run_binary(&args)
+    };
+    let path = queries.display().to_string();
+
+    let strict = args(false);
+    assert!(!strict.status.success());
+    let stderr = String::from_utf8_lossy(&strict.stderr);
+    assert!(
+        stderr.contains(&format!("error: {path}:{broken_line}: query `Broken`: ")),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "error: {path}:{}: query `BadMode`: ",
+            broken_line + 3
+        )),
+        "{stderr}"
+    );
+
+    let lenient = args(true);
+    assert!(lenient.status.success());
+    let stderr = String::from_utf8_lossy(&lenient.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "warning: {path}:{broken_line}: query `Broken` skipped: "
+        )),
+        "{stderr}"
+    );
     Ok(())
 }

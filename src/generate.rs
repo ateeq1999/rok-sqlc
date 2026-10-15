@@ -27,9 +27,15 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
     let resource = config.resource.as_deref();
     let (dry_run, force, lenient) = (config.dry_run, config.force, config.lenient);
 
-    let (sql, schema_label) = read_schema(config)?;
-    let parsed = parser::parse_schema(&sql)
-        .with_context(|| format!("failed to parse SQL schema `{schema_label}`"))?;
+    let sources = read_schema(config)?;
+    let parsed = parser::parse_sources(
+        &sources
+            .iter()
+            .map(|(path, sql)| parser::SchemaSource { path, sql })
+            .collect::<Vec<_>>(),
+    )
+    .context("failed to parse SQL schema")?;
+    let sql = schema_snapshot(&sources);
 
     let matches_resource =
         |table: &str| resource.is_none_or(|name| table == name || table.to_snake_case() == name);
@@ -41,6 +47,8 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
         .map(|failure| TableFailure {
             table: failure.table.clone(),
             reason: failure.reason.clone(),
+            path: failure.path.clone(),
+            line: failure.line,
         })
         .collect();
 
@@ -153,28 +161,64 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Reads the schema inputs and combines them in order. Returns the combined
-/// SQL and a label naming the inputs for error messages.
-fn read_schema(config: &Config) -> anyhow::Result<(String, String)> {
+/// Reads the schema inputs in order: a file as is, a directory as its
+/// `*.sql` files in filename order without `*.down.sql`. Returns each file's
+/// path and SQL.
+fn read_schema(config: &Config) -> anyhow::Result<Vec<(PathBuf, String)>> {
     if config.schema.is_empty() {
         bail!("no schema input given");
     }
+    let mut files = Vec::new();
+    for input in &config.schema {
+        if input.is_dir() {
+            let migrations = migration_files(input)?;
+            if migrations.is_empty() {
+                bail!(
+                    "schema directory `{}` contains no `*.sql` migrations",
+                    input.display()
+                );
+            }
+            files.extend(migrations);
+        } else {
+            files.push(input.clone());
+        }
+    }
+    files
+        .into_iter()
+        .map(|path| {
+            let sql = std::fs::read_to_string(&path)
+                .with_context(|| format!("failed to read schema `{}`", path.display()))?;
+            Ok((path, sql))
+        })
+        .collect()
+}
+
+/// The up migrations in `dir` (not its subdirectories), in filename order.
+fn migration_files(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let read_error = || format!("failed to read schema directory `{}`", dir.display());
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir).with_context(read_error)? {
+        let entry = entry.with_context(read_error)?;
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        if name.ends_with(".sql") && !name.ends_with(".down.sql") && entry.path().is_file() {
+            files.push(entry.path());
+        }
+    }
+    files.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+    Ok(files)
+}
+
+/// The schema snapshot: every input verbatim, in order, each starting on a
+/// new line.
+fn schema_snapshot(sources: &[(PathBuf, String)]) -> String {
     let mut sql = String::new();
-    for path in &config.schema {
+    for (_, text) in sources {
         if !sql.is_empty() && !sql.ends_with('\n') {
             sql.push('\n');
         }
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("failed to read schema `{}`", path.display()))?;
-        sql.push_str(&text);
+        sql.push_str(text);
     }
-    let label = config
-        .schema
-        .iter()
-        .map(|path| path.display().to_string())
-        .collect::<Vec<_>>()
-        .join("`, `");
-    Ok((sql, label))
+    sql
 }
 
 /// Parses and analyzes the query file. Unsupported queries are recorded in
