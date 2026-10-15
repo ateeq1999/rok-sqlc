@@ -1,7 +1,7 @@
 //! The generation pipeline behind [`generate`](crate::generate): read the
 //! inputs, parse and analyze them, plan the files, and write them.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
@@ -103,20 +103,72 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
         bail!("all tables are unsupported; see warnings above");
     }
 
-    let analyzed = match config.queries.as_slice() {
-        [] => None,
-        [path] => Some(analyze_query_file(
-            path, &parsed, &selected, lenient, report,
-        )?),
-        _ => bail!("only one query file is supported"),
-    };
-    let queries_module = match &analyzed {
-        Some(analyzed) => generator::QueriesModule::Generate(analyzed),
-        None if is_generated_file(&output_dir.join("queries.rs")) => generator::QueriesModule::Keep,
-        None => generator::QueriesModule::None,
+    let query_inputs = query_inputs(&config.queries)?;
+    if !query_inputs.is_empty() && selected.iter().any(|table| table.module_name == "queries") {
+        bail!(
+            "table module `queries` collides with the generated `queries` module; rename the table or omit --queries"
+        );
+    }
+    let mut analyzed = Vec::new();
+    let mut failed_files = Vec::new();
+    for input in &query_inputs {
+        let (queries, failures) = analyze_query_file(&input.path, &parsed, &selected)?;
+        if !failures.is_empty() {
+            failed_files.push(format!("`{}`", input.path.display()));
+        }
+        report.query_failures.extend(failures);
+        analyzed.push(generator::QueryModule {
+            name: input.module.clone().unwrap_or_default(),
+            queries,
+        });
+    }
+    if !report.query_failures.is_empty() && !lenient {
+        let count = report.query_failures.len();
+        bail!(
+            "{count} unsupported quer{} in {}; pass --lenient to skip them",
+            if count == 1 { "y" } else { "ies" },
+            failed_files.join(", ")
+        );
+    }
+    let queries_module = match analyzed.as_slice() {
+        [single] if query_inputs[0].module.is_none() => {
+            generator::QueriesModule::Generate(&single.queries)
+        }
+        [] if is_generated_file(&output_dir.join("queries.rs"))
+            || is_generated_file(&output_dir.join("queries").join("mod.rs")) =>
+        {
+            generator::QueriesModule::Keep
+        }
+        [] => generator::QueriesModule::None,
+        modules => generator::QueriesModule::GenerateModules(modules),
     };
 
     let files = generator::plan_files_with_queries(&sql, &selected, queries_module, output_dir);
+
+    // Any generated file under the output directory that this run does not
+    // produce is stale. A kept queries module protects both layouts
+    // (`queries.rs` and everything under `queries/`); a run with queries
+    // leaves the other layout's files stale, so switching layouts cleans up.
+    let keep: HashSet<PathBuf> = files.iter().map(|(path, _)| path.clone()).collect();
+    let mut stale = output::find_stale(output_dir, &keep)?;
+    if matches!(queries_module, generator::QueriesModule::Keep) {
+        let (single, dir) = (output_dir.join("queries.rs"), output_dir.join("queries"));
+        stale.retain(|path| *path != single && !path.starts_with(&dir));
+    }
+
+    if config.check {
+        (report.missing, report.changed) = output::compare_files(&files)?;
+        report.stale = stale;
+        if report.has_drift() {
+            let count = report.missing.len() + report.changed.len() + report.stale.len();
+            bail!(
+                "generated code is out of date: {count} file(s) drifted; run `rok-sqlc generate` to update them"
+            );
+        }
+        report.unchanged = files.into_iter().map(|(path, _)| path).collect();
+        return Ok(());
+    }
+
     let applied = output::apply_files(&files, dry_run, force)?;
 
     report.unchanged = applied.unchanged;
@@ -132,6 +184,10 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
         );
     }
     report.written = applied.written;
+    if !dry_run {
+        output::remove_stale(output_dir, &stale)?;
+    }
+    report.stale = stale;
     Ok(())
 }
 
@@ -195,22 +251,100 @@ fn schema_snapshot(sources: &[(PathBuf, String)]) -> String {
     sql
 }
 
-/// Parses and analyzes the query file. Unsupported queries are recorded in
-/// the report; they abort the run unless `lenient`.
+/// One query file to analyze.
+struct QueryInput {
+    path: PathBuf,
+    /// The generated module under `queries/`, named after the file stem;
+    /// `None` when a single query file becomes `queries.rs`.
+    module: Option<String>,
+}
+
+/// Expands the query inputs. A lone file keeps the single-module layout
+/// (`queries.rs`); a directory (its `*.sql` files, sorted by name) or several
+/// inputs produce one module per file under `queries/`.
+fn query_inputs(inputs: &[PathBuf]) -> anyhow::Result<Vec<QueryInput>> {
+    if let [path] = inputs
+        && !path.is_dir()
+    {
+        return Ok(vec![QueryInput {
+            path: path.clone(),
+            module: None,
+        }]);
+    }
+
+    let mut files = Vec::new();
+    for input in inputs {
+        if !input.is_dir() {
+            files.push(input.clone());
+            continue;
+        }
+        let read_error = || format!("failed to read query directory `{}`", input.display());
+        let mut found = std::fs::read_dir(input)
+            .with_context(read_error)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<std::io::Result<Vec<_>>>()
+            .with_context(read_error)?;
+        found.retain(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "sql"));
+        if found.is_empty() {
+            bail!(
+                "query directory `{}` contains no `.sql` files",
+                input.display()
+            );
+        }
+        found.sort();
+        files.extend(found);
+    }
+
+    let mut seen: HashMap<String, PathBuf> = HashMap::new();
+    let mut modules = Vec::with_capacity(files.len());
+    for path in files {
+        let module = query_module_name(&path)?;
+        if let Some(first) = seen.insert(module.clone(), path.clone()) {
+            bail!(
+                "query files `{}` and `{}` would both generate module `{module}`; rename one of them",
+                first.display(),
+                path.display()
+            );
+        }
+        modules.push(QueryInput {
+            path,
+            module: Some(module),
+        });
+    }
+    Ok(modules)
+}
+
+/// The module a query file generates under `queries/`: its stem, which must
+/// already be a snake_case Rust identifier that is not a keyword.
+fn query_module_name(path: &Path) -> anyhow::Result<String> {
+    let stem = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    match parser::naming::rust_identifier(&stem) {
+        Ok(ident) if ident == stem => Ok(stem),
+        suggestion => {
+            let hint = match suggestion {
+                Ok(ident) => format!("; rename it to `{ident}.sql`"),
+                Err(_) => String::new(),
+            };
+            bail!(
+                "query file `{}`: `{stem}` is not a valid Rust module name (use lowercase letters, digits and underscores, not starting with a digit or naming a keyword){hint}",
+                path.display()
+            )
+        }
+    }
+}
+
+/// Parses and analyzes one query file. Unsupported queries come back as
+/// failures for the caller to report.
 fn analyze_query_file(
     path: &Path,
     parsed: &parser::ParsedSchema,
     selected: &[Table],
-    lenient: bool,
-    report: &mut Report,
-) -> anyhow::Result<Vec<AnalyzedQuery>> {
+) -> anyhow::Result<(Vec<AnalyzedQuery>, Vec<QueryFailure>)> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read query file `{}`", path.display()))?;
-    if selected.iter().any(|table| table.module_name == "queries") {
-        bail!(
-            "table module `queries` collides with the generated `queries.rs`; rename the table or omit --queries"
-        );
-    }
 
     let (defs, mut failures) = queries::parse_query_file(&text);
     if defs.is_empty() && failures.is_empty() {
@@ -231,7 +365,7 @@ fn analyze_query_file(
     );
     failures.extend(analysis_failures);
 
-    report.query_failures = failures
+    let failures = failures
         .into_iter()
         .map(|failure| QueryFailure {
             query: failure.query,
@@ -240,13 +374,5 @@ fn analyze_query_file(
             line: failure.line,
         })
         .collect();
-    if !report.query_failures.is_empty() && !lenient {
-        let count = report.query_failures.len();
-        bail!(
-            "{count} unsupported quer{} in `{}`; pass --lenient to skip them",
-            if count == 1 { "y" } else { "ies" },
-            path.display()
-        );
-    }
-    Ok(analyzed)
+    Ok((analyzed, failures))
 }
