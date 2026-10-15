@@ -48,6 +48,7 @@ async fn generated_crud_against_postgres() {
     composite_keys_arrays_and_numeric(&pool).await;
     annotated_queries(&pool).await;
     search_filters_and_pages(&pool).await;
+    altered_table_has_its_final_columns(&pool).await;
 }
 
 /// Seeds five products in a fresh category, priced 100..=500, and returns
@@ -892,4 +893,41 @@ async fn composite_keys_arrays_and_numeric(pool: &PgPool) {
     assert!(read::exists_by_id(pool, order_id, product_id).await.unwrap());
     assert!(!read::exists_by_id(pool, product_id, order_id).await.unwrap(), "key order matters");
     assert!(write::delete(pool, order_id, product_id).await.unwrap());
+}
+
+/// `revised_notes` is created in extra_schema.sql and altered in
+/// alter_schema.sql; the generated model carries only the final columns.
+async fn altered_table_has_its_final_columns(pool: &PgPool) {
+    use db::revised_notes::models::{NewRevisedNote, RevisedNote};
+    use db::revised_notes::{read, write};
+
+    let created = write::create(
+        pool,
+        NewRevisedNote {
+            headline: "renamed".to_owned(),
+            body: Some("added".to_owned()),
+        },
+    )
+    .await
+    .unwrap();
+    let defaulted = write::create(
+        pool,
+        NewRevisedNote {
+            headline: "default body".to_owned(),
+            body: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(defaulted.body, "");
+
+    let stored = read::get_by_id(pool, created.id).await.unwrap().unwrap();
+    assert_eq!(
+        stored,
+        RevisedNote {
+            id: created.id,
+            headline: "renamed".to_owned(),
+            body: "added".to_owned(),
+        }
+    );
 }
