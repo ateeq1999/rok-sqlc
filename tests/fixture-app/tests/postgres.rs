@@ -518,6 +518,22 @@ async fn annotated_queries(pool: &PgPool) {
         .expect("category has stock");
     assert_eq!(ours.total_stock, 50);
 
+    let stocked = queries::stocked_categories(pool, 1, category.id)
+        .await
+        .unwrap();
+    assert_eq!(stocked.len(), 1, "the CTE pre-aggregates per category");
+    assert_eq!(stocked[0].id, category.id);
+    assert_eq!(stocked[0].category_name, "query-cat");
+    assert_eq!(stocked[0].product_count, 1, "only the hammer has stock >= 1");
+    assert_eq!(stocked[0].total_stock, Some(50));
+    assert!(
+        queries::stocked_categories(pool, 51, category.id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the CTE placeholder filters before aggregation"
+    );
+
     let found = queries::search_products(pool, "%ANVIL%".to_owned())
         .await
         .unwrap();

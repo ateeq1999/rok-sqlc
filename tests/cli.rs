@@ -887,3 +887,51 @@ fn usage_errors_print_one_error_prefix_and_exit_non_zero() {
         );
     }
 }
+
+#[test]
+fn unsupported_ctes_fail_with_path_and_line_diagnostics() -> Result<()> {
+    let dir = TempDir::new()?;
+    let schema = dir.path().join("schema.sql");
+    let queries = dir.path().join("queries.sql");
+    fs::write(&schema, SIMPLE_SCHEMA)?;
+    fs::write(
+        &queries,
+        "-- name: Emails :many\n\
+         WITH e AS (SELECT email FROM users) SELECT email FROM e;\n\
+         \n\
+         -- name: Countdown :many\n\
+         WITH RECURSIVE t (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM t) SELECT n FROM t;\n\
+         \n\
+         -- name: Purge :many\n\
+         WITH gone AS (DELETE FROM users RETURNING id) SELECT id FROM gone;\n",
+    )?;
+    let out = output_dir(&dir);
+
+    let output = run_binary(&[
+        "generate",
+        "--schema",
+        schema.to_str().unwrap(),
+        "--queries",
+        queries.to_str().unwrap(),
+        "--output",
+        out.to_str().unwrap(),
+    ]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let path = queries.display().to_string();
+    assert!(
+        stderr.contains(&format!(
+            "{path}:4: query `Countdown`: WITH RECURSIVE is not supported"
+        )),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "{path}:7: query `Purge`: data-modifying CTE `gone`"
+        )),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("Emails"), "{stderr}");
+    assert!(stderr.contains("2 unsupported queries"), "{stderr}");
+    Ok(())
+}

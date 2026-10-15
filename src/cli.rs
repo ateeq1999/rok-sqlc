@@ -293,7 +293,10 @@ fn analyze_query_file(
             }
         } else {
             for failure in &failures {
-                eprintln!("error: {failure}");
+                match failure.line {
+                    Some(line) => eprintln!("error: {}:{line}: {failure}", path.display()),
+                    None => eprintln!("error: {failure}"),
+                }
             }
             bail!(
                 "{} unsupported quer{} in `{}`; pass --lenient to skip them",
