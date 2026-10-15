@@ -1,0 +1,158 @@
+[module]
+key = "point_of_sale"
+name = "Register"
+version = "1.0.0"
+schema = "point_of_sale"
+category = "core_retail"
+description = "Register shifts, sales, returns and exchanges, split payments including mobile money, manager approvals, drawer cash and fiscal receipts."
+depends_on = ["core", "catalog", "inventory", "customers"]
+optional_depends_on = []
+can_be_uninstalled = true
+
+[[permissions]]
+key = "point_of_sale.sales.create"
+description = "Sell at the register"
+
+[[permissions]]
+key = "point_of_sale.sales.view"
+description = "See sales history"
+
+[[permissions]]
+key = "point_of_sale.sales.void"
+description = "Void a sale"
+risk_level = "money"
+
+[[permissions]]
+key = "point_of_sale.sales.refund"
+description = "Refund or return a sale"
+risk_level = "money"
+
+[[permissions]]
+key = "point_of_sale.sales.discount"
+description = "Give a discount"
+risk_level = "money"
+
+[[permissions]]
+key = "point_of_sale.sales.override_price"
+description = "Change a price at the register"
+risk_level = "money"
+
+[[permissions]]
+key = "point_of_sale.sales.sell_on_credit"
+description = "Sell on a customer's credit account"
+risk_level = "money"
+
+[[permissions]]
+key = "point_of_sale.approvals.grant"
+description = "Approve voids, refunds, discounts and price changes for others"
+risk_level = "money"
+
+[[permissions]]
+key = "point_of_sale.shifts.open_close"
+description = "Open and close a register shift"
+
+[[permissions]]
+key = "point_of_sale.shifts.view_expected_cash"
+description = "See expected cash before counting the drawer"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "point_of_sale.cash.move"
+description = "Put cash in, pay out or drop cash to the safe"
+risk_level = "money"
+
+[[permissions]]
+key = "point_of_sale.cash.open_drawer"
+description = "Open the cash drawer without a sale"
+risk_level = "money"
+
+[[permissions]]
+key = "point_of_sale.fiscal_receipts.manage"
+description = "Retry and review fiscal receipts"
+risk_level = "sensitive"
+
+[[pages]]
+page_key = "register"
+title = "Register"
+route = "/register"
+
+[[pages]]
+page_key = "sales"
+title = "Sales"
+route = "/sales"
+
+[[pages]]
+page_key = "shifts"
+title = "Shifts"
+route = "/shifts"
+
+[[pages]]
+page_key = "cash_movements"
+title = "Cash in and out"
+route = "/shifts/cash"
+
+[[pages]]
+page_key = "fiscal_receipts"
+title = "Fiscal receipts"
+route = "/sales/fiscal-receipts"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["point_of_sale.sales.create", "point_of_sale.sales.view", "point_of_sale.sales.void", "point_of_sale.sales.refund", "point_of_sale.sales.discount", "point_of_sale.sales.override_price", "point_of_sale.sales.sell_on_credit", "point_of_sale.approvals.grant", "point_of_sale.shifts.open_close", "point_of_sale.shifts.view_expected_cash", "point_of_sale.cash.move", "point_of_sale.cash.open_drawer", "point_of_sale.fiscal_receipts.manage"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["point_of_sale.sales.create", "point_of_sale.shifts.open_close"]
+
+[[default_roles]]
+role_key = "accountant"
+permissions = ["point_of_sale.sales.view", "point_of_sale.shifts.view_expected_cash", "point_of_sale.fiscal_receipts.manage"]
+
+[[settings]]
+key = "require_open_shift_to_sell"
+value = true
+
+[[settings]]
+key = "blind_cash_count"
+value = true
+
+[[settings]]
+key = "maximum_cashier_discount_percent"
+value = 5
+
+[[settings]]
+key = "default_vat_rate_percent"
+value = 18
+
+[[settings]]
+key = "fiscal_receipts_enabled"
+value = false
+
+[[settings]]
+key = "allow_offline_sales"
+value = true
+
+[[settings]]
+key = "accepted_payment_methods"
+value = ["cash", "card", "mobile_money"]
+
+[[number_sequences]]
+sequence_key = "point_of_sale.sales"
+prefix = "S-"
+padding_length = 4
+
+[[number_sequences]]
+sequence_key = "point_of_sale.returns"
+prefix = "R-"
+padding_length = 4
+
+[[assistant_rules]]
+page_key = "register"
+trigger_metric_key = "customer_has_overdue_balance"
+trigger_comparison = "any"
+message_template = "{customer_name} is {days_overdue} days late on {overdue_amount}. Ask before selling more on credit."
+visible_to_role_keys = ["cashier", "manager"]
+frequency = "every_visit"
+allowed_actions = [
+  { action_key = "open_customer_account", label = "Open their account", kind = "open_page", target_page_key = "customer_lookup" },
+]

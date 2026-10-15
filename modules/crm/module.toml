@@ -1,0 +1,59 @@
+[module]
+key = "crm"
+name = "Customer marketing"
+version = "1.0.0"
+schema = "crm"
+category = "business"
+description = "Customer segments, marketing consent and text message or WhatsApp campaigns with return-visit tracking."
+depends_on = ["core", "customers"]
+optional_depends_on = ["point_of_sale", "promotions", "online_shop", "ai_assistant"]
+can_be_uninstalled = true
+
+[[permissions]]
+key = "crm.campaigns.view"
+description = "See campaigns and their results"
+
+[[permissions]]
+key = "crm.campaigns.manage"
+description = "Create segments and draft campaigns"
+
+[[permissions]]
+key = "crm.campaigns.send"
+description = "Send campaigns (paid text messages)"
+risk_level = "money"
+
+[[permissions]]
+key = "crm.consents.manage"
+description = "Record or withdraw customer marketing consent"
+risk_level = "sensitive"
+
+[[pages]]
+page_key = "campaigns"
+title = "Campaigns"
+route = "/campaigns"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["crm.campaigns.view", "crm.campaigns.manage", "crm.campaigns.send", "crm.consents.manage"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["crm.consents.manage"]
+
+[[default_roles]]
+role_key = "accountant"
+permissions = ["crm.campaigns.view"]
+
+# Days after a message during which a purchase counts as caused by the campaign.
+[[settings]]
+key = "attribution_window_days"
+value = 7
+
+# Messages are not sent outside these hours (local time).
+[[settings]]
+key = "quiet_hours"
+value = { from = "21:00", to = "08:00" }
+
+[[settings]]
+key = "opt_out_keyword"
+value = "STOP"

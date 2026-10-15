@@ -1,0 +1,83 @@
+[module]
+key = "bar"
+name = "Bar & lounge"
+version = "1.0.0"
+schema = "bar"
+category = "industry_pack"
+description = "Open tabs with spending limits and idle alerts, tot measures sold from bottles, and bottle pour checks to catch losses."
+business_types = ["bar", "pub", "lounge", "night_club", "beach_bar"]
+depends_on = ["core", "catalog", "inventory", "point_of_sale"]
+optional_depends_on = ["restaurant", "customers", "ai_assistant"]
+can_be_uninstalled = true
+
+[[permissions]]
+key = "bar.tabs.open"
+description = "Open tabs and add drinks"
+
+[[permissions]]
+key = "bar.tabs.transfer"
+description = "Move a tab to another guest or table"
+
+[[permissions]]
+key = "bar.tabs.close_without_payment"
+description = "Close a tab that was not paid (walk-out)"
+risk_level = "money"
+
+[[permissions]]
+key = "bar.measures.manage"
+description = "Set tot measures and their prices"
+risk_level = "money"
+
+[[permissions]]
+key = "bar.pour_checks.record"
+description = "Record bottle pour checks and weights"
+
+[[permissions]]
+key = "bar.pour_checks.view"
+description = "See pour variance reports"
+risk_level = "sensitive"
+
+[[pages]]
+page_key = "bar_tabs"
+title = "Open tabs"
+route = "/bar/tabs"
+
+[[pages]]
+page_key = "bar_measures"
+title = "Tot measures"
+route = "/bar/measures"
+
+[[pages]]
+page_key = "bar_pour_checks"
+title = "Pour checks"
+route = "/bar/pour-checks"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["bar.tabs.open", "bar.tabs.transfer", "bar.tabs.close_without_payment", "bar.measures.manage", "bar.pour_checks.record", "bar.pour_checks.view"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["bar.tabs.open", "bar.tabs.transfer"]
+
+[[default_roles]]
+role_key = "bartender"
+name = "Bartender"
+permissions = ["bar.tabs.open", "bar.tabs.transfer", "bar.pour_checks.record", "catalog.products.view"]
+
+[[default_roles]]
+role_key = "waiter"
+name = "Waiter"
+permissions = ["bar.tabs.open", "catalog.products.view"]
+
+[[settings]]
+key = "tab_idle_alert_minutes"
+value = 45
+
+[[settings]]
+key = "default_spending_limit_amount"
+value = 0
+
+[[settings]]
+key = "pour_variance_alert_measures"
+value = 2

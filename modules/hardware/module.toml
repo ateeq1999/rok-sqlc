@@ -1,0 +1,60 @@
+[module]
+key = "hardware"
+name = "Hardware & building supplies"
+version = "1.0.0"
+schema = "hardware"
+category = "industry_pack"
+description = "Cut-to-length selling with cutting fees, offcut stock and contractor projects with trade discounts and quotations."
+business_types = ["hardware", "building_materials", "electrical_supplies", "plumbing_supplies", "timber_yard"]
+depends_on = ["core", "catalog", "customers", "point_of_sale", "quotes_invoices"]
+optional_depends_on = ["inventory", "delivery", "ai_assistant"]
+can_be_uninstalled = true
+
+[[permissions]]
+key = "hardware.cutting_rules.manage"
+description = "Set stock lengths, minimum cuts and cutting fees"
+
+[[permissions]]
+key = "hardware.offcuts.manage"
+description = "Record, price and scrap offcuts"
+
+[[permissions]]
+key = "hardware.contractor_projects.manage"
+description = "Open contractor projects and set trade discounts"
+risk_level = "money"
+
+[[pages]]
+page_key = "hardware_offcuts"
+title = "Offcuts"
+route = "/hardware/offcuts"
+
+[[pages]]
+page_key = "hardware_cutting_rules"
+title = "Cutting rules"
+route = "/hardware/cutting-rules"
+
+[[pages]]
+page_key = "hardware_contractor_projects"
+title = "Contractor projects"
+route = "/hardware/contractor-projects"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["hardware.cutting_rules.manage", "hardware.offcuts.manage", "hardware.contractor_projects.manage"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["hardware.offcuts.manage"]
+
+[[default_roles]]
+role_key = "yard_attendant"
+name = "Yard attendant"
+permissions = ["hardware.offcuts.manage", "catalog.products.view"]
+
+[[settings]]
+key = "default_trade_discount_percent"
+value = 5
+
+[[settings]]
+key = "offer_offcuts_before_cutting_new_stock"
+value = true

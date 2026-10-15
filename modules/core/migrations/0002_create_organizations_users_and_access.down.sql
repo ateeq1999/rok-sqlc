@@ -1,0 +1,9 @@
+drop table core.user_roles;
+drop table core.role_permissions;
+drop table core.roles;
+drop table core.permissions;
+drop table core.user_branch_access;
+drop table core.users;
+drop table core.devices;
+drop table core.branches;
+drop table core.organizations;

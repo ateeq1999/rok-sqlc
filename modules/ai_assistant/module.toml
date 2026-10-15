@@ -1,0 +1,53 @@
+[module]
+key = "ai_assistant"
+name = "Msaidizi assistant"
+version = "1.0.0"
+schema = "ai_assistant"
+category = "platform"
+description = "Msaidizi: the floating chat button on every page, proactive nudges with page actions, and drafts the owner confirms."
+depends_on = ["core"]
+optional_depends_on = []
+can_be_uninstalled = true
+
+[[permissions]]
+key = "ai_assistant.use"
+description = "Chat with Msaidizi and see its suggestions"
+
+[[permissions]]
+key = "ai_assistant.configure"
+description = "Choose where Msaidizi appears, what it may read and its nudge rules"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "ai_assistant.confirm_actions"
+description = "Confirm drafts Msaidizi prepares (the action's own permission is still checked)"
+
+[[pages]]
+page_key = "assistant_chat"
+title = "Msaidizi"
+route = "/assistant"
+
+[[pages]]
+page_key = "assistant_settings"
+title = "Msaidizi settings"
+route = "/assistant/settings"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["ai_assistant.use", "ai_assistant.confirm_actions"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["ai_assistant.use"]
+
+[[default_roles]]
+role_key = "accountant"
+permissions = ["ai_assistant.use", "ai_assistant.confirm_actions"]
+
+[[settings]]
+key = "proposed_action_expiry_hours"
+value = 24
+
+[[settings]]
+key = "keep_conversations_days"
+value = 180

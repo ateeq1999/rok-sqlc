@@ -1,0 +1,106 @@
+[module]
+key = "restaurant"
+name = "Restaurant & cafe"
+version = "1.0.0"
+schema = "restaurant"
+category = "industry_pack"
+description = "Floor plan and tables, menu modifiers, kitchen tickets by station and course, reservations and split bills."
+business_types = ["restaurant", "cafe", "fast_food", "hotel_restaurant", "lounge"]
+# customers is already required through point_of_sale; listed because reservations link to customers.
+depends_on = ["core", "catalog", "customers", "point_of_sale"]
+optional_depends_on = ["inventory", "delivery", "ai_assistant"]
+can_be_uninstalled = true
+
+[[permissions]]
+key = "restaurant.tables.use"
+description = "Open tables, take orders and move guests between tables"
+
+[[permissions]]
+key = "restaurant.floor_plan.manage"
+description = "Edit dining areas, tables and the floor plan"
+
+[[permissions]]
+key = "restaurant.modifiers.manage"
+description = "Edit modifier groups and options"
+
+[[permissions]]
+key = "restaurant.kitchen.view"
+description = "See and update kitchen tickets on the kitchen screen"
+
+[[permissions]]
+key = "restaurant.kitchen.cancel_item"
+description = "Cancel an item already sent to the kitchen"
+risk_level = "money"
+
+[[permissions]]
+key = "restaurant.reservations.manage"
+description = "Take and change reservations"
+
+[[permissions]]
+key = "restaurant.bills.split"
+description = "Split a bill between guests"
+
+[[pages]]
+page_key = "restaurant_floor"
+title = "Tables"
+route = "/restaurant/floor"
+
+[[pages]]
+page_key = "restaurant_kitchen"
+title = "Kitchen screen"
+route = "/restaurant/kitchen"
+
+[[pages]]
+page_key = "restaurant_reservations"
+title = "Reservations"
+route = "/restaurant/reservations"
+
+[[pages]]
+page_key = "restaurant_modifiers"
+title = "Modifiers"
+route = "/restaurant/modifiers"
+
+[[pages]]
+page_key = "restaurant_floor_plan"
+title = "Floor plan editor"
+route = "/restaurant/floor-plan"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["restaurant.tables.use", "restaurant.floor_plan.manage", "restaurant.modifiers.manage", "restaurant.kitchen.view", "restaurant.kitchen.cancel_item", "restaurant.reservations.manage", "restaurant.bills.split"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["restaurant.tables.use", "restaurant.reservations.manage", "restaurant.bills.split"]
+
+[[default_roles]]
+role_key = "waiter"
+name = "Waiter"
+permissions = ["restaurant.tables.use", "restaurant.reservations.manage", "restaurant.bills.split", "catalog.products.view"]
+
+[[default_roles]]
+role_key = "kitchen"
+name = "Kitchen staff"
+permissions = ["restaurant.kitchen.view"]
+
+[[settings]]
+key = "service_charge_percent"
+value = 0
+
+[[settings]]
+key = "hold_later_courses_until_fired"
+value = true
+
+[[settings]]
+key = "table_idle_alert_minutes"
+value = 20
+
+[[settings]]
+key = "ask_name_on_counter_orders"
+value = false
+
+[[number_sequences]]
+sequence_key = "restaurant.kitchen_ticket"
+prefix = "KT-"
+padding_length = 4
+reset_period = "never"

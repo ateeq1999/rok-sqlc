@@ -1,0 +1,9 @@
+drop table catalog.price_list_items;
+drop table catalog.price_lists;
+drop table catalog.product_barcodes;
+drop table catalog.product_variants;
+drop table catalog.products;
+drop table catalog.categories;
+drop table catalog.tax_rates;
+drop table catalog.units_of_measure;
+drop schema catalog;

@@ -1,0 +1,85 @@
+[module]
+key = "bakery"
+name = "Bakery"
+version = "1.0.0"
+schema = "bakery"
+category = "industry_pack"
+description = "Recipes with ingredient costing, daily production plans with assistant suggestions, baking batches and waste tracking."
+business_types = ["bakery", "cake_shop", "cafe", "snack_production"]
+depends_on = ["core", "catalog", "inventory"]
+optional_depends_on = ["point_of_sale", "ai_assistant", "purchasing"]
+can_be_uninstalled = true
+
+[[permissions]]
+key = "bakery.recipes.view"
+description = "See recipes and ingredients"
+
+[[permissions]]
+key = "bakery.recipes.manage"
+description = "Create and change recipes"
+
+[[permissions]]
+key = "bakery.recipe_costs.view"
+description = "See recipe costs and margins"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "bakery.production_plans.manage"
+description = "Create and confirm daily production plans"
+
+[[permissions]]
+key = "bakery.batches.record"
+description = "Record baking batches"
+
+[[permissions]]
+key = "bakery.waste.record"
+description = "Record leftover and wasted goods"
+
+[[pages]]
+page_key = "bakery_production_plan"
+title = "Production plan"
+route = "/bakery/production-plan"
+
+[[pages]]
+page_key = "bakery_recipes"
+title = "Recipes"
+route = "/bakery/recipes"
+
+[[pages]]
+page_key = "bakery_batches"
+title = "Baking batches"
+route = "/bakery/batches"
+
+[[pages]]
+page_key = "bakery_waste"
+title = "Waste"
+route = "/bakery/waste"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["bakery.recipes.view", "bakery.recipes.manage", "bakery.recipe_costs.view", "bakery.production_plans.manage", "bakery.batches.record", "bakery.waste.record"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["bakery.waste.record"]
+
+[[default_roles]]
+role_key = "accountant"
+permissions = ["bakery.recipe_costs.view"]
+
+[[default_roles]]
+role_key = "baker"
+name = "Baker"
+permissions = ["bakery.recipes.view", "bakery.batches.record", "bakery.waste.record"]
+
+[[settings]]
+key = "production_plan_ready_by_hour"
+value = 4
+
+[[settings]]
+key = "day_old_discount_percent"
+value = 50
+
+[[settings]]
+key = "assistant_suggests_production_plan"
+value = true

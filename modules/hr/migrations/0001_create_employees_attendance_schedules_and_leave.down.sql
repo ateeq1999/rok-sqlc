@@ -1,0 +1,10 @@
+drop table hr.leave_requests;
+drop table hr.leave_balances;
+drop table hr.leave_types;
+drop table hr.scheduled_shifts;
+drop table hr.shift_templates;
+drop table hr.attendance_records;
+drop table hr.employee_documents;
+drop table hr.employment_contracts;
+drop table hr.employees;
+drop schema hr;

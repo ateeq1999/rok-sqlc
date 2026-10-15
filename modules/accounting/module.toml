@@ -1,0 +1,107 @@
+[module]
+key = "accounting"
+name = "Accounting"
+version = "1.0.0"
+schema = "accounting"
+category = "business"
+description = "Chart of accounts, double-entry journal, bank and mobile money accounts, expenses with receipts, statement reconciliation and profit and loss."
+depends_on = ["core"]
+optional_depends_on = ["point_of_sale", "purchasing", "hr", "quotes_invoices", "online_shop", "inventory"]
+can_be_uninstalled = true
+
+[[permissions]]
+key = "accounting.expenses.record"
+description = "Record expenses and attach receipts"
+
+[[permissions]]
+key = "accounting.expenses.approve"
+description = "Approve or reject expenses"
+risk_level = "money"
+
+[[permissions]]
+key = "accounting.journal.post"
+description = "Post and reverse journal entries"
+risk_level = "money"
+
+[[permissions]]
+key = "accounting.accounts.manage"
+description = "Edit the chart of accounts and money accounts"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "accounting.reconciliation.manage"
+description = "Import statements and match transactions"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "accounting.reports.view"
+description = "See profit and loss and other financial reports"
+risk_level = "sensitive"
+
+[[pages]]
+page_key = "expenses"
+title = "Expenses"
+route = "/accounting/expenses"
+
+[[pages]]
+page_key = "reconciliation"
+title = "Reconciliation"
+route = "/accounting/reconciliation"
+
+[[pages]]
+page_key = "profit_and_loss"
+title = "Profit & loss"
+route = "/accounting/profit-and-loss"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["accounting.expenses.record", "accounting.expenses.approve", "accounting.reports.view"]
+
+[[default_roles]]
+role_key = "accountant"
+permissions = ["accounting.expenses.record", "accounting.expenses.approve", "accounting.journal.post", "accounting.accounts.manage", "accounting.reconciliation.manage", "accounting.reports.view"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["accounting.expenses.record"]
+
+[[settings]]
+key = "vat_rate_percent"
+value = 18.0
+
+# Expenses above this amount (TZS) wait for approval; smaller ones are approved automatically.
+[[settings]]
+key = "expense_approval_threshold_amount"
+value = 50000
+
+[[settings]]
+key = "require_receipt_for_expenses"
+value = true
+
+[[settings]]
+key = "financial_year_start_month"
+value = 7
+
+[[number_sequences]]
+sequence_key = "accounting.expenses"
+prefix = "EXP-"
+padding_length = 4
+reset_period = "yearly"
+
+[[number_sequences]]
+sequence_key = "accounting.journal_entries"
+prefix = "JE-"
+padding_length = 5
+reset_period = "yearly"
+
+[[assistant_rules]]
+page_key = "expenses"
+trigger_metric_key = "expenses_missing_receipt"
+trigger_comparison = "greater_than"
+trigger_threshold = 0
+message_template = "{missing_receipt_count} receipt is missing: {first_expense_description}, {first_expense_amount}. Ask for it?"
+visible_to_role_keys = ["owner", "accountant"]
+frequency = "once_per_day"
+allowed_actions = [
+  { action_key = "ask_for_receipt", label = "Ask by text message", kind = "make_draft", target_page_key = "expenses" },
+]

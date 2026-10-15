@@ -1,0 +1,109 @@
+[module]
+key = "pharmacy"
+name = "Pharmacy"
+version = "1.0.0"
+schema = "pharmacy"
+category = "industry_pack"
+description = "Prescriptions and prescribers, batch-tracked dispensing, the controlled substance register and insurance claims."
+business_types = ["pharmacy", "duka_la_dawa", "agrovet", "clinic_dispensary"]
+depends_on = ["core", "catalog", "inventory", "customers", "point_of_sale"]
+optional_depends_on = ["accounting", "ai_assistant"]
+can_be_uninstalled = true
+
+[[permissions]]
+key = "pharmacy.prescriptions.view"
+description = "See prescriptions"
+
+[[permissions]]
+key = "pharmacy.prescriptions.dispense"
+description = "Dispense or refuse a prescription"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "pharmacy.prescribers.manage"
+description = "Add and edit prescribers"
+
+[[permissions]]
+key = "pharmacy.controlled_register.view"
+description = "See the controlled substance register"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "pharmacy.controlled_register.record"
+description = "Record receipts, dispensing and destruction in the controlled substance register"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "pharmacy.insurance_claims.manage"
+description = "Create claims and record insurer approvals and payments"
+risk_level = "money"
+
+[[pages]]
+page_key = "pharmacy_prescriptions"
+title = "Prescriptions"
+route = "/pharmacy/prescriptions"
+
+[[pages]]
+page_key = "pharmacy_controlled_register"
+title = "Controlled substance register"
+route = "/pharmacy/controlled-register"
+
+[[pages]]
+page_key = "pharmacy_insurance_claims"
+title = "Insurance claims"
+route = "/pharmacy/insurance-claims"
+
+[[pages]]
+page_key = "pharmacy_prescribers"
+title = "Prescribers"
+route = "/pharmacy/prescribers"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["pharmacy.prescriptions.view", "pharmacy.prescribers.manage", "pharmacy.controlled_register.view", "pharmacy.insurance_claims.manage"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["pharmacy.prescriptions.view"]
+
+[[default_roles]]
+role_key = "accountant"
+permissions = ["pharmacy.insurance_claims.manage"]
+
+[[default_roles]]
+role_key = "pharmacist"
+name = "Pharmacist"
+permissions = ["pharmacy.prescriptions.view", "pharmacy.prescriptions.dispense", "pharmacy.prescribers.manage", "pharmacy.controlled_register.view", "pharmacy.controlled_register.record", "pharmacy.insurance_claims.manage", "catalog.products.view"]
+
+[[default_roles]]
+role_key = "pharmacy_technician"
+name = "Pharmacy technician"
+permissions = ["pharmacy.prescriptions.view", "pharmacy.prescribers.manage", "catalog.products.view"]
+
+[[settings]]
+key = "require_prescription_for_prescription_only_medicines"
+value = true
+
+[[settings]]
+key = "controlled_register_requires_witness"
+value = true
+
+[[settings]]
+key = "dispense_earliest_expiry_first"
+value = true
+
+[[settings]]
+key = "expiry_warning_days"
+value = 90
+
+[[number_sequences]]
+sequence_key = "pharmacy.prescription"
+prefix = "RX-"
+padding_length = 5
+reset_period = "never"
+
+[[number_sequences]]
+sequence_key = "pharmacy.insurance_claim"
+prefix = "CLM-"
+padding_length = 5
+reset_period = "yearly"

@@ -1,0 +1,104 @@
+[module]
+key = "customers"
+name = "Customers"
+version = "1.0.0"
+schema = "customers"
+category = "core_retail"
+description = "Customer records and groups, loyalty points and store credit accounts."
+depends_on = ["core", "catalog"]
+optional_depends_on = []
+can_be_uninstalled = true
+
+[[permissions]]
+key = "customers.customers.view"
+description = "See customers"
+
+[[permissions]]
+key = "customers.customers.manage"
+description = "Add and edit customers"
+
+[[permissions]]
+key = "customers.customers.export"
+description = "Export the customer list"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "customers.groups.manage"
+description = "Manage customer groups and their price lists"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "customers.loyalty.manage"
+description = "Set up loyalty programmes"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "customers.loyalty.adjust"
+description = "Add or remove loyalty points by hand"
+risk_level = "money"
+
+[[permissions]]
+key = "customers.credit.manage"
+description = "Open credit accounts and change credit limits"
+risk_level = "money"
+
+[[permissions]]
+key = "customers.credit.record_payment"
+description = "Record a payment against a credit account"
+risk_level = "money"
+
+[[pages]]
+page_key = "customers"
+title = "Customers"
+route = "/customers"
+
+[[pages]]
+page_key = "customer_groups"
+title = "Customer groups"
+route = "/customers/groups"
+
+[[pages]]
+page_key = "loyalty_programs"
+title = "Loyalty"
+route = "/customers/loyalty"
+
+[[pages]]
+page_key = "credit_accounts"
+title = "Credit accounts"
+route = "/customers/credit"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["customers.customers.view", "customers.customers.manage", "customers.customers.export", "customers.groups.manage", "customers.loyalty.manage", "customers.loyalty.adjust", "customers.credit.manage", "customers.credit.record_payment"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["customers.customers.view", "customers.customers.manage", "customers.credit.record_payment"]
+
+[[default_roles]]
+role_key = "accountant"
+permissions = ["customers.customers.view", "customers.credit.record_payment"]
+
+[[settings]]
+key = "require_customer_for_credit_sale"
+value = true
+
+[[settings]]
+key = "default_payment_terms_days"
+value = 30
+
+[[settings]]
+key = "loyalty_enabled"
+value = false
+
+[[assistant_rules]]
+page_key = "customers"
+trigger_metric_key = "customers_with_balance_count"
+trigger_comparison = "greater_than"
+trigger_threshold = 0
+message_template = "{customer_count} customers owe {total_owed}. I drafted a polite reminder message for them."
+visible_to_role_keys = ["owner", "manager"]
+frequency = "once_per_week"
+allowed_actions = [
+  { action_key = "draft_payment_reminder", label = "Review reminder", kind = "make_draft", target_page_key = "campaigns" },
+]

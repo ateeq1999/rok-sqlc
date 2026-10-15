@@ -1,0 +1,93 @@
+[module]
+key = "electronics"
+name = "Electronics & repairs"
+version = "1.0.0"
+schema = "electronics"
+category = "industry_pack"
+description = "Serial-number warranties on sold items and a repair workshop: book-in, quotes, parts, technician queue and customer updates."
+business_types = ["electronics", "phone_shop", "computer_shop", "appliance_shop", "repair_workshop"]
+depends_on = ["core", "catalog", "inventory", "customers", "point_of_sale"]
+optional_depends_on = ["crm", "ai_assistant"]
+can_be_uninstalled = true
+
+[[permissions]]
+key = "electronics.warranties.view"
+description = "Look up warranties by serial number or customer"
+
+[[permissions]]
+key = "electronics.warranties.manage"
+description = "Issue, extend and void warranties"
+risk_level = "money"
+
+[[permissions]]
+key = "electronics.repairs.book_in"
+description = "Book in devices for repair"
+
+[[permissions]]
+key = "electronics.repairs.work"
+description = "Diagnose, add parts and update repair status"
+
+[[permissions]]
+key = "electronics.repairs.quote"
+description = "Set and change repair quotes"
+risk_level = "money"
+
+[[permissions]]
+key = "electronics.repairs.release"
+description = "Hand a repaired device back to the customer"
+
+[[pages]]
+page_key = "electronics_repairs"
+title = "Repair jobs"
+route = "/electronics/repairs"
+
+[[pages]]
+page_key = "electronics_technician_queue"
+title = "My repair queue"
+route = "/electronics/my-repairs"
+
+[[pages]]
+page_key = "electronics_warranties"
+title = "Warranties"
+route = "/electronics/warranties"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["electronics.warranties.view", "electronics.warranties.manage", "electronics.repairs.book_in", "electronics.repairs.work", "electronics.repairs.quote", "electronics.repairs.release"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["electronics.warranties.view", "electronics.repairs.book_in", "electronics.repairs.release"]
+
+[[default_roles]]
+role_key = "technician"
+name = "Technician"
+permissions = ["electronics.warranties.view", "electronics.repairs.work", "electronics.repairs.quote", "catalog.products.view"]
+
+[[settings]]
+key = "default_shop_warranty_days"
+value = 90
+
+[[settings]]
+key = "repair_diagnosis_fee_amount"
+value = 0
+
+[[settings]]
+key = "notify_customer_on_ready"
+value = true
+
+[[settings]]
+key = "uncollected_device_reminder_days"
+value = 30
+
+[[number_sequences]]
+sequence_key = "electronics.repair_job"
+prefix = "REP-"
+padding_length = 5
+reset_period = "never"
+
+[[number_sequences]]
+sequence_key = "electronics.warranty"
+prefix = "WAR-"
+padding_length = 5
+reset_period = "never"

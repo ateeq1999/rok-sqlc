@@ -1,0 +1,131 @@
+[module]
+key = "inventory"
+name = "Stock"
+version = "1.0.0"
+schema = "inventory"
+category = "core_retail"
+description = "Stock locations, stock levels, movement ledger, batches and expiry, serial numbers, transfers, stock counts and reorder rules."
+depends_on = ["core", "catalog"]
+optional_depends_on = []
+can_be_uninstalled = true
+
+[[permissions]]
+key = "inventory.stock.view"
+description = "See stock levels and movements"
+
+[[permissions]]
+key = "inventory.locations.manage"
+description = "Add and edit stock locations"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "inventory.transfers.create"
+description = "Create and send stock transfers"
+
+[[permissions]]
+key = "inventory.transfers.receive"
+description = "Receive stock transfers"
+
+[[permissions]]
+key = "inventory.counts.perform"
+description = "Count stock"
+
+[[permissions]]
+key = "inventory.counts.approve"
+description = "Approve stock count differences"
+risk_level = "money"
+
+[[permissions]]
+key = "inventory.adjustments.create"
+description = "Adjust stock or write off waste"
+risk_level = "money"
+
+[[permissions]]
+key = "inventory.reorder_rules.manage"
+description = "Set reorder levels"
+
+[[pages]]
+page_key = "stock_levels"
+title = "Stock"
+route = "/stock"
+
+[[pages]]
+page_key = "stock_movements"
+title = "Stock history"
+route = "/stock/movements"
+
+[[pages]]
+page_key = "stock_transfers"
+title = "Transfers"
+route = "/stock/transfers"
+
+[[pages]]
+page_key = "stock_counts"
+title = "Stock counts"
+route = "/stock/counts"
+
+[[pages]]
+page_key = "stock_locations"
+title = "Stock locations"
+route = "/stock/locations"
+
+[[pages]]
+page_key = "reorder_rules"
+title = "Reorder levels"
+route = "/stock/reorder"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["inventory.stock.view", "inventory.locations.manage", "inventory.transfers.create", "inventory.transfers.receive", "inventory.counts.perform", "inventory.counts.approve", "inventory.adjustments.create", "inventory.reorder_rules.manage"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["inventory.stock.view"]
+
+[[default_roles]]
+role_key = "accountant"
+permissions = ["inventory.stock.view"]
+
+[[default_roles]]
+role_key = "stock_clerk"
+name = "Stock clerk"
+permissions = ["inventory.stock.view", "inventory.transfers.create", "inventory.transfers.receive", "inventory.counts.perform", "inventory.reorder_rules.manage"]
+
+[[settings]]
+key = "allow_negative_stock"
+value = false
+
+[[settings]]
+key = "costing_method"
+value = "weighted_average"
+
+[[settings]]
+key = "expiry_warning_days"
+value = 30
+
+[[settings]]
+key = "sell_earliest_expiry_first"
+value = true
+
+[[number_sequences]]
+sequence_key = "inventory.stock_transfers"
+prefix = "TR-"
+padding_length = 4
+
+[[number_sequences]]
+sequence_key = "inventory.stock_counts"
+prefix = "SC-"
+padding_length = 4
+
+[[assistant_rules]]
+page_key = "inventory"
+trigger_metric_key = "items_below_reorder_point"
+trigger_comparison = "greater_than"
+trigger_threshold = 0
+message_template = "{low_stock_count} items are below their reorder point. I can draft a purchase order."
+visible_to_role_keys = ["owner", "manager", "stock_clerk"]
+frequency = "once_per_day"
+allowed_actions = [
+  { action_key = "draft_purchase_order", label = "Draft purchase order", kind = "make_draft", target_page_key = "purchase_orders" },
+  { action_key = "show_slow_movers", label = "Show slow movers", kind = "open_page", target_page_key = "report_stock" },
+]

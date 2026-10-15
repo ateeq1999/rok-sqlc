@@ -1,0 +1,81 @@
+[module]
+key = "salon"
+name = "Salon & beauty"
+version = "1.0.0"
+schema = "salon"
+category = "industry_pack"
+description = "Bookable services with durations, staff skills, appointment calendar with deposits, and prepaid service packages."
+business_types = ["salon", "barber", "beauty_spa", "nail_bar", "massage"]
+depends_on = ["core", "catalog", "customers", "point_of_sale"]
+optional_depends_on = ["hr", "crm", "online_shop", "ai_assistant"]
+can_be_uninstalled = true
+
+[[permissions]]
+key = "salon.appointments.view"
+description = "See the appointment calendar"
+
+[[permissions]]
+key = "salon.appointments.manage"
+description = "Book, move and cancel appointments for anyone"
+
+[[permissions]]
+key = "salon.appointments.update_own"
+description = "Mark own appointments as arrived, in service or completed"
+
+[[permissions]]
+key = "salon.services.manage"
+description = "Set service durations, buffers, commissions and staff skills"
+
+[[permissions]]
+key = "salon.packages.manage"
+description = "Create service packages and adjust customer package balances"
+risk_level = "money"
+
+[[pages]]
+page_key = "salon_calendar"
+title = "Appointments"
+route = "/salon/calendar"
+
+[[pages]]
+page_key = "salon_services"
+title = "Services"
+route = "/salon/services"
+
+[[pages]]
+page_key = "salon_packages"
+title = "Packages"
+route = "/salon/packages"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["salon.appointments.view", "salon.appointments.manage", "salon.appointments.update_own", "salon.services.manage", "salon.packages.manage"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["salon.appointments.view", "salon.appointments.manage"]
+
+[[default_roles]]
+role_key = "receptionist"
+name = "Receptionist"
+permissions = ["salon.appointments.view", "salon.appointments.manage", "catalog.products.view"]
+
+[[default_roles]]
+role_key = "stylist"
+name = "Stylist"
+permissions = ["salon.appointments.view", "salon.appointments.update_own"]
+
+[[settings]]
+key = "calendar_slot_minutes"
+value = 15
+
+[[settings]]
+key = "online_booking_deposit_percent"
+value = 0
+
+[[settings]]
+key = "appointment_reminder_hours_before"
+value = 3
+
+[[settings]]
+key = "mark_no_show_after_minutes"
+value = 30

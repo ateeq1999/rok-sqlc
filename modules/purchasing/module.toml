@@ -1,0 +1,109 @@
+[module]
+key = "purchasing"
+name = "Purchasing"
+version = "1.0.0"
+schema = "purchasing"
+category = "core_retail"
+description = "Suppliers, purchase orders with approval, goods receipts with batches and rejections, and supplier bills."
+depends_on = ["core", "catalog", "inventory"]
+optional_depends_on = []
+can_be_uninstalled = true
+
+[[permissions]]
+key = "purchasing.suppliers.view"
+description = "See suppliers"
+
+[[permissions]]
+key = "purchasing.suppliers.manage"
+description = "Add and edit suppliers"
+
+[[permissions]]
+key = "purchasing.purchase_orders.create"
+description = "Create purchase orders"
+
+[[permissions]]
+key = "purchasing.purchase_orders.approve"
+description = "Approve purchase orders"
+risk_level = "money"
+
+[[permissions]]
+key = "purchasing.goods_receipts.receive"
+description = "Receive deliveries into stock"
+
+[[permissions]]
+key = "purchasing.supplier_bills.manage"
+description = "Record supplier bills"
+risk_level = "money"
+
+[[permissions]]
+key = "purchasing.supplier_bills.pay"
+description = "Record payments to suppliers"
+risk_level = "money"
+
+[[pages]]
+page_key = "suppliers"
+title = "Suppliers"
+route = "/suppliers"
+
+[[pages]]
+page_key = "purchase_orders"
+title = "Purchase orders"
+route = "/purchase-orders"
+
+[[pages]]
+page_key = "goods_receipts"
+title = "Deliveries"
+route = "/deliveries"
+
+[[pages]]
+page_key = "supplier_bills"
+title = "Supplier bills"
+route = "/supplier-bills"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["purchasing.suppliers.view", "purchasing.suppliers.manage", "purchasing.purchase_orders.create", "purchasing.purchase_orders.approve", "purchasing.goods_receipts.receive", "purchasing.supplier_bills.manage"]
+
+[[default_roles]]
+role_key = "accountant"
+permissions = ["purchasing.suppliers.view", "purchasing.supplier_bills.manage", "purchasing.supplier_bills.pay"]
+
+[[default_roles]]
+role_key = "stock_clerk"
+name = "Stock clerk"
+permissions = ["purchasing.suppliers.view", "purchasing.purchase_orders.create", "purchasing.goods_receipts.receive"]
+
+[[settings]]
+key = "purchase_order_approval_threshold_amount"
+value = 1000000
+
+[[settings]]
+key = "update_cost_price_on_receipt"
+value = true
+
+[[settings]]
+key = "allow_receiving_more_than_ordered"
+value = false
+
+[[number_sequences]]
+sequence_key = "purchasing.purchase_orders"
+prefix = "PO-"
+padding_length = 4
+
+[[number_sequences]]
+sequence_key = "purchasing.goods_receipts"
+prefix = "GR-"
+padding_length = 4
+
+[[assistant_rules]]
+page_key = "purchasing"
+trigger_metric_key = "purchase_order_waiting_for_approval_amount"
+trigger_comparison = "greater_than"
+trigger_threshold = 500000
+message_template = "{purchase_order_number} ({purchase_order_amount}) is waiting for your approval. Compare it with marketplace prices first?"
+visible_to_role_keys = ["owner", "manager"]
+frequency = "once_per_day"
+allowed_actions = [
+  { action_key = "compare_marketplace_prices", label = "Compare prices", kind = "open_page", target_page_key = "marketplace_browse" },
+  { action_key = "approve_purchase_order", label = "Approve", kind = "needs_approval", target_page_key = "purchase_orders" },
+]

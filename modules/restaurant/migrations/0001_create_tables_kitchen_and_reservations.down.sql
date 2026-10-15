@@ -1,0 +1,11 @@
+drop table restaurant.bill_splits;
+drop table restaurant.reservations;
+drop table restaurant.kitchen_ticket_items;
+drop table restaurant.kitchen_tickets;
+drop table restaurant.kitchen_stations;
+drop table restaurant.product_modifier_groups;
+drop table restaurant.modifiers;
+drop table restaurant.modifier_groups;
+drop table restaurant.dining_tables;
+drop table restaurant.dining_areas;
+drop schema restaurant;

@@ -1,0 +1,69 @@
+[module]
+key = "delivery"
+name = "Delivery"
+version = "1.0.0"
+schema = "delivery"
+category = "operations"
+description = "Staff and partner riders, delivery jobs with proof and tracking, cash collected on delivery and handed back to the shop."
+depends_on = ["core", "customers"]
+optional_depends_on = ["point_of_sale", "online_shop", "quotes_invoices"]
+can_be_uninstalled = true
+
+[[permissions]]
+key = "delivery.jobs.view"
+description = "See delivery jobs"
+
+[[permissions]]
+key = "delivery.jobs.manage"
+description = "Create delivery jobs and assign riders"
+
+[[permissions]]
+key = "delivery.riders.manage"
+description = "Add riders and set pay per trip"
+risk_level = "money"
+
+[[permissions]]
+key = "delivery.rider_app.use"
+description = "Use the rider app: pick up, deliver, record proof"
+
+[[permissions]]
+key = "delivery.cash.receive"
+description = "Count and receive cash handed over by riders"
+risk_level = "money"
+
+[[pages]]
+page_key = "delivery_riders"
+title = "Deliveries & riders"
+route = "/delivery"
+
+[[pages]]
+page_key = "rider_app"
+title = "Rider app"
+route = "/rider"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["delivery.jobs.view", "delivery.jobs.manage", "delivery.riders.manage", "delivery.cash.receive"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["delivery.jobs.view", "delivery.jobs.manage", "delivery.cash.receive"]
+
+[[default_roles]]
+role_key = "rider"
+name = "Rider"
+permissions = ["delivery.rider_app.use"]
+
+[[settings]]
+key = "require_proof_photo"
+value = true
+
+[[settings]]
+key = "default_pay_per_trip_amount"
+value = 2000
+
+[[number_sequences]]
+sequence_key = "delivery_job"
+prefix = "DL-"
+padding_length = 4
+reset_period = "never"

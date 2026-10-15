@@ -1,0 +1,83 @@
+[module]
+key = "quotes_invoices"
+name = "Quotes & invoices"
+version = "1.0.0"
+schema = "quotes_invoices"
+category = "business"
+description = "Quotations with view tracking, conversion to invoices, fiscal receipt details, payment links and part payments."
+depends_on = ["core", "catalog", "customers"]
+optional_depends_on = ["accounting", "inventory", "hr"]
+can_be_uninstalled = true
+
+[[permissions]]
+key = "quotes_invoices.quotes.view"
+description = "See quotations and invoices"
+
+[[permissions]]
+key = "quotes_invoices.quotes.manage"
+description = "Create, send and convert quotations"
+
+[[permissions]]
+key = "quotes_invoices.invoices.issue"
+description = "Issue, cancel and credit invoices"
+risk_level = "money"
+
+[[permissions]]
+key = "quotes_invoices.payments.record"
+description = "Record payments against invoices"
+risk_level = "money"
+
+[[permissions]]
+key = "quotes_invoices.discounts.approve"
+description = "Approve discounts above the allowed limit"
+risk_level = "money"
+
+[[pages]]
+page_key = "quotes"
+title = "Quotes"
+route = "/quotes"
+
+[[pages]]
+page_key = "invoices"
+title = "Invoices"
+route = "/invoices"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["quotes_invoices.quotes.view", "quotes_invoices.quotes.manage", "quotes_invoices.invoices.issue", "quotes_invoices.payments.record", "quotes_invoices.discounts.approve"]
+
+[[default_roles]]
+role_key = "accountant"
+permissions = ["quotes_invoices.quotes.view", "quotes_invoices.invoices.issue", "quotes_invoices.payments.record"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["quotes_invoices.quotes.view", "quotes_invoices.quotes.manage", "quotes_invoices.payments.record"]
+
+[[settings]]
+key = "quotation_valid_days"
+value = 14
+
+[[settings]]
+key = "invoice_payment_terms_days"
+value = 30
+
+[[settings]]
+key = "maximum_discount_percent_without_approval"
+value = 5.0
+
+[[settings]]
+key = "default_terms"
+value = "Prices in TZS and include VAT at 18% unless stated."
+
+[[number_sequences]]
+sequence_key = "quotes_invoices.quotations"
+prefix = "Q-"
+padding_length = 4
+reset_period = "never"
+
+[[number_sequences]]
+sequence_key = "quotes_invoices.invoices"
+prefix = "INV-"
+padding_length = 4
+reset_period = "never"

@@ -1,0 +1,201 @@
+[module]
+key = "hr"
+name = "Staff & payroll"
+version = "1.0.0"
+schema = "hr"
+category = "business"
+description = "Employees, clock-in with photo, shift schedules, leave, Tanzanian payroll (PAYE, NSSF, SDL, WCF), salary advances, commission and performance reviews."
+depends_on = ["core"]
+optional_depends_on = ["point_of_sale", "quotes_invoices", "customers", "accounting", "delivery"]
+can_be_uninstalled = true
+
+[[permissions]]
+key = "hr.employees.view"
+description = "See the staff list and contact details"
+
+[[permissions]]
+key = "hr.employees.manage"
+description = "Add staff, edit contracts and documents"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "hr.pay.view"
+description = "See salaries, payslips and commission"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "hr.attendance.clock_in"
+description = "Clock in and out on a till or phone"
+
+[[permissions]]
+key = "hr.attendance.manage"
+description = "Correct attendance and approve overtime"
+
+[[permissions]]
+key = "hr.schedule.manage"
+description = "Build and publish shift schedules"
+
+[[permissions]]
+key = "hr.leave.request"
+description = "Request leave"
+
+[[permissions]]
+key = "hr.leave.approve"
+description = "Approve or decline leave requests"
+
+[[permissions]]
+key = "hr.payroll.prepare"
+description = "Calculate payroll runs and payslips"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "hr.payroll.approve"
+description = "Approve payroll runs and mark salaries paid"
+risk_level = "money"
+
+[[permissions]]
+key = "hr.advances.give"
+description = "Approve and give salary advances"
+risk_level = "money"
+
+[[permissions]]
+key = "hr.commission.manage"
+description = "Set commission rules and targets"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "hr.performance.manage"
+description = "Run performance reviews"
+risk_level = "sensitive"
+
+[[pages]]
+page_key = "employees"
+title = "Employees"
+route = "/staff/employees"
+
+[[pages]]
+page_key = "attendance"
+title = "Attendance"
+route = "/staff/attendance"
+
+[[pages]]
+page_key = "clock_in"
+title = "Clock in"
+route = "/clock-in"
+
+[[pages]]
+page_key = "schedule"
+title = "Schedule"
+route = "/staff/schedule"
+
+[[pages]]
+page_key = "leave"
+title = "Leave"
+route = "/staff/leave"
+
+[[pages]]
+page_key = "payroll"
+title = "Payroll"
+route = "/staff/payroll"
+
+[[pages]]
+page_key = "performance"
+title = "Performance"
+route = "/staff/performance"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["hr.employees.view", "hr.attendance.clock_in", "hr.attendance.manage", "hr.schedule.manage", "hr.leave.request", "hr.leave.approve", "hr.performance.manage"]
+
+[[default_roles]]
+role_key = "accountant"
+permissions = ["hr.employees.view", "hr.pay.view", "hr.payroll.prepare", "hr.attendance.clock_in", "hr.leave.request"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["hr.attendance.clock_in", "hr.leave.request"]
+
+# Statutory rates below are starting defaults only. They change with each Finance Act and
+# MUST be confirmed with the business's accountant (and TRA / NSSF / WCF) before the first payroll run.
+
+[[settings]]
+key = "pension_employee_rate_percent"
+value = 10.0
+
+[[settings]]
+key = "pension_employer_rate_percent"
+value = 10.0
+
+# Skills development levy, paid by the employer on gross pay (only above the employee-count threshold).
+[[settings]]
+key = "skills_development_levy_rate_percent"
+value = 3.5
+
+[[settings]]
+key = "skills_development_levy_minimum_employee_count"
+value = 10
+
+# Workers compensation, paid by the employer on gross pay.
+[[settings]]
+key = "workers_compensation_rate_percent"
+value = 0.5
+
+# Monthly PAYE bands on taxable pay (gross minus employee pension). Tax = base_amount + rate_percent of the part above "from".
+# The last band has no "to". Confirm with an accountant before use.
+[[settings]]
+key = "income_tax_bands"
+value = [
+  { from = 0, to = 270000, base_amount = 0, rate_percent = 0 },
+  { from = 270000, to = 520000, base_amount = 0, rate_percent = 8 },
+  { from = 520000, to = 760000, base_amount = 20000, rate_percent = 20 },
+  { from = 760000, to = 1000000, base_amount = 68000, rate_percent = 25 },
+  { from = 1000000, base_amount = 128000, rate_percent = 30 },
+]
+
+[[settings]]
+key = "overtime_needs_approval"
+value = true
+
+[[settings]]
+key = "late_grace_minutes"
+value = 10
+
+[[settings]]
+key = "clock_in_requires_photo"
+value = true
+
+[[number_sequences]]
+sequence_key = "hr.payroll_runs"
+prefix = "PAY-"
+padding_length = 4
+reset_period = "never"
+
+[[number_sequences]]
+sequence_key = "hr.employees"
+prefix = "EMP-"
+padding_length = 4
+reset_period = "never"
+
+[[assistant_rules]]
+page_key = "payroll"
+trigger_metric_key = "payroll_run_ready"
+trigger_comparison = "any"
+message_template = "{period_name} payroll for {employee_count} people is ready to approve."
+visible_to_role_keys = ["owner", "accountant"]
+frequency = "once_per_day"
+allowed_actions = [
+  { action_key = "review_payroll", label = "Review and approve", kind = "open_page", target_page_key = "payroll" },
+]
+
+[[assistant_rules]]
+page_key = "schedule"
+trigger_metric_key = "short_or_clashing_shifts"
+trigger_comparison = "greater_than"
+trigger_threshold = 0
+message_template = "{day_name} is short: {missing_people} more needed, and {clash_count} leave request clashes with the draft."
+visible_to_role_keys = ["owner", "manager"]
+frequency = "once_per_session"
+allowed_actions = [
+  { action_key = "fill_shift_from_other_branch", label = "Fill from another branch", kind = "make_draft", target_page_key = "schedule" },
+  { action_key = "open_leave_request", label = "See leave request", kind = "open_page", target_page_key = "leave" },
+]

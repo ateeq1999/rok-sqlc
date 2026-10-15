@@ -1,0 +1,88 @@
+[module]
+key = "wholesale"
+name = "Wholesale & van sales"
+version = "1.0.0"
+schema = "wholesale"
+category = "industry_pack"
+description = "Sales routes and shop stops, van loading and end-of-day reconciliation, offline shop visits with location and old-balance collection."
+business_types = ["wholesale", "distributor", "fmcg_distribution", "beverage_distribution"]
+depends_on = ["core", "catalog", "inventory", "customers", "point_of_sale"]
+optional_depends_on = ["purchasing", "accounting", "ai_assistant"]
+can_be_uninstalled = true
+
+[[permissions]]
+key = "wholesale.routes.manage"
+description = "Create routes, assign vans and representatives, order stops"
+
+[[permissions]]
+key = "wholesale.van_loads.load"
+description = "Load stock onto a van"
+
+[[permissions]]
+key = "wholesale.van_loads.reconcile"
+description = "Reconcile returned stock and cash at the end of the day"
+risk_level = "money"
+
+[[permissions]]
+key = "wholesale.visits.record"
+description = "Record shop visits and sell from the van"
+
+[[permissions]]
+key = "wholesale.visits.view_all"
+description = "See every representative's visits and map"
+
+[[pages]]
+page_key = "wholesale_routes"
+title = "Routes"
+route = "/wholesale/routes"
+
+[[pages]]
+page_key = "wholesale_van_loads"
+title = "Van loads"
+route = "/wholesale/van-loads"
+
+[[pages]]
+page_key = "wholesale_my_route"
+title = "Today's route"
+route = "/wholesale/my-route"
+
+[[pages]]
+page_key = "wholesale_visit_map"
+title = "Visit map"
+route = "/wholesale/visit-map"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["wholesale.routes.manage", "wholesale.van_loads.load", "wholesale.van_loads.reconcile", "wholesale.visits.view_all"]
+
+[[default_roles]]
+role_key = "accountant"
+permissions = ["wholesale.van_loads.reconcile", "wholesale.visits.view_all"]
+
+[[default_roles]]
+role_key = "sales_representative"
+name = "Sales representative"
+permissions = ["wholesale.visits.record", "catalog.products.view"]
+
+[[default_roles]]
+role_key = "storekeeper"
+name = "Storekeeper"
+permissions = ["wholesale.van_loads.load"]
+
+[[settings]]
+key = "record_visit_location"
+value = true
+
+[[settings]]
+key = "allow_credit_sales_on_route"
+value = true
+
+[[settings]]
+key = "van_cash_variance_alert_amount"
+value = 10000
+
+[[number_sequences]]
+sequence_key = "wholesale.van_load"
+prefix = "VAN-"
+padding_length = 5
+reset_period = "never"

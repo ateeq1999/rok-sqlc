@@ -1,0 +1,49 @@
+[module]
+key = "catalog"
+name = "Products"
+version = "1.0.0"
+schema = "catalog"
+category = "core_retail"
+description = "Products, variants, barcodes, units, taxes and price lists with quantity tiers."
+depends_on = ["core"]
+optional_depends_on = []
+can_be_uninstalled = false
+
+[[permissions]]
+key = "catalog.products.view"
+description = "See products and prices"
+
+[[permissions]]
+key = "catalog.products.manage"
+description = "Add and edit products"
+
+[[permissions]]
+key = "catalog.prices.change"
+description = "Change selling prices"
+risk_level = "money"
+
+[[permissions]]
+key = "catalog.costs.view"
+description = "See cost prices and margins"
+risk_level = "sensitive"
+
+[[pages]]
+page_key = "products"
+title = "Products"
+route = "/products"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["catalog.products.view", "catalog.products.manage", "catalog.prices.change", "catalog.costs.view"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["catalog.products.view"]
+
+[[default_roles]]
+role_key = "accountant"
+permissions = ["catalog.products.view", "catalog.costs.view"]
+
+[[settings]]
+key = "prices_include_tax"
+value = true

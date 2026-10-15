@@ -1,0 +1,121 @@
+[module]
+key = "marketplace"
+name = "Marketplace"
+version = "1.0.0"
+schema = "marketplace"
+category = "commerce"
+description = "Restock directly from verified vendors: listings with quantity prices, split orders, delivery tracking, ratings, trade credit and vendor payouts."
+depends_on = ["core", "catalog", "inventory", "purchasing"]
+optional_depends_on = ["ai_assistant", "accounting"]
+can_be_uninstalled = true
+
+# Buyer side
+[[permissions]]
+key = "marketplace.buy"
+description = "Browse vendors and fill the restock cart"
+
+[[permissions]]
+key = "marketplace.approve_orders"
+description = "Place and approve marketplace orders"
+risk_level = "money"
+
+[[permissions]]
+key = "marketplace.trade_credit.manage"
+description = "Apply for trade credit and choose how it is repaid"
+risk_level = "money"
+
+# Vendor side
+[[permissions]]
+key = "marketplace.vendor.manage_orders"
+description = "Accept, pack and dispatch orders from shops"
+
+[[permissions]]
+key = "marketplace.vendor.manage_catalogue"
+description = "Edit listings, prices, stock and delivery areas"
+
+[[permissions]]
+key = "marketplace.vendor.view_payouts"
+description = "See payouts, commission and bank or mobile money details"
+risk_level = "sensitive"
+
+[[pages]]
+page_key = "marketplace_browse"
+title = "Marketplace"
+route = "/marketplace"
+
+[[pages]]
+page_key = "restock_cart"
+title = "Restock cart"
+route = "/marketplace/cart"
+
+[[pages]]
+page_key = "deliveries"
+title = "Marketplace deliveries"
+route = "/marketplace/deliveries"
+
+[[pages]]
+page_key = "trade_credit"
+title = "Trade credit"
+route = "/marketplace/trade-credit"
+
+[[pages]]
+page_key = "vendor_profile"
+title = "Vendor profile"
+route = "/vendor/profile"
+
+[[pages]]
+page_key = "vendor_orders"
+title = "Vendor orders"
+route = "/vendor/orders"
+
+[[pages]]
+page_key = "vendor_catalogue"
+title = "Vendor catalogue"
+route = "/vendor/catalogue"
+
+[[pages]]
+page_key = "vendor_onboarding"
+title = "Become a vendor"
+route = "/vendor/onboarding"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["marketplace.buy", "marketplace.approve_orders", "marketplace.vendor.manage_orders", "marketplace.vendor.manage_catalogue"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["marketplace.buy"]
+
+[[default_roles]]
+role_key = "accountant"
+permissions = ["marketplace.trade_credit.manage", "marketplace.vendor.view_payouts"]
+
+[[settings]]
+key = "orders_need_approval_over_amount"
+value = 500000
+
+[[settings]]
+key = "default_deliver_to_branch"
+value = "main"
+
+[[number_sequences]]
+# One buyer checkout; each vendor's order is numbered <group_number>-<n>, e.g. MK-1121-2.
+sequence_key = "marketplace_order_group"
+prefix = "MK-"
+padding_length = 4
+reset_period = "never"
+
+[[assistant_rules]]
+page_key = "inventory"
+module_key = "marketplace"
+trigger_metric_key = "items_running_out_within_days"
+trigger_comparison = "greater_than"
+trigger_threshold = 0
+message_template = "{item_count} items will run out within {days} days. Restock from the marketplace?"
+message_translations = { sw = "Bidhaa {item_count} zitaisha ndani ya siku {days}. Agiza kutoka sokoni?" }
+frequency = "once_per_day"
+visible_to_role_keys = ["owner", "manager"]
+allowed_actions = [
+  { action_key = "make_restock_cart", label = "Fill restock cart", kind = "make_draft", target_page_key = "restock_cart" },
+  { action_key = "open_marketplace", label = "Browse vendors", kind = "open_page", target_page_key = "marketplace_browse" },
+]

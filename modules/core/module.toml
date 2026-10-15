@@ -1,0 +1,119 @@
+# Module manifest. The installer reads this file to decide order, permissions, menus and defaults.
+#
+# [module]            identity, version and the PostgreSQL schema the module owns
+# depends_on          modules that must be installed first (installer sorts by these)
+# optional_depends_on modules this one works with if present, but does not need
+# [[permissions]]     inserted into core.permissions on install
+# [[pages]]           screens the module adds; page_key is what assistant rules and menus point at
+# [[default_roles]]   permissions given to standard roles when a business activates the module
+# [[settings]]        default values written to core.settings on activation
+# [[assistant_rules]] default Msaidizi page rules written on activation (ai_assistant module)
+# [[number_sequences]] document numbering created on activation
+#
+# Field formats for the two sections without an example in this file:
+#   [[number_sequences]]
+#   sequence_key = "point_of_sale.sales"   prefix = "S-"   padding_length = 4   reset_period = "never"
+#   [[assistant_rules]]
+#   page_key = "inventory"   trigger_metric_key = "items_running_out_within_days"
+#   trigger_comparison = "greater_than"   trigger_threshold = 0
+#   message_template = "{low_stock_count} items will run out within 5 days."
+#   visible_to_role_keys = ["owner", "manager"]   frequency = "once_per_day"
+#   allowed_actions = [{ action_key = "build_restock_cart", label = "Build restock cart", kind = "make_draft", target_page_key = "restock_cart" }]
+
+[module]
+key = "core"
+name = "Core"
+version = "1.0.0"
+schema = "core"
+category = "platform"
+description = "Businesses, branches, devices, users, roles, permissions, module registry, customization, audit and sync."
+depends_on = []
+optional_depends_on = []
+can_be_uninstalled = false
+
+[[permissions]]
+key = "core.settings.manage"
+description = "Change business settings"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "core.users.manage"
+description = "Add staff, reset PINs and assign roles"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "core.roles.manage"
+description = "Create roles and change what they can do"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "core.modules.manage"
+description = "Install, upgrade and remove apps"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "core.studio.manage"
+description = "Add custom fields and change layouts in Studio"
+risk_level = "sensitive"
+
+[[permissions]]
+key = "core.audit.view"
+description = "See the audit log"
+
+[[pages]]
+page_key = "settings"
+title = "Settings"
+route = "/settings"
+
+[[pages]]
+page_key = "staff"
+title = "Staff"
+route = "/staff"
+
+[[pages]]
+page_key = "roles"
+title = "Roles & permissions"
+route = "/roles"
+
+[[pages]]
+page_key = "apps"
+title = "All apps"
+route = "/apps"
+
+[[pages]]
+page_key = "studio"
+title = "Studio"
+route = "/studio"
+
+[[pages]]
+page_key = "audit"
+title = "Audit log"
+route = "/audit"
+
+[[default_roles]]
+role_key = "owner"
+name = "Owner"
+permissions = ["*"]
+
+[[default_roles]]
+role_key = "manager"
+name = "Manager"
+permissions = ["core.users.manage", "core.audit.view"]
+
+[[default_roles]]
+role_key = "cashier"
+name = "Cashier"
+permissions = []
+
+[[default_roles]]
+role_key = "accountant"
+name = "Accountant"
+permissions = ["core.audit.view"]
+
+[[settings]]
+key = "language"
+value = "sw"
+
+[[settings]]
+key = "currency_code"
+value = "TZS"

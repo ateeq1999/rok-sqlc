@@ -1,0 +1,49 @@
+[module]
+key = "promotions"
+name = "Promotions"
+version = "1.0.0"
+schema = "promotions"
+category = "marketing"
+description = "Discounts, buy X get Y, bundles, happy hours and loyalty multipliers with schedules, branch scope and budgets."
+depends_on = ["core", "catalog", "customers", "point_of_sale"]
+optional_depends_on = []
+can_be_uninstalled = true
+
+[[permissions]]
+key = "promotions.promotions.view"
+description = "See promotions and how they performed"
+
+[[permissions]]
+key = "promotions.promotions.manage"
+description = "Create, change and stop promotions"
+risk_level = "money"
+
+[[permissions]]
+key = "promotions.coupons.apply"
+description = "Apply a coupon code at the register"
+risk_level = "money"
+
+[[pages]]
+page_key = "promotions"
+title = "Promotions"
+route = "/promotions"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["promotions.promotions.view", "promotions.promotions.manage", "promotions.coupons.apply"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["promotions.coupons.apply"]
+
+[[default_roles]]
+role_key = "accountant"
+permissions = ["promotions.promotions.view"]
+
+[[settings]]
+key = "allow_combining_promotions"
+value = false
+
+[[settings]]
+key = "apply_automatic_promotions"
+value = true

@@ -1,0 +1,75 @@
+[module]
+key = "fashion"
+name = "Fashion & boutique"
+version = "1.0.0"
+schema = "fashion"
+category = "industry_pack"
+description = "Layaway with instalment payments, held goods and size or colour exchanges; uses product variants for size and colour."
+business_types = ["boutique", "clothing", "shoes", "fabric_and_kitenge", "cosmetics", "accessories"]
+depends_on = ["core", "catalog", "customers", "point_of_sale"]
+optional_depends_on = ["inventory", "crm", "online_shop", "ai_assistant"]
+can_be_uninstalled = true
+
+[[permissions]]
+key = "fashion.layaways.manage"
+description = "Open layaways and take instalment payments"
+risk_level = "money"
+
+[[permissions]]
+key = "fashion.layaways.cancel"
+description = "Cancel a layaway or expire it and keep the fee"
+risk_level = "money"
+
+[[permissions]]
+key = "fashion.exchanges.process"
+description = "Exchange goods for a different size or colour"
+
+[[permissions]]
+key = "fashion.exchanges.approve"
+description = "Approve exchanges outside the exchange period or with refunds"
+risk_level = "money"
+
+[[pages]]
+page_key = "fashion_layaways"
+title = "Layaways"
+route = "/fashion/layaways"
+
+[[pages]]
+page_key = "fashion_exchanges"
+title = "Exchanges"
+route = "/fashion/exchanges"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["fashion.layaways.manage", "fashion.layaways.cancel", "fashion.exchanges.process", "fashion.exchanges.approve"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["fashion.layaways.manage", "fashion.exchanges.process"]
+
+[[default_roles]]
+role_key = "sales_assistant"
+name = "Sales assistant"
+permissions = ["fashion.layaways.manage", "fashion.exchanges.process", "catalog.products.view"]
+
+[[settings]]
+key = "layaway_minimum_deposit_percent"
+value = 30
+
+[[settings]]
+key = "layaway_maximum_days"
+value = 60
+
+[[settings]]
+key = "layaway_cancellation_fee_percent"
+value = 10
+
+[[settings]]
+key = "exchange_period_days"
+value = 7
+
+[[number_sequences]]
+sequence_key = "fashion.layaway"
+prefix = "LAY-"
+padding_length = 4
+reset_period = "never"

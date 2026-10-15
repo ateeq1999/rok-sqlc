@@ -1,0 +1,75 @@
+[module]
+key = "online_shop"
+name = "Online shop"
+version = "1.0.0"
+schema = "online_shop"
+category = "sales_channel"
+description = "A web storefront and WhatsApp ordering, with the assistant reading order messages, payment links, stock holds and pick-pack-deliver tracking."
+depends_on = ["core", "catalog", "customers", "inventory"]
+optional_depends_on = ["point_of_sale", "delivery", "ai_assistant", "accounting"]
+can_be_uninstalled = true
+
+[[permissions]]
+key = "online_shop.orders.view"
+description = "See online orders"
+
+[[permissions]]
+key = "online_shop.orders.manage"
+description = "Accept, pack, dispatch and cancel online orders"
+
+[[permissions]]
+key = "online_shop.storefront.manage"
+description = "Open or close the shop, set delivery fees, areas and messaging channels"
+risk_level = "sensitive"
+
+[[pages]]
+page_key = "online_orders"
+title = "Online orders"
+route = "/online-orders"
+
+[[pages]]
+page_key = "storefront"
+title = "Storefront"
+route = "/storefront"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["online_shop.orders.view", "online_shop.orders.manage", "online_shop.storefront.manage"]
+
+[[default_roles]]
+role_key = "cashier"
+permissions = ["online_shop.orders.view", "online_shop.orders.manage"]
+
+[[default_roles]]
+role_key = "accountant"
+permissions = ["online_shop.orders.view"]
+
+# Unpaid orders release their reserved stock after this many minutes.
+[[settings]]
+key = "stock_hold_minutes"
+value = 60
+
+[[settings]]
+key = "allow_cash_on_delivery"
+value = true
+
+[[settings]]
+key = "assistant_reads_whatsapp_orders"
+value = true
+
+[[number_sequences]]
+sequence_key = "online_shop.online_orders"
+prefix = "W-"
+padding_length = 4
+reset_period = "never"
+
+[[assistant_rules]]
+page_key = "online_orders"
+trigger_metric_key = "inbound_message_reads_as_order"
+trigger_comparison = "any"
+message_template = "{customer_name}'s message reads as an order: {item_count} items, {order_total} with delivery."
+visible_to_role_keys = ["manager", "cashier"]
+frequency = "every_visit"
+allowed_actions = [
+  { action_key = "create_order_from_message", label = "Create order", kind = "make_draft", target_page_key = "online_orders" },
+]

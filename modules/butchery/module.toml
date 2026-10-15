@@ -1,0 +1,69 @@
+[module]
+key = "butchery"
+name = "Butchery"
+version = "1.0.0"
+schema = "butchery"
+category = "industry_pack"
+description = "Carcass intake and costing, standard cuts with expected yields, yield tracking, and weighed sales from counter scales."
+business_types = ["butchery", "nyama_choma", "poultry", "fish_shop"]
+depends_on = ["core", "catalog", "inventory", "point_of_sale"]
+optional_depends_on = ["purchasing", "restaurant", "ai_assistant"]
+can_be_uninstalled = true
+
+[[permissions]]
+key = "butchery.carcasses.receive"
+description = "Receive carcasses and record weight and cost"
+risk_level = "money"
+
+[[permissions]]
+key = "butchery.yields.record"
+description = "Record cut weights from a carcass"
+
+[[permissions]]
+key = "butchery.cuts.manage"
+description = "Define cuts and expected yields"
+
+[[permissions]]
+key = "butchery.yields.view"
+description = "See yield and loss reports"
+risk_level = "sensitive"
+
+[[pages]]
+page_key = "butchery_carcasses"
+title = "Carcasses"
+route = "/butchery/carcasses"
+
+[[pages]]
+page_key = "butchery_cuts"
+title = "Cuts"
+route = "/butchery/cuts"
+
+[[pages]]
+page_key = "butchery_yield_report"
+title = "Yield report"
+route = "/butchery/yield-report"
+
+[[default_roles]]
+role_key = "manager"
+permissions = ["butchery.carcasses.receive", "butchery.yields.record", "butchery.cuts.manage", "butchery.yields.view"]
+
+[[default_roles]]
+role_key = "accountant"
+permissions = ["butchery.yields.view"]
+
+[[default_roles]]
+role_key = "butcher"
+name = "Butcher"
+permissions = ["butchery.carcasses.receive", "butchery.yields.record", "catalog.products.view"]
+
+[[settings]]
+key = "weighed_price_rounding_amount"
+value = 50
+
+[[settings]]
+key = "yield_loss_alert_percent"
+value = 5
+
+[[settings]]
+key = "read_weight_from_scale"
+value = true
