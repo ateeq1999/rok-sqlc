@@ -10,3 +10,10 @@
 - [ ] A hand-written file in the output directory survives regeneration.
 - [ ] `--check` exits 0 on a freshly generated tree, and exits 1 listing the file after a schema change, a hand edit to a generated file, or a dropped table.
 - [ ] `--check` never modifies the filesystem.
+
+## Decisions
+
+- **`--resource` and stale removal.** Resolved from the spec: stale = generated files not in the plan, with no exception for filtered runs. A filtered run's plan already includes every previously generated resource still in the schema (the `include` merge), so a `--resource` run never removes another live resource; it does remove resources whose table was dropped. Pinned by `filtered_runs_keep_other_generated_resources`.
+- A kept `queries.rs` (previous run used `--queries`, this one doesn't) counts as planned and is not stale.
+- Library: `Config::check`; drift fails `generate` with an `Error` whose report lists `missing`, `changed`, `stale` (same failure as the CLI, per ADR 0012). `Report::stale` lists removed files (dry run: files that would be removed).
+- In check mode a planned path holding a hand-written file is reported as `changed`. Only the generated header marks a file as removable; symlinks are never followed or removed; the output directory itself is never removed.

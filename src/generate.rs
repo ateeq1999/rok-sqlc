@@ -144,6 +144,31 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
     };
 
     let files = generator::plan_files_with_queries(&sql, &selected, queries_module, output_dir);
+
+    // Any generated file under the output directory that this run does not
+    // produce is stale. A kept queries module protects both layouts
+    // (`queries.rs` and everything under `queries/`); a run with queries
+    // leaves the other layout's files stale, so switching layouts cleans up.
+    let keep: HashSet<PathBuf> = files.iter().map(|(path, _)| path.clone()).collect();
+    let mut stale = output::find_stale(output_dir, &keep)?;
+    if matches!(queries_module, generator::QueriesModule::Keep) {
+        let (single, dir) = (output_dir.join("queries.rs"), output_dir.join("queries"));
+        stale.retain(|path| *path != single && !path.starts_with(&dir));
+    }
+
+    if config.check {
+        (report.missing, report.changed) = output::compare_files(&files)?;
+        report.stale = stale;
+        if report.has_drift() {
+            let count = report.missing.len() + report.changed.len() + report.stale.len();
+            bail!(
+                "generated code is out of date: {count} file(s) drifted; run `rok-sqlc generate` to update them"
+            );
+        }
+        report.unchanged = files.into_iter().map(|(path, _)| path).collect();
+        return Ok(());
+    }
+
     let applied = output::apply_files(&files, dry_run, force)?;
 
     report.unchanged = applied.unchanged;
@@ -159,6 +184,10 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
         );
     }
     report.written = applied.written;
+    if !dry_run {
+        output::remove_stale(output_dir, &stale)?;
+    }
+    report.stale = stale;
     Ok(())
 }
 
