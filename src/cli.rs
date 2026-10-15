@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+use crate::config_file::{self, FileConfig};
 use crate::{Config, Report};
 
 #[derive(Debug, Parser)]
@@ -25,13 +26,13 @@ enum Command {
     /// Generate Rust database modules from a schema file
     #[command(visible_alias = "g")]
     Generate {
-        /// Input schema/migration SQL file
+        /// Input schema/migration SQL file [default: from rok-sqlc.toml]
         #[arg(short, long, value_name = "FILE")]
-        schema: PathBuf,
+        schema: Option<PathBuf>,
 
-        /// Output directory
-        #[arg(short, long, default_value = "src/db", value_name = "DIR")]
-        output: PathBuf,
+        /// Output directory [default: src/db]
+        #[arg(short, long, value_name = "DIR")]
+        output: Option<PathBuf>,
 
         /// Generate only one table
         #[arg(short, long, value_name = "TABLE")]
@@ -52,6 +53,11 @@ enum Command {
         /// Skip unsupported tables and queries with warnings instead of failing
         #[arg(short, long)]
         lenient: bool,
+
+        /// Read options from this config file instead of discovering
+        /// rok-sqlc.toml in the current directory or its parents
+        #[arg(short, long, value_name = "FILE")]
+        config: Option<PathBuf>,
     },
 }
 
@@ -87,16 +93,53 @@ where
             force,
             queries,
             lenient,
-        } => generate(&Config {
-            schema: vec![schema],
-            queries: queries.into_iter().collect(),
-            output,
-            resource,
-            dry_run,
-            force,
-            lenient,
-        }),
+            config,
+        } => {
+            let file = match config {
+                Some(path) => config_file::load(&path)?,
+                None => match config_file::discover(&std::env::current_dir()?) {
+                    Some(path) => config_file::load(&path)?,
+                    None => FileConfig::default(),
+                },
+            };
+            // Flags override the file, which overrides the defaults.
+            let schema = match schema {
+                Some(schema) => vec![schema],
+                None if !file.schema.is_empty() => file.schema,
+                None => return Err(missing_schema().into()),
+            };
+            let defaults = Config::default();
+            generate(&Config {
+                schema,
+                queries: match queries {
+                    Some(queries) => vec![queries],
+                    None => file.queries,
+                },
+                output: output.or(file.output).unwrap_or(defaults.output),
+                resource: resource.or(file.resource),
+                dry_run,
+                force,
+                lenient,
+            })
+        }
     }
+}
+
+/// The usage error for a run with neither `--schema` nor a `schema` key in
+/// the config file.
+fn missing_schema() -> clap::Error {
+    let mut cmd = command();
+    cmd.build();
+    let generate = cmd
+        .find_subcommand_mut("generate")
+        .expect("the generate subcommand exists");
+    generate.error(
+        clap::error::ErrorKind::MissingRequiredArgument,
+        format!(
+            "no schema given: pass --schema <FILE> or set `schema` in {}",
+            config_file::FILE_NAME
+        ),
+    )
 }
 
 fn is_informational(err: &clap::Error) -> bool {

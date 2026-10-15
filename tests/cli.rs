@@ -887,3 +887,124 @@ fn usage_errors_print_one_error_prefix_and_exit_non_zero() {
         );
     }
 }
+
+// --- rok-sqlc.toml -----------------------------------------------------------
+
+fn run_binary_in(cwd: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_rok-sqlc"))
+        .current_dir(cwd)
+        .args(args)
+        .output()
+        .expect("failed to spawn rok-sqlc binary")
+}
+
+#[test]
+fn config_file_in_a_parent_directory_is_discovered_and_resolved_against_its_directory() -> Result<()>
+{
+    let dir = TempDir::new()?;
+    fs::create_dir_all(dir.path().join("db"))?;
+    fs::write(dir.path().join("db/schema.sql"), SIMPLE_SCHEMA)?;
+    fs::write(
+        dir.path().join("rok-sqlc.toml"),
+        "schema = [\"db/schema.sql\"]\noutput = \"gen\"\n",
+    )?;
+    let sub = dir.path().join("crates/app");
+    fs::create_dir_all(&sub)?;
+
+    let output = run_binary_in(&sub, &["g"]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(dir.path().join("gen/users/models.rs").exists());
+    assert!(!sub.join("gen").exists());
+    Ok(())
+}
+
+#[test]
+fn explicit_config_file_is_used_instead_of_discovery() -> Result<()> {
+    let dir = TempDir::new()?;
+    fs::write(dir.path().join("schema.sql"), SIMPLE_SCHEMA)?;
+    // The discoverable file points at a schema that doesn't exist.
+    fs::write(
+        dir.path().join("rok-sqlc.toml"),
+        "schema = \"missing.sql\"\noutput = \"wrong\"\n",
+    )?;
+    fs::create_dir_all(dir.path().join("config"))?;
+    fs::write(
+        dir.path().join("config/other.toml"),
+        "schema = \"../schema.sql\"\noutput = \"../right\"\n",
+    )?;
+
+    let output = run_binary_in(dir.path(), &["g", "-c", "config/other.toml"]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(dir.path().join("right/users/models.rs").exists());
+    assert!(!dir.path().join("wrong").exists());
+    Ok(())
+}
+
+#[test]
+fn flags_override_the_config_file() -> Result<()> {
+    let dir = TempDir::new()?;
+    fs::write(dir.path().join("schema.sql"), MIXED_SCHEMA)?;
+    let config = dir.path().join("rok-sqlc.toml");
+    fs::write(
+        &config,
+        "schema = \"schema.sql\"\noutput = \"from-file\"\nresource = \"spans\"\n",
+    )?;
+    let flag_out = output_dir(&dir);
+
+    run(&[
+        "g",
+        "--config",
+        config.to_str().unwrap(),
+        "--output",
+        flag_out.to_str().unwrap(),
+        "--resource",
+        "users",
+    ])?;
+
+    assert!(flag_out.join("users/models.rs").exists());
+    assert!(!flag_out.join("spans").exists());
+    assert!(!dir.path().join("from-file").exists());
+    Ok(())
+}
+
+#[test]
+fn unknown_config_key_names_the_key_and_the_file() -> Result<()> {
+    let dir = TempDir::new()?;
+    fs::write(dir.path().join("schema.sql"), SIMPLE_SCHEMA)?;
+    let config = dir.path().join("rok-sqlc.toml");
+    // `output` stays valid so that, if the typo were ignored, the run would
+    // write into the temp dir rather than the working directory.
+    fs::write(
+        &config,
+        "schema = \"schema.sql\"\noutput = \"gen\"\nresorce = \"users\"\n",
+    )?;
+
+    let err = run(&["g", "-c", config.to_str().unwrap()]).unwrap_err();
+
+    let message = format!("{err:#}");
+    assert!(message.contains("resorce"), "{message}");
+    assert!(message.contains(&config.display().to_string()), "{message}");
+    assert!(!dir.path().join("gen").exists());
+    Ok(())
+}
+
+#[test]
+fn missing_schema_without_a_config_file_is_a_usage_error() -> Result<()> {
+    let dir = TempDir::new()?;
+    let output = run_binary_in(dir.path(), &["g"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.starts_with("error: "), "{stderr}");
+    assert!(stderr.contains("rok-sqlc.toml"), "{stderr}");
+    Ok(())
+}

@@ -21,6 +21,7 @@
 //! no stability promise (see ADR 0012).
 
 mod config;
+mod config_file;
 mod generate;
 mod generator;
 mod output;
