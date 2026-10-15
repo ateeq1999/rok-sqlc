@@ -9,3 +9,6 @@ sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "derive", "uu
 uuid = "1"
 chrono = "0.4"
 rust_decimal = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

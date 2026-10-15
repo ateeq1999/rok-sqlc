@@ -41,18 +41,20 @@ fn generates_resource_modules() -> Result<()> {
     assert!(out.join("schema.rs").exists());
 
     let models = fs::read_to_string(out.join("users/models.rs"))?;
-    assert!(models.contains("pub struct Users {"));
+    assert!(models.contains("pub struct User {"));
     assert!(models.contains("pub id: uuid::Uuid,"));
     assert!(models.contains("pub email: String,"));
 
     let read = fs::read_to_string(out.join("users/read.rs"))?;
-    assert!(
-        read.contains("SELECT \\\"id\\\", \\\"email\\\" FROM \\\"users\\\" WHERE \\\"id\\\" = $1")
-    );
+    assert!(read.contains(
+        "        SELECT\n            id,\n            email\n        FROM users\n        WHERE id = $1\n"
+    ));
 
     let write = fs::read_to_string(out.join("users/write.rs"))?;
-    assert!(write.contains("pub async fn create<'e, E>(executor: E, input: NewUsers)"));
-    assert!(write.contains("pub async fn update<'e, E>(executor: E, id: uuid::Uuid"));
+    assert!(write.contains("pub async fn create<'e, E>(executor: E, input: NewUser)"));
+    assert!(write.contains(
+        "pub async fn update<'e, E>(\n    executor: E,\n    id: uuid::Uuid,\n    input: UpdateUser,\n)"
+    ));
     assert!(write.contains("pub async fn delete<'e, E>(executor: E, id: uuid::Uuid)"));
 
     for generated in [&read, &write] {
@@ -100,9 +102,9 @@ fn generates_composite_keys_arrays_and_time() -> Result<()> {
 
     let read = fs::read_to_string(out.join("line_items/read.rs"))?;
     assert!(read.contains(
-        "pub async fn get_by_id<'e, E>(executor: E, order_id: uuid::Uuid, product_id: uuid::Uuid)"
+        "pub async fn get_by_id<'e, E>(\n    executor: E,\n    order_id: uuid::Uuid,\n    product_id: uuid::Uuid,\n)"
     ));
-    assert!(read.contains("WHERE \\\"order_id\\\" = $1 AND \\\"product_id\\\" = $2"));
+    assert!(read.contains("WHERE order_id = $1 AND product_id = $2"));
     assert!(read.contains(".bind(order_id)"));
     assert!(read.contains(".bind(product_id)"));
     Ok(())
@@ -133,20 +135,110 @@ fn generates_write_helpers_with_defaults_and_serial() -> Result<()> {
 
     let out = output_dir(&dir);
     let models = fs::read_to_string(out.join("events/models.rs"))?;
-    assert!(models.contains("pub struct NewEvents {"));
+    assert!(models.contains("pub struct NewEvent {"));
     assert!(!models.contains("pub id: Option<i64>"));
     assert!(models.contains("pub name: String,"));
     assert!(models.contains("pub note: Option<String>,"));
     assert!(models.contains("pub is_active: Option<bool>,"));
-    assert!(models.contains("pub struct UpdateEvents {"));
+    assert!(models.contains("pub struct UpdateEvent {"));
     assert!(models.contains("pub note: Option<Option<String>>,"));
 
     let write = fs::read_to_string(out.join("events/write.rs"))?;
-    assert!(!write.contains("columns.push(\"\\\"id\\\"\")"));
-    assert!(write.contains("if input.is_active.is_some() {"));
-    assert!(write.contains("if let Some(value) = &input.is_active {"));
-    assert!(write.contains("if columns.is_empty() {"));
-    assert!(write.contains("\"INSERT INTO {} DEFAULT VALUES RETURNING {}\""));
+    assert!(!write.contains("columns.push(\"id\")"));
+    assert!(write.contains("    columns.push(\"name\");\n"));
+    assert!(
+        write
+            .contains("    if input.is_active.is_some() {\n        columns.push(\"is_active\");\n")
+    );
+    assert!(write.contains(
+        "    if let Some(value) = input.is_active {\n        values.push_bind(value);\n"
+    ));
+    // `name` is required, so the column list is never empty.
+    assert!(!write.contains("DEFAULT VALUES"));
+    Ok(())
+}
+
+#[test]
+fn generates_products_fixture_with_singular_names_and_schema_qualified_sql() -> Result<()> {
+    let dir = TempDir::new()?;
+    let schema = dir.path().join("schema.sql");
+    let inventory = fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("modules/inventory/schema.sql"),
+    )?;
+    fs::write(
+        &schema,
+        inventory.replace("CREATE TABLE products", "CREATE TABLE catalog.products"),
+    )?;
+
+    run(&[
+        "generate",
+        "--schema",
+        schema.to_str().unwrap(),
+        "--output",
+        output_dir(&dir).to_str().unwrap(),
+        "--resource",
+        "products",
+    ])?;
+
+    let out = output_dir(&dir);
+    let models = fs::read_to_string(out.join("products/models.rs"))?;
+    assert!(models.contains(
+        "/// A row of the `catalog.products` table.
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
+pub struct Product {
+    pub id: uuid::Uuid,
+    pub sku: String,
+    pub name: String,
+    pub category_id: i64,
+    pub supplier_id: Option<uuid::Uuid>,
+    pub price_cents: i64,
+    pub stock_on_hand: i32,
+    pub reorder_level: i16,
+    pub weight_kg: Option<f64>,
+    pub discontinued: bool,
+    pub released_on: Option<chrono::NaiveDate>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+"
+    ));
+    assert!(models.contains("pub struct NewProduct {"));
+    assert!(models.contains("pub struct UpdateProduct {"));
+
+    let read = fs::read_to_string(out.join("products/read.rs"))?;
+    assert!(read.contains(
+        "pub async fn get_by_id<'e, E>(executor: E, id: uuid::Uuid) -> Result<Option<Product>, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query_as::<_, Product>(
+        r#\"
+        SELECT
+            id,
+            sku,
+            name,
+            category_id,
+            supplier_id,
+            price_cents,
+            stock_on_hand,
+            reorder_level,
+            weight_kg,
+            discontinued,
+            released_on,
+            created_at
+        FROM catalog.products
+        WHERE id = $1
+        \"#,
+    )
+    .bind(id)
+    .fetch_optional(executor)
+    .await
+}
+"
+    ));
+
+    let write = fs::read_to_string(out.join("products/write.rs"))?;
+    assert!(write.contains("new(\"UPDATE catalog.products SET \")"));
+    assert!(write.contains("DELETE FROM catalog.products"));
     Ok(())
 }
 

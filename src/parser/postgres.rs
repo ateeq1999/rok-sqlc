@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
 use anyhow::{Context, Result, bail};
-use heck::{ToSnakeCase, ToUpperCamelCase};
 use sqlparser::ast::{
     ArrayElemTypeDef, ColumnOption, CreateTable, DataType, ExactNumberInfo, Expr, Ident,
     IndexColumn, ObjectName, ObjectNamePart, Statement, TableConstraint, TimezoneInfo,
@@ -10,6 +9,7 @@ use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 
 use super::diagnostics::TableFailure;
+use super::naming;
 use crate::schema::{Column, ForeignKey, Schema, Table};
 
 pub struct ParsedSchema {
@@ -122,10 +122,7 @@ fn build_table(create: &CreateTable) -> std::result::Result<Table, TableFailure>
 
         let (base_type, sqlx_type) = map_type(&column_def.data_type).map_err(column_fail)?;
 
-        let mut rust_name = column_name.to_snake_case();
-        if is_rust_keyword(&rust_name) {
-            rust_name = format!("{rust_name}_");
-        }
+        let rust_name = naming::rust_identifier(&column_name).map_err(column_fail)?;
         if !seen_fields.insert(rust_name.clone()) {
             return Err(table_failure(
                 &sql_name,
@@ -230,13 +227,11 @@ fn build_table(create: &CreateTable) -> std::result::Result<Table, TableFailure>
         });
     }
 
-    let mut module_name = sql_name.to_snake_case();
-    if is_rust_keyword(&module_name) {
-        module_name = format!("{module_name}_");
-    }
-    let struct_name = module_name.to_upper_camel_case();
+    let module_name = naming::rust_identifier(&sql_name).map_err(fail)?;
+    let struct_name = naming::struct_name(&module_name);
 
     Ok(Table {
+        schema: object_schema_name(&create.name),
         sql_name,
         module_name,
         struct_name,
@@ -279,6 +274,23 @@ fn object_leaf_name(name: &ObjectName) -> String {
             ObjectNamePart::Function(_) => None,
         })
         .unwrap_or_default()
+}
+
+/// The schema qualifier of a possibly qualified name (`catalog` in
+/// `catalog.products`); `None` for an unqualified name.
+fn object_schema_name(name: &ObjectName) -> Option<String> {
+    let identifiers: Vec<&Ident> = name
+        .0
+        .iter()
+        .filter_map(|part| match part {
+            ObjectNamePart::Identifier(ident) => Some(ident),
+            ObjectNamePart::Function(_) => None,
+        })
+        .collect();
+    match identifiers.as_slice() {
+        [.., schema, _table] => Some(ident_name(schema)),
+        _ => None,
+    }
 }
 
 fn index_column_name(column: &IndexColumn) -> Option<String> {
@@ -378,62 +390,6 @@ fn check_decimal_precision(info: &ExactNumberInfo) -> std::result::Result<(), St
     Ok(())
 }
 
-fn is_rust_keyword(name: &str) -> bool {
-    matches!(
-        name,
-        "as" | "break"
-            | "const"
-            | "continue"
-            | "crate"
-            | "else"
-            | "enum"
-            | "extern"
-            | "false"
-            | "fn"
-            | "for"
-            | "if"
-            | "impl"
-            | "in"
-            | "let"
-            | "loop"
-            | "match"
-            | "mod"
-            | "move"
-            | "mut"
-            | "pub"
-            | "ref"
-            | "return"
-            | "self"
-            | "static"
-            | "struct"
-            | "super"
-            | "trait"
-            | "true"
-            | "type"
-            | "unsafe"
-            | "use"
-            | "where"
-            | "while"
-            | "async"
-            | "await"
-            | "dyn"
-            | "abstract"
-            | "become"
-            | "box"
-            | "do"
-            | "final"
-            | "macro"
-            | "override"
-            | "priv"
-            | "typeof"
-            | "unsized"
-            | "virtual"
-            | "yield"
-            | "try"
-            | "gen"
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,7 +422,7 @@ mod tests {
     fn names_modules_and_structs_mechanically() {
         let table = one_table("CREATE TABLE user_profiles (id BIGSERIAL PRIMARY KEY);");
         assert_eq!(table.module_name, "user_profiles");
-        assert_eq!(table.struct_name, "UserProfiles");
+        assert_eq!(table.struct_name, "UserProfile");
     }
 
     #[test]
@@ -541,9 +497,11 @@ mod tests {
     }
 
     #[test]
-    fn strips_schema_qualification() {
+    fn keeps_schema_qualification() {
         let table = one_table("CREATE TABLE public.users (id BIGSERIAL PRIMARY KEY);");
         assert_eq!(table.sql_name, "users");
+        assert_eq!(table.schema.as_deref(), Some("public"));
+        assert_eq!(table.display_name(), "public.users");
     }
 
     #[test]
@@ -646,6 +604,40 @@ mod tests {
         let table = one_table("CREATE TABLE articles (id BIGSERIAL PRIMARY KEY, \"type\" TEXT);");
         assert_eq!(table.columns[1].rust_name, "type_");
         assert_eq!(table.columns[1].sql_name, "type");
+    }
+
+    #[test]
+    fn unqualified_tables_have_no_schema() {
+        let table = one_table("CREATE TABLE users (id BIGSERIAL PRIMARY KEY);");
+        assert_eq!(table.schema, None);
+        assert_eq!(table.display_name(), "users");
+    }
+
+    #[test]
+    fn keeps_quoted_schema_case() {
+        let table = one_table("CREATE TABLE \"Sales\".orders (id BIGSERIAL PRIMARY KEY);");
+        assert_eq!(table.schema.as_deref(), Some("Sales"));
+    }
+
+    #[test]
+    fn maps_unusual_identifiers_to_valid_rust_names() {
+        let table = one_table(
+            "CREATE TABLE \"Reserved Words\" (\"select\" BIGSERIAL PRIMARY KEY, \"1st\" BOOLEAN, \"Mixed Case\" INT);",
+        );
+        assert_eq!(table.module_name, "reserved_words");
+        assert_eq!(table.struct_name, "ReservedWord");
+        assert_eq!(table.columns[0].rust_name, "select");
+        assert_eq!(table.columns[1].rust_name, "_1st");
+        assert_eq!(table.columns[1].sql_name, "1st");
+        assert_eq!(table.columns[2].rust_name, "mixed_case");
+    }
+
+    #[test]
+    fn rejects_columns_without_a_rust_identifier() {
+        let parsed = parse("CREATE TABLE odd (id BIGSERIAL PRIMARY KEY, \"%\" TEXT);");
+        assert_eq!(parsed.schema.tables.len(), 0);
+        assert!(parsed.failures[0].reason.contains("column `%`"));
+        assert!(parsed.failures[0].reason.contains("Rust identifier"));
     }
 
     #[test]

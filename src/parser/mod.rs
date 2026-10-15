@@ -1,4 +1,5 @@
 pub mod diagnostics;
+pub mod naming;
 pub mod postgres;
 
 pub use diagnostics::TableFailure;

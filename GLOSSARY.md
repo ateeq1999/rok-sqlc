@@ -35,7 +35,7 @@ A column the database can supply a value for (`DEFAULT`, serial, identity, or `G
 _Avoid_: optional column
 
 **Create input**:
-The `NewXxx` struct a caller passes to `create`; generated columns are omitted and defaulted columns are optional, so an omitted value lets the database default apply.
+The `NewXxx` struct a caller passes to `create` (`Xxx` is the singular row struct name, e.g. `NewProduct` for `products`); generated columns are omitted and defaulted columns are optional, so an omitted value lets the database default apply.
 _Avoid_: insert model, DTO
 
 **Update patch**:

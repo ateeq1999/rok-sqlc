@@ -1,3 +1,5 @@
+#![deny(warnings)]
+
 pub mod db;
 
 // Compile-only smoke check for the generated executor-generic API. The

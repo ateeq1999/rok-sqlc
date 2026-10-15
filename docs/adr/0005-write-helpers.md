@@ -1,6 +1,8 @@
 # Write helpers: `create`, `update`, and `delete`
 
 > **Superseded in part by [ADR 0006](0006-executor-generic-crud.md):** the first parameter was later generalized from a concrete `&PgPool` to `sqlx::PgExecutor`. Read `pool` in the signatures below as `executor`.
+>
+> **Superseded in part by [ADR 0007](0007-generated-sql-and-naming.md):** struct names are now singular (`NewX` for `products` is `NewProduct`), and `create`/`update` build their dynamic statements with `sqlx::QueryBuilder` instead of hand-numbered placeholders. A defaulted insert falls back to `DEFAULT VALUES` only when every insertable column is defaulted.
 
 Phase 5 adds writes to each resource's `write.rs`, driven by two column flags the parser now records: `has_default` (the database can supply a value: `DEFAULT`, serial, identity, or `GENERATED`) and `is_generated` (the database always owns the value: serial, identity, or `GENERATED`).
 
