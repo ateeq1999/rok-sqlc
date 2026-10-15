@@ -5,23 +5,37 @@ pub fn render(table: &Table) -> String {
     output.push_str("use sqlx::PgPool;\n\n");
     output.push_str(&format!("use super::models::{};\n\n", table.struct_name));
 
-    if let Some(pk) = primary_key_column(table) {
+    let pk_columns = primary_key_columns(table);
+    if !pk_columns.is_empty() {
+        let conditions = pk_columns
+            .iter()
+            .enumerate()
+            .map(|(index, column)| format!("\"{}\" = ${}", column.sql_name, index + 1))
+            .collect::<Vec<_>>()
+            .join(" AND ");
         let sql = format!(
-            "SELECT {} FROM \"{}\" WHERE \"{}\" = $1",
+            "SELECT {} FROM \"{}\" WHERE {}",
             column_list(table),
             table.sql_name,
-            pk.sql_name
+            conditions
         );
+        let parameters = pk_columns
+            .iter()
+            .map(|column| format!("{}: {}", column.rust_name, column.sqlx_type))
+            .collect::<Vec<_>>()
+            .join(", ");
         output.push_str(&format!(
-            "pub async fn get_by_id(pool: &PgPool, id: {}) -> Result<Option<{}>, sqlx::Error> {{\n",
-            pk.sqlx_type, table.struct_name
+            "pub async fn get_by_id(pool: &PgPool, {}) -> Result<Option<{}>, sqlx::Error> {{\n",
+            parameters, table.struct_name
         ));
         output.push_str(&format!(
             "    sqlx::query_as::<_, {}>({})\n",
             table.struct_name,
             rust_string_literal(&sql)
         ));
-        output.push_str("        .bind(id)\n");
+        for column in &pk_columns {
+            output.push_str(&format!("        .bind({})\n", column.rust_name));
+        }
         output.push_str("        .fetch_optional(pool)\n");
         output.push_str("        .await\n");
         output.push_str("}\n\n");
@@ -61,9 +75,12 @@ fn rust_string_literal(value: &str) -> String {
     literal
 }
 
-fn primary_key_column(table: &Table) -> Option<&Column> {
-    let pk = table.primary_key.as_deref()?;
-    table.columns.iter().find(|column| column.sql_name == pk)
+fn primary_key_columns(table: &Table) -> Vec<&Column> {
+    table
+        .primary_key
+        .iter()
+        .filter_map(|key| table.columns.iter().find(|column| column.sql_name == *key))
+        .collect()
 }
 
 fn column_list(table: &Table) -> String {
@@ -91,7 +108,7 @@ mod tests {
         }
     }
 
-    fn table(columns: Vec<Column>, primary_key: Option<String>) -> Table {
+    fn table(columns: Vec<Column>, primary_key: Vec<String>) -> Table {
         Table {
             sql_name: "users".to_owned(),
             module_name: "users".to_owned(),
@@ -106,7 +123,7 @@ mod tests {
     fn renders_get_by_id_and_list_with_quoted_columns() {
         let rendered = render(&table(
             vec![column("id", "i64", true), column("email", "String", false)],
-            Some("id".to_owned()),
+            vec!["id".to_owned()],
         ));
         assert!(rendered.contains("pub async fn get_by_id(pool: &PgPool, id: i64)"));
         assert!(
@@ -121,6 +138,27 @@ mod tests {
     }
 
     #[test]
+    fn renders_composite_key_get_by_id_with_ordered_parameters() {
+        let rendered = render(&table(
+            vec![
+                column("order_id", "uuid::Uuid", true),
+                column("product_id", "uuid::Uuid", true),
+                column("quantity", "i32", false),
+            ],
+            vec!["order_id".to_owned(), "product_id".to_owned()],
+        ));
+        assert!(rendered.contains(
+            "pub async fn get_by_id(pool: &PgPool, order_id: uuid::Uuid, product_id: uuid::Uuid)"
+        ));
+        assert!(rendered.contains("WHERE \\\"order_id\\\" = $1 AND \\\"product_id\\\" = $2"));
+        assert!(rendered.contains(".bind(order_id)"));
+        assert!(rendered.contains(".bind(product_id)"));
+        assert!(
+            rendered.find(".bind(order_id)").unwrap() < rendered.find(".bind(product_id)").unwrap()
+        );
+    }
+
+    #[test]
     fn escapes_quotes_in_generated_sql_literals() {
         assert_eq!(
             rust_string_literal("SELECT \"a\" FROM \"t\""),
@@ -131,7 +169,7 @@ mod tests {
 
     #[test]
     fn omits_get_by_id_without_primary_key() {
-        let rendered = render(&table(vec![column("email", "String", false)], None));
+        let rendered = render(&table(vec![column("email", "String", false)], Vec::new()));
         assert!(!rendered.contains("pub async fn get_by_id"));
         assert!(rendered.contains("No primary key detected"));
         assert!(rendered.contains("pub async fn list(pool: &PgPool)"));
@@ -141,11 +179,11 @@ mod tests {
     fn output_is_deterministic() {
         let first = render(&table(
             vec![column("id", "i64", true)],
-            Some("id".to_owned()),
+            vec!["id".to_owned()],
         ));
         let second = render(&table(
             vec![column("id", "i64", true)],
-            Some("id".to_owned()),
+            vec!["id".to_owned()],
         ));
         assert_eq!(first, second);
     }

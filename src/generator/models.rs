@@ -32,7 +32,7 @@ mod tests {
             module_name: "users".to_owned(),
             struct_name: "Users".to_owned(),
             columns: vec![column],
-            primary_key: None,
+            primary_key: Vec::new(),
             foreign_keys: Vec::new(),
         }
     }

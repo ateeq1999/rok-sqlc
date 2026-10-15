@@ -4,6 +4,8 @@ rok-sqlc refuses to generate when a table contains unsupported constructs: it wr
 
 Failure diagnostics are evaluated against the selected scope: with `--resource users`, an unrelated unsupported table neither aborts a strict run nor produces warnings.
 
+The all-skipped case is not a successful lenient run: when every table in scope is unsupported, rok-sqlc still exits nonzero (`all tables are unsupported`), because exit 0 would report success while writing nothing — the footgun this ADR exists to prevent.
+
 ## Considered Options
 
 - **Lenient by default** (warn + skip, `--strict` to abort) — rejected: silent partial output is a footgun in CI.

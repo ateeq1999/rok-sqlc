@@ -56,6 +56,46 @@ fn generates_resource_modules() -> Result<()> {
 }
 
 #[test]
+fn generates_composite_keys_arrays_and_time() -> Result<()> {
+    let dir = TempDir::new()?;
+    let schema = dir.path().join("schema.sql");
+    fs::write(
+        &schema,
+        "CREATE TABLE line_items (
+            order_id UUID NOT NULL,
+            product_id UUID NOT NULL,
+            labels TEXT[] NOT NULL,
+            weekdays INTEGER[],
+            cut_off TIME NOT NULL,
+            PRIMARY KEY (order_id, product_id)
+        );",
+    )?;
+
+    run(&[
+        "generate",
+        "--schema",
+        schema.to_str().unwrap(),
+        "--output",
+        output_dir(&dir).to_str().unwrap(),
+    ])?;
+
+    let out = output_dir(&dir);
+    let models = fs::read_to_string(out.join("line_items/models.rs"))?;
+    assert!(models.contains("pub labels: Vec<String>,"));
+    assert!(models.contains("pub weekdays: Option<Vec<i32>>,"));
+    assert!(models.contains("pub cut_off: chrono::NaiveTime,"));
+
+    let read = fs::read_to_string(out.join("line_items/read.rs"))?;
+    assert!(read.contains(
+        "pub async fn get_by_id(pool: &PgPool, order_id: uuid::Uuid, product_id: uuid::Uuid)"
+    ));
+    assert!(read.contains("WHERE \\\"order_id\\\" = $1 AND \\\"product_id\\\" = $2"));
+    assert!(read.contains(".bind(order_id)"));
+    assert!(read.contains(".bind(product_id)"));
+    Ok(())
+}
+
+#[test]
 fn dry_run_writes_nothing() -> Result<()> {
     let dir = TempDir::new()?;
     let schema = dir.path().join("schema.sql");

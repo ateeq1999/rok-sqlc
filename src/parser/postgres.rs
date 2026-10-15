@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use anyhow::{Context, Result, bail};
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use sqlparser::ast::{
-    ColumnOption, CreateTable, DataType, Expr, Ident, IndexColumn, ObjectName, ObjectNamePart,
-    Statement, TableConstraint, TimezoneInfo,
+    ArrayElemTypeDef, ColumnOption, CreateTable, DataType, Expr, Ident, IndexColumn, ObjectName,
+    ObjectNamePart, Statement, TableConstraint, TimezoneInfo,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -141,7 +141,7 @@ fn build_table(create: &CreateTable) -> std::result::Result<Table, TableFailure>
         )));
     }
 
-    let mut table_primary_key: Option<String> = None;
+    let mut table_primary_key: Vec<String> = Vec::new();
     for constraint in &create.constraints {
         match constraint {
             TableConstraint::PrimaryKey { columns: keys, .. } => {
@@ -157,13 +157,15 @@ fn build_table(create: &CreateTable) -> std::result::Result<Table, TableFailure>
                         }
                     }
                 }
-                if names.len() > 1 {
-                    return Err(fail(format!(
-                        "composite primary key ({}) is not supported; single-column primary keys only",
-                        names.join(", ")
-                    )));
+                let mut seen_keys: HashSet<&str> = HashSet::new();
+                for name in &names {
+                    if !seen_keys.insert(name.as_str()) {
+                        return Err(fail(format!(
+                            "PRIMARY KEY lists column `{name}` more than once"
+                        )));
+                    }
                 }
-                table_primary_key = Some(names.remove(0));
+                table_primary_key = names;
             }
             TableConstraint::ForeignKey {
                 columns,
@@ -181,23 +183,22 @@ fn build_table(create: &CreateTable) -> std::result::Result<Table, TableFailure>
         }
     }
 
-    let primary_key = table_primary_key.or(inline_primary_keys.into_iter().next());
-    if let Some(pk) = &primary_key {
-        let mut found = false;
-        for raw in &mut raw_columns {
-            if raw.sql_name == *pk {
-                found = true;
-            }
-        }
-        if !found {
+    let primary_key = if table_primary_key.is_empty() {
+        inline_primary_keys
+    } else {
+        table_primary_key
+    };
+
+    for key in &primary_key {
+        if !raw_columns.iter().any(|raw| raw.sql_name == *key) {
             return Err(fail(format!(
-                "primary key `{pk}` does not match any column"
+                "primary key `{key}` does not match any column"
             )));
         }
     }
 
     for mut raw in raw_columns {
-        let is_primary_key = primary_key.as_deref() == Some(raw.sql_name.as_str());
+        let is_primary_key = primary_key.contains(&raw.sql_name);
         if is_primary_key {
             raw.nullable = false;
         }
@@ -289,6 +290,9 @@ fn map_type(data_type: &DataType) -> std::result::Result<(String, String), Strin
         | DataType::String(_) => "String",
         DataType::Uuid => "uuid::Uuid",
         DataType::Date => "chrono::NaiveDate",
+        DataType::Time(_, TimezoneInfo::None | TimezoneInfo::WithoutTimeZone) => {
+            "chrono::NaiveTime"
+        }
         DataType::Timestamp(_, TimezoneInfo::None | TimezoneInfo::WithoutTimeZone) => {
             "chrono::NaiveDateTime"
         }
@@ -296,6 +300,11 @@ fn map_type(data_type: &DataType) -> std::result::Result<(String, String), Strin
             "chrono::DateTime<chrono::Utc>"
         }
         DataType::JSON | DataType::JSONB => "serde_json::Value",
+        DataType::Array(element) => {
+            let inner = array_element_type(element)?;
+            let (base, _) = map_type(inner)?;
+            return Ok((format!("Vec<{base}>"), format!("Vec<{base}>")));
+        }
         DataType::Custom(name, _) => custom_type_leaf(name)?,
         other => return Err(format!("type `{other}` is not supported yet")),
     };
@@ -310,6 +319,15 @@ fn custom_type_leaf(name: &ObjectName) -> std::result::Result<&'static str, Stri
         "SMALLSERIAL" => Ok("i16"),
         "FLOAT4" => Ok("f32"),
         other => Err(format!("type `{other}` is not supported yet")),
+    }
+}
+
+fn array_element_type(element: &ArrayElemTypeDef) -> std::result::Result<&DataType, String> {
+    match element {
+        ArrayElemTypeDef::SquareBracket(inner, _)
+        | ArrayElemTypeDef::AngleBracket(inner)
+        | ArrayElemTypeDef::Parenthesis(inner) => Ok(inner),
+        ArrayElemTypeDef::None => Err("array type has no element type".to_owned()),
     }
 }
 
@@ -392,7 +410,7 @@ mod tests {
     fn parses_simple_table() {
         let table = one_table("CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);");
         assert_eq!(table.sql_name, "users");
-        assert_eq!(table.primary_key.as_deref(), Some("id"));
+        assert_eq!(table.primary_key, ["id"]);
         assert!(table.columns[0].is_primary_key);
         assert!(!table.columns[1].nullable);
     }
@@ -407,14 +425,38 @@ mod tests {
     #[test]
     fn detects_table_level_primary_key() {
         let table = one_table("CREATE TABLE items (a INT NOT NULL, PRIMARY KEY (a));");
-        assert_eq!(table.primary_key.as_deref(), Some("a"));
+        assert_eq!(table.primary_key, ["a"]);
     }
 
     #[test]
-    fn rejects_composite_primary_key() {
-        let parsed = parse("CREATE TABLE order_items (a INT, b INT, PRIMARY KEY (a, b));");
+    fn accepts_composite_primary_key_in_declaration_order() {
+        let table = one_table(
+            "CREATE TABLE order_items (a INT NOT NULL, b INT NOT NULL, c TEXT, PRIMARY KEY (a, b));",
+        );
+        assert_eq!(table.primary_key, ["a", "b"]);
+        assert!(table.columns[0].is_primary_key);
+        assert!(table.columns[1].is_primary_key);
+        assert!(!table.columns[2].is_primary_key);
+        assert!(!table.columns[0].nullable);
+        assert!(!table.columns[1].nullable);
+    }
+
+    #[test]
+    fn rejects_primary_key_listing_unknown_column() {
+        let parsed = parse("CREATE TABLE items (a INT, b INT, PRIMARY KEY (a, c));");
         assert_eq!(parsed.schema.tables.len(), 0);
-        assert!(parsed.failures[0].reason.contains("composite primary key"));
+        assert!(
+            parsed.failures[0]
+                .reason
+                .contains("does not match any column")
+        );
+    }
+
+    #[test]
+    fn rejects_primary_key_listing_duplicate_column() {
+        let parsed = parse("CREATE TABLE items (a INT, PRIMARY KEY (a, a));");
+        assert_eq!(parsed.schema.tables.len(), 0);
+        assert!(parsed.failures[0].reason.contains("more than once"));
     }
 
     #[test]
@@ -450,6 +492,32 @@ mod tests {
         assert_eq!(table.columns[2].rust_type, "chrono::DateTime<chrono::Utc>");
         assert_eq!(table.columns[3].rust_type, "Option<chrono::NaiveDateTime>");
         assert_eq!(table.columns[4].rust_type, "Option<String>");
+    }
+
+    #[test]
+    fn maps_time_and_arrays() {
+        let table = one_table(
+            "CREATE TABLE shifts (starts_at TIME NOT NULL, ends_at TIME, role_keys TEXT[] NOT NULL, weekday INTEGER[], branch_ids UUID[]);",
+        );
+        assert_eq!(table.columns[0].rust_type, "chrono::NaiveTime");
+        assert_eq!(table.columns[1].rust_type, "Option<chrono::NaiveTime>");
+        assert_eq!(table.columns[2].rust_type, "Vec<String>");
+        assert_eq!(table.columns[3].rust_type, "Option<Vec<i32>>");
+        assert_eq!(table.columns[4].rust_type, "Option<Vec<uuid::Uuid>>");
+    }
+
+    #[test]
+    fn rejects_time_with_time_zone() {
+        let parsed = parse("CREATE TABLE events (at TIME WITH TIME ZONE NOT NULL);");
+        assert_eq!(parsed.schema.tables.len(), 0);
+        assert!(parsed.failures[0].reason.contains("not supported"));
+    }
+
+    #[test]
+    fn rejects_arrays_of_unsupported_elements() {
+        let parsed = parse("CREATE TABLE money (amounts NUMERIC[] NOT NULL);");
+        assert_eq!(parsed.schema.tables.len(), 0);
+        assert!(parsed.failures[0].reason.contains("NUMERIC"));
     }
 
     #[test]

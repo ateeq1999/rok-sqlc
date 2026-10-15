@@ -9,7 +9,8 @@ pub struct Table {
     pub module_name: String,
     pub struct_name: String,
     pub columns: Vec<Column>,
-    pub primary_key: Option<String>,
+    /// Primary key columns in declaration order; empty when the table has no primary key.
+    pub primary_key: Vec<String>,
     pub foreign_keys: Vec<ForeignKey>,
 }
 

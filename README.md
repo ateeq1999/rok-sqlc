@@ -29,9 +29,11 @@ files.
 
 -   Start with PostgreSQL DDL and SQLx's `postgres` feature.
 -   Support straightforward `CREATE TABLE` statements, common scalar
-    types, primary keys, nullability, and simple defaults.
--   Initially assume one-column primary keys for generated `get`,
-    `update`, and `delete` functions.
+    types, array columns of those scalars, primary keys (single or
+    composite), nullability, and simple defaults.
+-   Generate `get_by_id` with one parameter per primary key column
+    (single-column and composite keys alike); `update` and `delete`
+    follow the same rule when they land.
 -   Do not attempt to infer arbitrary business queries from schema
     alone.
 -   Preserve the input schema as a migration artifact; do not
@@ -267,8 +269,8 @@ pub struct Table {
     /// Rust type name, e.g. `UserProfile`.
     pub struct_name: String,
     pub columns: Vec<Column>,
-    /// Only a single-column primary key is supported by v1.
-    pub primary_key: Option<String>,
+    /// Primary key columns in declaration order; empty when the table has no primary key.
+    pub primary_key: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -364,22 +366,17 @@ pub fn parse_schema(sql: &str) -> Result<Schema> {
         }
 
         let primary_columns = table_primary_key.unwrap_or_default();
-        if primary_columns.len() > 1 {
-            bail!(
-                "table `{table_leaf}` has a composite primary key; v1 requires a single-column primary key"
-            );
-        }
-
-        let primary_key = primary_columns.first().cloned().or_else(|| {
-            columns.iter().find(|column| column.is_primary_key)
+        let primary_key = if primary_columns.is_empty() {
+            columns.iter().filter(|column| column.is_primary_key)
                 .map(|column| column.sql_name.clone())
-        });
+                .collect::<Vec<_>>()
+        } else {
+            primary_columns
+        };
 
-        if let Some(pk) = &primary_key {
-            for column in &mut columns {
-                if column.sql_name == *pk {
-                    column.is_primary_key = true;
-                }
+        for column in &mut columns {
+            if primary_key.contains(&column.sql_name) {
+                column.is_primary_key = true;
             }
         }
 
