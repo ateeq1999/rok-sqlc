@@ -74,22 +74,17 @@ For `users` and `posts` tables:
 ``` text
 src/db/
 ├── mod.rs
-├── pool.rs
-├── error.rs
+├── schema.rs
 ├── users/
 │   ├── mod.rs
 │   ├── models.rs
 │   ├── read.rs
-│   ├── write.rs
-│   ├── tx.rs
-│   └── migration.rs
+│   └── write.rs
 └── posts/
     ├── mod.rs
     ├── models.rs
     ├── read.rs
-    ├── write.rs
-    ├── tx.rs
-    └── migration.rs
+    └── write.rs
 ```
 
 Responsibilities:
@@ -99,27 +94,24 @@ Responsibilities:
   ----------------------------------- -----------------------------------
   `db/mod.rs`                         Expose generated resource modules
 
-  `db/pool.rs`                        Shared SQLx pool type/connection
-                                      helper (optional; usually owned by
-                                      the application)
-
-  `db/error.rs`                       Shared database error alias or
-                                      wrapper
+  `db/schema.rs`                      Verbatim snapshot of the input
+                                      schema; never executed
 
   `models.rs`                         Structs mapped from table columns
+                                      (`X`, `NewX`, `UpdateX`)
 
-  `read.rs`                           `get_by_id`, `list`, and
-                                      count/query helpers
+  `read.rs`                           `get_by_id` and `list` helpers
 
   `write.rs`                          `create`, `update`, and `delete`
                                       helpers
-
-  `tx.rs`                             Transaction-oriented helper
-                                      functions
-
-  `migration.rs`                      Embedded schema SQL and migration
-                                      metadata; not a migration runner
   -----------------------------------------------------------------------
+
+The shipped generator emits exactly the files above. It does **not**
+generate a `pool.rs`/`error.rs` (pool and error ownership stay with the
+application) or per-resource `tx.rs`/`migration.rs` files (transactions
+are handled by the generic executor described below, and the schema
+snapshot lives in `schema.rs`). Sections that show those extra files do
+so to illustrate the incremental design, not the current output.
 
 **Important:** avoid generating a second pool configuration if the
 parent application already owns pool lifecycle. In that case, generated
@@ -453,6 +445,12 @@ Use a renderer that turns parsed tables into strings. Keep rendering
 separate from parsing so templates can evolve without changing schema
 analysis.
 
+> **Executor note.** For brevity the starter renderer below takes a
+> concrete `&PgPool`. The shipped generator instead takes a generic
+> `sqlx::PgExecutor<'e>`, so the same function accepts a pool or a
+> caller-owned transaction (see §12). Keep that in mind as you read the
+> `use sqlx::PgPool;` / `pool: &PgPool` forms in this section.
+
 Create `src/render.rs`:
 
 ``` rust
@@ -727,18 +725,20 @@ pub struct User {
 Example generated read function:
 
 ``` rust
-use sqlx::PgPool;
 use super::models::User;
 
-pub async fn get_by_id(
-    pool: &PgPool,
+pub async fn get_by_id<'e, E>(
+    executor: E,
     id: uuid::Uuid,
-) -> Result<Option<User>, sqlx::Error> {
+) -> Result<Option<User>, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     sqlx::query_as::<_, User>(
         "SELECT id, email, display_name, created_at FROM users WHERE id = $1"
     )
     .bind(id)
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await
 }
 ```

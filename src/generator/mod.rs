@@ -54,6 +54,12 @@ pub fn patch_type(column: &Column) -> String {
     format!("Option<{}>", column.rust_type)
 }
 
+/// Builds a generated query-function signature: the given head, followed by the
+/// generic executor bound shared by every generated function.
+pub fn executor_signature(head: &str) -> String {
+    format!("{head}\nwhere\n    E: sqlx::PgExecutor<'e>,\n{{\n")
+}
+
 pub fn rust_string_literal(value: &str) -> String {
     let mut literal = String::with_capacity(value.len() + 2);
     literal.push('"');
@@ -215,6 +221,24 @@ mod tests {
         let rendered = render_schema_snapshot("CREATE TABLE plain (x TEXT);\n");
         assert!(rendered.contains("r#\""));
         assert!(rendered.ends_with("\"#;\n"));
+    }
+
+    #[test]
+    fn generated_query_functions_use_generic_executor_not_concrete_pool() {
+        let table = sample_table("i64");
+        for rendered in [read::render(&table), write::render(&table)] {
+            assert!(rendered.contains("E: sqlx::PgExecutor<'e>,"));
+            assert!(!rendered.contains("PgPool"));
+            assert!(!rendered.contains("PgConnection"));
+        }
+    }
+
+    #[test]
+    fn executor_signature_appends_shared_bound() {
+        assert_eq!(
+            executor_signature("pub async fn list<'e, E>(executor: E) -> Result<(), sqlx::Error>"),
+            "pub async fn list<'e, E>(executor: E) -> Result<(), sqlx::Error>\nwhere\n    E: sqlx::PgExecutor<'e>,\n{\n"
+        );
     }
 
     #[test]

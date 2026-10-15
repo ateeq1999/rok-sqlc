@@ -55,6 +55,13 @@ fn generates_resource_modules() -> Result<()> {
     assert!(write.contains("pub async fn update<'e, E>(executor: E, id: uuid::Uuid"));
     assert!(write.contains("pub async fn delete<'e, E>(executor: E, id: uuid::Uuid)"));
 
+    for generated in [&read, &write] {
+        assert!(
+            !generated.contains("PgPool"),
+            "generated code must use the generic executor, not a concrete pool"
+        );
+    }
+
     let db_mod = fs::read_to_string(out.join("mod.rs"))?;
     assert!(db_mod.contains("pub mod users;"));
     assert!(db_mod.contains("\"uuid\""));

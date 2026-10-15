@@ -1,5 +1,7 @@
 # Write helpers: `create`, `update`, and `delete`
 
+> **Superseded in part by [ADR 0006](0006-executor-generic-crud.md):** the first parameter was later generalized from a concrete `&PgPool` to `sqlx::PgExecutor`. Read `pool` in the signatures below as `executor`.
+
 Phase 5 adds writes to each resource's `write.rs`, driven by two column flags the parser now records: `has_default` (the database can supply a value: `DEFAULT`, serial, identity, or `GENERATED`) and `is_generated` (the database always owns the value: serial, identity, or `GENERATED`).
 
 `create(pool, input: NewX) -> Result<X, sqlx::Error>` inserts one row and returns it via `RETURNING`. `NewX` omits every generated column and turns every defaulted column into an `Option<T>`; when such an option is `None` the column is left out of the `INSERT` entirely so the database default applies. Columns without a default are required fields. The column list and placeholders are built at runtime, and when every column is optional an empty set falls back to `INSERT ... DEFAULT VALUES`.
