@@ -33,7 +33,8 @@ impl QueriesModule<'_> {
     }
 }
 
-pub fn plan_files(schema_sql: &str, tables: &[Table], output: &Path) -> Vec<(PathBuf, String)> {
+#[cfg(test)]
+fn plan_files(schema_sql: &str, tables: &[Table], output: &Path) -> Vec<(PathBuf, String)> {
     plan_files_with_queries(schema_sql, tables, QueriesModule::None, output)
 }
 

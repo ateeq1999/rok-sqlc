@@ -1,14 +1,13 @@
+//! The `rok-sqlc` command line: parses flags into a [`Config`], calls
+//! [`generate`](crate::generate), and prints the [`Report`].
+
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
-use heck::ToSnakeCase;
 
-use crate::output::is_generated_file;
-use crate::queries::AnalyzedQuery;
-use crate::schema::Table;
-use crate::{generator, output, parser, queries};
+use crate::{Config, Report};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -57,7 +56,6 @@ enum Command {
 }
 
 /// The clap definition of the `rok-sqlc` command line.
-#[doc(hidden)]
 pub fn command() -> clap::Command {
     <Cli as clap::CommandFactory>::command()
 }
@@ -89,11 +87,11 @@ where
             force,
             queries,
             lenient,
-        } => generate(&GenerateOptions {
-            schema_path: &schema,
-            output_dir: &output,
-            resource: resource.as_deref(),
-            queries_path: queries.as_deref(),
+        } => generate(&Config {
+            schema: vec![schema],
+            queries: queries.into_iter().collect(),
+            output,
+            resource,
             dry_run,
             force,
             lenient,
@@ -109,119 +107,44 @@ fn is_informational(err: &clap::Error) -> bool {
     )
 }
 
-struct GenerateOptions<'a> {
-    schema_path: &'a Path,
-    output_dir: &'a Path,
-    resource: Option<&'a str>,
-    queries_path: Option<&'a Path>,
-    dry_run: bool,
-    force: bool,
-    lenient: bool,
+fn generate(config: &Config) -> Result<()> {
+    match crate::generate(config) {
+        Ok(report) => {
+            print_report(config, &report);
+            Ok(())
+        }
+        Err(err) => {
+            print_report(config, err.report());
+            Err(err.into())
+        }
+    }
 }
 
-fn generate(options: &GenerateOptions<'_>) -> Result<()> {
-    let GenerateOptions {
-        schema_path,
-        output_dir,
-        resource,
-        queries_path,
-        dry_run,
-        force,
-        lenient,
-    } = *options;
-    let sql = std::fs::read_to_string(schema_path)
-        .with_context(|| format!("failed to read schema `{}`", schema_path.display()))?;
-
-    let parsed = parser::parse_schema(&sql)
-        .with_context(|| format!("failed to parse SQL schema `{}`", schema_path.display()))?;
-
-    let matches_resource =
-        |table: &str| resource.is_none_or(|name| table == name || table.to_snake_case() == name);
-
-    let failures: Vec<_> = parsed
-        .failures
-        .iter()
-        .filter(|failure| matches_resource(&failure.table))
-        .collect();
-
-    if !failures.is_empty() {
-        if lenient {
-            for failure in &failures {
-                eprintln!(
-                    "warning: table `{}` skipped: {}",
-                    failure.table, failure.reason
-                );
-            }
-        } else {
-            for failure in &failures {
-                eprintln!("error: {failure}");
-            }
-            bail!(
-                "{} unsupported table(s) found; pass --lenient to skip them",
-                failures.len()
+/// Prints what a run did: skipped or fatal tables and queries on stderr,
+/// planned or written files on stdout.
+fn print_report(config: &Config, report: &Report) {
+    for failure in &report.table_failures {
+        if config.lenient {
+            eprintln!(
+                "warning: table `{}` skipped: {}",
+                failure.table, failure.reason
             );
+        } else {
+            eprintln!("error: {failure}");
         }
     }
-
-    let mut include: std::collections::HashSet<String> = parsed
-        .schema
-        .tables
-        .iter()
-        .filter(|table| {
-            resource.is_none_or(|name| table.sql_name == name || table.module_name == name)
-        })
-        .map(|table| table.module_name.clone())
-        .collect();
-
-    if let Ok(entries) = std::fs::read_dir(output_dir) {
-        for entry in entries.flatten() {
-            let module = entry.file_name().to_string_lossy().into_owned();
-            let already_generated = entry.path().join("models.rs").is_file();
-            if already_generated
-                && parsed
-                    .schema
-                    .tables
-                    .iter()
-                    .any(|table| table.module_name == module)
-            {
-                include.insert(module);
-            }
+    for failure in &report.query_failures {
+        if config.lenient {
+            eprintln!(
+                "warning: query `{}` skipped: {}",
+                failure.query, failure.reason
+            );
+        } else {
+            eprintln!("error: {failure}");
         }
     }
-
-    let selected: Vec<_> = parsed
-        .schema
-        .tables
-        .iter()
-        .filter(|table| include.contains(&table.module_name))
-        .cloned()
-        .collect();
-
-    if selected.is_empty() && failures.is_empty() {
-        bail!("no matching resource found for {resource:?}");
-    }
-    if selected.is_empty() {
-        if resource.is_some() {
-            bail!("no generatable table matches {resource:?}");
-        }
-        bail!("all tables are unsupported; see warnings above");
-    }
-
-    let analyzed = match queries_path {
-        Some(path) => Some(analyze_query_file(path, &parsed, &selected, lenient)?),
-        None => None,
-    };
-    let queries_module = match &analyzed {
-        Some(analyzed) => generator::QueriesModule::Generate(analyzed),
-        None if is_generated_file(&output_dir.join("queries.rs")) => generator::QueriesModule::Keep,
-        None => generator::QueriesModule::None,
-    };
-
-    let files = generator::plan_files_with_queries(&sql, &selected, queries_module, output_dir);
-    let report = output::apply_files(&files, dry_run, force)?;
-
     for path in &report.written {
-        if dry_run {
+        if config.dry_run {
             println!("would write {}", path.display());
         } else {
             println!("generated {}", path.display());
@@ -230,78 +153,12 @@ fn generate(options: &GenerateOptions<'_>) -> Result<()> {
     for path in &report.unchanged {
         println!("unchanged {}", path.display());
     }
-    for (path, reason) in &report.refused {
-        if dry_run {
-            println!("would refuse {} ({reason})", path.display());
+    for refused in &report.refused {
+        let (path, reason) = (refused.path.display(), &refused.reason);
+        if config.dry_run {
+            println!("would refuse {path} ({reason})");
         } else {
-            eprintln!("error: refused to write {} ({reason})", path.display());
+            eprintln!("error: refused to write {path} ({reason})");
         }
     }
-
-    if !report.refused.is_empty() && !dry_run {
-        bail!(
-            "nothing was written; {} file(s) refused (use --force to overwrite)",
-            report.refused.len()
-        );
-    }
-
-    Ok(())
-}
-
-/// Parses and analyzes the query file. Unsupported queries abort the run
-/// unless `lenient`, in which case they are skipped with a warning.
-fn analyze_query_file(
-    path: &Path,
-    parsed: &parser::ParsedSchema,
-    selected: &[Table],
-    lenient: bool,
-) -> Result<Vec<AnalyzedQuery>> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read query file `{}`", path.display()))?;
-    if selected.iter().any(|table| table.module_name == "queries") {
-        bail!(
-            "table module `queries` collides with the generated `queries.rs`; rename the table or omit --queries"
-        );
-    }
-
-    let (defs, mut failures) = queries::parse_query_file(&text);
-    if defs.is_empty() && failures.is_empty() {
-        bail!(
-            "query file `{}` contains no `-- name:` annotated queries",
-            path.display()
-        );
-    }
-    let generated_modules = selected
-        .iter()
-        .map(|table| table.module_name.clone())
-        .collect();
-    let (analyzed, analysis_failures) = queries::analyze_queries(
-        &defs,
-        &parsed.schema.tables,
-        &generated_modules,
-        &parsed.failures,
-    );
-    failures.extend(analysis_failures);
-
-    if !failures.is_empty() {
-        if lenient {
-            for failure in &failures {
-                eprintln!(
-                    "warning: query `{}` skipped: {}",
-                    failure.query, failure.reason
-                );
-            }
-        } else {
-            for failure in &failures {
-                eprintln!("error: {failure}");
-            }
-            bail!(
-                "{} unsupported quer{} in `{}`; pass --lenient to skip them",
-                failures.len(),
-                if failures.len() == 1 { "y" } else { "ies" },
-                path.display()
-            );
-        }
-    }
-    Ok(analyzed)
 }

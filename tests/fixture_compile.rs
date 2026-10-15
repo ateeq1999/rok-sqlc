@@ -4,7 +4,6 @@
 //! Set `ROK_SQLC_TEST_DATABASE_URL` to a throwaway PostgreSQL database to
 //! also execute the generated code (see `tests/fixture-app/tests/postgres.rs`).
 
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -22,58 +21,21 @@ fn app_dir() -> PathBuf {
     manifest_dir().join("tests/fixture-app")
 }
 
-/// Generates the fixture schema into the fixture app and returns the
-/// generated file paths.
+/// Generates the fixture schema into the fixture app through the library
+/// entry point, as a consuming crate's `build.rs` would, and returns the
+/// generated file paths. Any unsupported table or query fails the run.
 fn generate_fixture() -> Result<Vec<PathBuf>> {
-    let mut schema = String::new();
-    for path in [
+    let mut config = rok_sqlc::Config::default();
+    config.schema = vec![
         manifest_dir().join("modules/inventory/schema.sql"),
         app_dir().join("extra_schema.sql"),
-    ] {
-        schema.push_str(
-            &fs::read_to_string(&path)
-                .with_context(|| format!("failed to read {}", path.display()))?,
-        );
-        schema.push('\n');
-    }
+    ];
+    config.queries = vec![app_dir().join("queries.sql")];
+    config.output = app_dir().join("src/db");
+    config.force = true;
 
-    let parsed = rok_sqlc::parser::parse_schema(&schema)?;
-    ensure!(
-        parsed.failures.is_empty(),
-        "fixture schema must be fully supported, got failures: {:?}",
-        parsed.failures
-    );
-
-    let queries_path = app_dir().join("queries.sql");
-    let queries = fs::read_to_string(&queries_path)
-        .with_context(|| format!("failed to read {}", queries_path.display()))?;
-    let (defs, mut query_failures) = rok_sqlc::queries::parse_query_file(&queries);
-    let modules = parsed
-        .schema
-        .tables
-        .iter()
-        .map(|table| table.module_name.clone())
-        .collect();
-    let (analyzed, analysis_failures) = rok_sqlc::queries::analyze_queries(
-        &defs,
-        &parsed.schema.tables,
-        &modules,
-        &parsed.failures,
-    );
-    query_failures.extend(analysis_failures);
-    ensure!(
-        query_failures.is_empty(),
-        "fixture queries must all be supported, got failures: {query_failures:?}"
-    );
-
-    let files = rok_sqlc::generator::plan_files_with_queries(
-        &schema,
-        &parsed.schema.tables,
-        rok_sqlc::generator::QueriesModule::Generate(&analyzed),
-        &app_dir().join("src/db"),
-    );
-    rok_sqlc::output::apply_files(&files, false, true)?;
-    Ok(files.into_iter().map(|(path, _)| path).collect())
+    let report = rok_sqlc::generate(&config)?;
+    Ok(report.written.into_iter().chain(report.unchanged).collect())
 }
 
 fn cargo(app_dir: &Path, args: &[&str]) -> Command {
