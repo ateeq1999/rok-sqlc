@@ -627,3 +627,200 @@ fn unsupported_query_fails_strictly_and_is_skipped_leniently() -> Result<()> {
     assert!(!generated.contains("broken"));
     Ok(())
 }
+
+fn run_binary(args: &[&str]) -> std::process::Output {
+    std::process::Command::new(env!("CARGO_BIN_EXE_rok-sqlc"))
+        .args(args)
+        .output()
+        .expect("failed to spawn rok-sqlc binary")
+}
+
+#[test]
+fn help_and_version_print_to_stdout_and_exit_zero() {
+    for args in [
+        &["--help"][..],
+        &["-h"],
+        &["--version"],
+        &["-V"],
+        &["g", "--help"],
+        &["generate", "-h"],
+    ] {
+        let output = run_binary(args);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "`rok-sqlc {}` exited with {:?}; stderr: {}",
+            args.join(" "),
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !stdout.trim().is_empty(),
+            "`rok-sqlc {}` printed nothing to stdout",
+            args.join(" ")
+        );
+    }
+    let version = run_binary(&["-V"]);
+    assert!(String::from_utf8_lossy(&version.stdout).contains(env!("CARGO_PKG_VERSION")));
+}
+
+fn read_tree(root: &std::path::Path) -> std::collections::BTreeMap<PathBuf, String> {
+    fn walk(
+        root: &std::path::Path,
+        dir: &std::path::Path,
+        files: &mut std::collections::BTreeMap<PathBuf, String>,
+    ) {
+        for entry in fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(root, &path, files);
+            } else {
+                let rel = path.strip_prefix(root).unwrap().to_path_buf();
+                files.insert(rel, fs::read_to_string(&path).unwrap());
+            }
+        }
+    }
+    let mut files = std::collections::BTreeMap::new();
+    walk(root, root, &mut files);
+    files
+}
+
+#[test]
+fn short_aliases_generate_the_same_files_as_long_flags() -> Result<()> {
+    let dir = TempDir::new()?;
+    let schema = dir.path().join("schema.sql");
+    let queries = dir.path().join("queries.sql");
+    fs::write(&schema, MIXED_SCHEMA)?;
+    fs::write(&queries, QUERY_FILE)?;
+    let schema = schema.to_str().unwrap();
+    let queries = queries.to_str().unwrap();
+    let long_out = dir.path().join("long");
+    let short_out = dir.path().join("short");
+
+    run(&[
+        "generate",
+        "--schema",
+        schema,
+        "--output",
+        long_out.to_str().unwrap(),
+        "--resource",
+        "users",
+        "--queries",
+        queries,
+        "--lenient",
+    ])?;
+    run(&[
+        "g",
+        "-s",
+        schema,
+        "-o",
+        short_out.to_str().unwrap(),
+        "-r",
+        "users",
+        "-q",
+        queries,
+        "-l",
+    ])?;
+
+    let long_tree = read_tree(&long_out);
+    assert!(long_tree.contains_key(&PathBuf::from("users").join("models.rs")));
+    assert!(long_tree.contains_key(&PathBuf::from("queries.rs")));
+    assert_eq!(long_tree, read_tree(&short_out));
+    Ok(())
+}
+
+#[test]
+fn short_dry_run_matches_long_dry_run_through_the_binary() -> Result<()> {
+    let dir = TempDir::new()?;
+    let schema = dir.path().join("schema.sql");
+    fs::write(&schema, SIMPLE_SCHEMA)?;
+    let schema = schema.to_str().unwrap();
+    let out = output_dir(&dir);
+    let out = out.to_str().unwrap();
+
+    let long = run_binary(&["generate", "--schema", schema, "--output", out, "--dry-run"]);
+    let short = run_binary(&["g", "-s", schema, "-o", out, "-n"]);
+
+    assert!(long.status.success());
+    assert_eq!(long.status.code(), short.status.code());
+    assert_eq!(long.stdout, short.stdout);
+    assert!(String::from_utf8_lossy(&short.stdout).contains("would write"));
+    assert!(!output_dir(&dir).exists(), "dry run must not write files");
+    Ok(())
+}
+
+#[test]
+fn short_force_overwrites_hand_written_files() -> Result<()> {
+    let dir = TempDir::new()?;
+    let schema = dir.path().join("schema.sql");
+    fs::write(&schema, SIMPLE_SCHEMA)?;
+    let out = output_dir(&dir);
+    fs::create_dir_all(&out)?;
+    fs::write(out.join("mod.rs"), "// hand written\n")?;
+    let schema = schema.to_str().unwrap();
+
+    assert!(run(&["g", "-s", schema, "-o", out.to_str().unwrap()]).is_err());
+    run(&["g", "-s", schema, "-o", out.to_str().unwrap(), "-f"])?;
+
+    assert!(fs::read_to_string(out.join("mod.rs"))?.contains("pub mod users;"));
+    Ok(())
+}
+
+/// Short flags reserved for flags that later tickets introduce
+/// (`--json`→`-j`, `--config`→`-c`, `--check`→`-k`). Nothing else may take them.
+const RESERVED_SHORTS: [char; 3] = ['j', 'c', 'k'];
+
+fn assert_every_command_and_flag_has_a_unique_short(cmd: &clap::Command, path: &str) {
+    let mut shorts: Vec<(char, String)> = Vec::new();
+    for arg in cmd.get_arguments().filter(|arg| !arg.is_positional()) {
+        let id = arg.get_id().to_string();
+        let short = arg
+            .get_short()
+            .unwrap_or_else(|| panic!("`{path} --{id}` has no short alias"));
+        assert!(
+            !RESERVED_SHORTS.contains(&short) || id == reserved_owner(short),
+            "`{path} --{id}` takes `-{short}`, which is reserved for `--{}`",
+            reserved_owner(short)
+        );
+        if let Some((_, other)) = shorts.iter().find(|(taken, _)| *taken == short) {
+            panic!("`{path}`: `-{short}` is used by both `--{other}` and `--{id}`");
+        }
+        shorts.push((short, id));
+    }
+
+    let mut names: Vec<(String, String)> = Vec::new();
+    for sub in cmd.get_subcommands() {
+        let name = sub.get_name().to_owned();
+        if name == "help" {
+            continue;
+        }
+        let aliases: Vec<&str> = sub.get_all_aliases().collect();
+        assert!(
+            aliases.iter().any(|alias| alias.chars().count() == 1),
+            "`{path} {name}` has no single-letter alias"
+        );
+        for token in std::iter::once(name.as_str()).chain(aliases) {
+            if let Some((_, other)) = names.iter().find(|(taken, _)| taken == token) {
+                panic!("`{path}`: `{token}` names both `{other}` and `{name}`");
+            }
+            names.push((token.to_owned(), name.clone()));
+        }
+        assert_every_command_and_flag_has_a_unique_short(sub, &format!("{path} {name}"));
+    }
+}
+
+fn reserved_owner(short: char) -> &'static str {
+    match short {
+        'j' => "json",
+        'c' => "config",
+        'k' => "check",
+        _ => "",
+    }
+}
+
+#[test]
+fn every_command_and_flag_has_a_unique_short_alias() {
+    let mut cmd = rok_sqlc::cli::command();
+    cmd.build();
+    assert_every_command_and_flag_has_a_unique_short(&cmd, "rok-sqlc");
+}
