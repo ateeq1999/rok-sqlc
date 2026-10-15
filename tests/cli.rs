@@ -1,5 +1,7 @@
+use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 
 use anyhow::Result;
 use tempfile::TempDir;
@@ -628,8 +630,8 @@ fn unsupported_query_fails_strictly_and_is_skipped_leniently() -> Result<()> {
     Ok(())
 }
 
-fn run_binary(args: &[&str]) -> std::process::Output {
-    std::process::Command::new(env!("CARGO_BIN_EXE_rok-sqlc"))
+fn run_binary(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_rok-sqlc"))
         .args(args)
         .output()
         .expect("failed to spawn rok-sqlc binary")
@@ -664,25 +666,22 @@ fn help_and_version_print_to_stdout_and_exit_zero() {
     assert!(String::from_utf8_lossy(&version.stdout).contains(env!("CARGO_PKG_VERSION")));
 }
 
-fn read_tree(root: &std::path::Path) -> std::collections::BTreeMap<PathBuf, String> {
-    fn walk(
-        root: &std::path::Path,
-        dir: &std::path::Path,
-        files: &mut std::collections::BTreeMap<PathBuf, String>,
-    ) {
-        for entry in fs::read_dir(dir).unwrap().flatten() {
-            let path = entry.path();
+fn read_tree(root: &Path) -> Result<BTreeMap<PathBuf, String>> {
+    fn walk(root: &Path, dir: &Path, files: &mut BTreeMap<PathBuf, String>) -> Result<()> {
+        for entry in fs::read_dir(dir)? {
+            let path = entry?.path();
             if path.is_dir() {
-                walk(root, &path, files);
+                walk(root, &path, files)?;
             } else {
-                let rel = path.strip_prefix(root).unwrap().to_path_buf();
-                files.insert(rel, fs::read_to_string(&path).unwrap());
+                let rel = path.strip_prefix(root)?.to_path_buf();
+                files.insert(rel, fs::read_to_string(&path)?);
             }
         }
+        Ok(())
     }
-    let mut files = std::collections::BTreeMap::new();
-    walk(root, root, &mut files);
-    files
+    let mut files = BTreeMap::new();
+    walk(root, root, &mut files)?;
+    Ok(files)
 }
 
 #[test]
@@ -722,10 +721,10 @@ fn short_aliases_generate_the_same_files_as_long_flags() -> Result<()> {
         "-l",
     ])?;
 
-    let long_tree = read_tree(&long_out);
+    let long_tree = read_tree(&long_out)?;
     assert!(long_tree.contains_key(&PathBuf::from("users").join("models.rs")));
     assert!(long_tree.contains_key(&PathBuf::from("queries.rs")));
-    assert_eq!(long_tree, read_tree(&short_out));
+    assert_eq!(long_tree, read_tree(&short_out)?);
     Ok(())
 }
 
@@ -766,61 +765,125 @@ fn short_force_overwrites_hand_written_files() -> Result<()> {
     Ok(())
 }
 
-/// Short flags reserved for flags that later tickets introduce
-/// (`--json`→`-j`, `--config`→`-c`, `--check`→`-k`). Nothing else may take them.
-const RESERVED_SHORTS: [char; 3] = ['j', 'c', 'k'];
+/// Short flags reserved for flags that later tickets introduce, with the long
+/// flag each one belongs to. Nothing else may take these letters.
+const RESERVED: [(char, &str); 3] = [('j', "json"), ('c', "config"), ('k', "check")];
 
-fn assert_every_command_and_flag_has_a_unique_short(cmd: &clap::Command, path: &str) {
-    let mut shorts: Vec<(char, String)> = Vec::new();
-    for arg in cmd.get_arguments().filter(|arg| !arg.is_positional()) {
-        let id = arg.get_id().to_string();
-        let short = arg
-            .get_short()
-            .unwrap_or_else(|| panic!("`{path} --{id}` has no short alias"));
-        assert!(
-            !RESERVED_SHORTS.contains(&short) || id == reserved_owner(short),
-            "`{path} --{id}` takes `-{short}`, which is reserved for `--{}`",
-            reserved_owner(short)
-        );
-        if let Some((_, other)) = shorts.iter().find(|(taken, _)| *taken == short) {
-            panic!("`{path}`: `-{short}` is used by both `--{other}` and `--{id}`");
+/// The command line and every subcommand under it, each paired with its
+/// display path (`rok-sqlc`, `rok-sqlc generate`, ...). Clap's built-in
+/// `help` subcommand is left out.
+fn all_commands() -> Vec<(String, clap::Command)> {
+    fn collect(cmd: &clap::Command, path: String, out: &mut Vec<(String, clap::Command)>) {
+        out.push((path.clone(), cmd.clone()));
+        for sub in subcommands(cmd) {
+            collect(sub, format!("{path} {}", sub.get_name()), out);
         }
-        shorts.push((short, id));
     }
-
-    let mut names: Vec<(String, String)> = Vec::new();
-    for sub in cmd.get_subcommands() {
-        let name = sub.get_name().to_owned();
-        if name == "help" {
-            continue;
-        }
-        let aliases: Vec<&str> = sub.get_all_aliases().collect();
-        assert!(
-            aliases.iter().any(|alias| alias.chars().count() == 1),
-            "`{path} {name}` has no single-letter alias"
-        );
-        for token in std::iter::once(name.as_str()).chain(aliases) {
-            if let Some((_, other)) = names.iter().find(|(taken, _)| taken == token) {
-                panic!("`{path}`: `{token}` names both `{other}` and `{name}`");
-            }
-            names.push((token.to_owned(), name.clone()));
-        }
-        assert_every_command_and_flag_has_a_unique_short(sub, &format!("{path} {name}"));
-    }
+    let mut cmd = rok_sqlc::cli::command();
+    cmd.build();
+    let mut out = Vec::new();
+    collect(&cmd, "rok-sqlc".to_owned(), &mut out);
+    out
 }
 
-fn reserved_owner(short: char) -> &'static str {
-    match short {
-        'j' => "json",
-        'c' => "config",
-        'k' => "check",
-        _ => "",
+fn subcommands(cmd: &clap::Command) -> impl Iterator<Item = &clap::Command> {
+    cmd.get_subcommands().filter(|sub| sub.get_name() != "help")
+}
+
+/// Every named flag of `cmd` with its short letter, if it has one.
+fn flags(cmd: &clap::Command) -> Vec<(String, Option<char>)> {
+    cmd.get_arguments()
+        .filter(|arg| !arg.is_positional())
+        .map(|arg| (arg.get_id().to_string(), arg.get_short()))
+        .collect()
+}
+
+#[test]
+fn every_flag_has_a_short_alias() {
+    for (path, cmd) in all_commands() {
+        for (id, short) in flags(&cmd) {
+            assert!(short.is_some(), "`{path} --{id}` has no short alias");
+        }
     }
 }
 
 #[test]
-fn every_command_and_flag_has_a_unique_short_alias() {
-    let mut cmd = rok_sqlc::cli::command();
-    cmd.build();
-    assert_every_command_and_flag_has_a_unique_short(&cmd, "rok-sqlc");
+fn no_two_flags_of_a_command_share_a_short_alias() {
+    for (path, cmd) in all_commands() {
+        let mut owners: BTreeMap<char, String> = BTreeMap::new();
+        for (id, short) in flags(&cmd) {
+            let Some(short) = short else { continue };
+            if let Some(other) = owners.insert(short, id.clone()) {
+                panic!("`{path}`: `-{short}` is used by both `--{other}` and `--{id}`");
+            }
+        }
+    }
+}
+
+#[test]
+fn reserved_short_aliases_are_used_only_by_their_flags() {
+    for (path, cmd) in all_commands() {
+        for (id, short) in flags(&cmd) {
+            let reserved = RESERVED.iter().find(|(letter, _)| Some(*letter) == short);
+            if let Some((letter, owner)) = reserved {
+                assert_eq!(
+                    id, *owner,
+                    "`{path} --{id}` takes `-{letter}`, which is reserved for `--{owner}`"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn every_subcommand_has_a_single_letter_alias() {
+    for (path, cmd) in all_commands() {
+        for sub in subcommands(&cmd) {
+            assert!(
+                sub.get_all_aliases()
+                    .any(|alias| alias.chars().count() == 1),
+                "`{path} {}` has no single-letter alias",
+                sub.get_name()
+            );
+        }
+    }
+}
+
+#[test]
+fn no_two_subcommands_share_a_name_or_alias() {
+    for (path, cmd) in all_commands() {
+        let mut owners: BTreeMap<&str, &str> = BTreeMap::new();
+        for sub in subcommands(&cmd) {
+            let name = sub.get_name();
+            for token in std::iter::once(name).chain(sub.get_all_aliases()) {
+                if let Some(other) = owners.insert(token, name) {
+                    panic!("`{path}`: `{token}` names both `{other}` and `{name}`");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn usage_errors_print_one_error_prefix_and_exit_non_zero() {
+    for args in [&["generate"][..], &["g", "--no-such-flag"]] {
+        let output = run_binary(args);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "`rok-sqlc {}` should fail",
+            args.join(" ")
+        );
+        assert!(
+            stderr.starts_with("error: "),
+            "`rok-sqlc {}` stderr: {stderr}",
+            args.join(" ")
+        );
+        assert_eq!(
+            stderr.matches("error:").count(),
+            1,
+            "`rok-sqlc {}` doubled the error prefix: {stderr}",
+            args.join(" ")
+        );
+    }
 }

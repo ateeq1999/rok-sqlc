@@ -56,7 +56,8 @@ enum Command {
     },
 }
 
-/// The full command-line definition, for introspection (e.g. alias checks).
+/// The clap definition of the `rok-sqlc` command line.
+#[doc(hidden)]
 pub fn command() -> clap::Command {
     <Cli as clap::CommandFactory>::command()
 }
