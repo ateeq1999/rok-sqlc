@@ -60,6 +60,11 @@ enum Command {
         /// rok-sqlc.toml in the current directory or its parents
         #[arg(short, long, value_name = "FILE")]
         config: Option<PathBuf>,
+
+        /// Options as JSON in the shape of rok-sqlc.toml: inline, `@FILE`, or
+        /// `-` for stdin; paths resolve against the current directory
+        #[arg(short, long, value_name = "JSON|@FILE|-", allow_hyphen_values = true)]
+        json: Option<String>,
     },
 }
 
@@ -96,7 +101,12 @@ where
             queries,
             lenient,
             config,
+            json,
         } => {
+            let payload = match json {
+                Some(arg) => config_file::load_json(&arg)?,
+                None => FileConfig::default(),
+            };
             let file = match config {
                 Some(path) => config_file::load(&path)?,
                 None => match config_file::discover(&std::env::current_dir()?) {
@@ -104,25 +114,25 @@ where
                     None => FileConfig::default(),
                 },
             };
-            // Flags override the file, which overrides the defaults.
-            // `--schema` (given any number of times) replaces the file's
-            // whole `schema` list; an empty Vec means the flag was not given.
-            let schema = if !schema.is_empty() {
-                schema
-            } else if !file.schema.is_empty() {
-                file.schema
-            } else {
-                return Err(missing_schema().into());
+            let flags = FileConfig {
+                schema,
+                queries: queries.into_iter().collect(),
+                output,
+                resource,
             };
+            // Flags override the JSON payload, which overrides the file,
+            // which overrides the defaults. `--schema` (given any number of
+            // times) replaces the lower sources' whole `schema` list.
+            let merged = flags.over(payload.over(file));
+            if merged.schema.is_empty() {
+                return Err(missing_schema().into());
+            }
             let defaults = Config::default();
             generate(&Config {
-                schema,
-                queries: match queries {
-                    Some(queries) => vec![queries],
-                    None => file.queries,
-                },
-                output: output.or(file.output).unwrap_or(defaults.output),
-                resource: resource.or(file.resource),
+                schema: merged.schema,
+                queries: merged.queries,
+                output: merged.output.unwrap_or(defaults.output),
+                resource: merged.resource,
                 dry_run,
                 force,
                 lenient,
@@ -132,7 +142,7 @@ where
 }
 
 /// The usage error for a run with neither `--schema` nor a `schema` key in
-/// the config file.
+/// the JSON payload or the config file.
 fn missing_schema() -> clap::Error {
     let mut cmd = command();
     cmd.build();
@@ -142,7 +152,7 @@ fn missing_schema() -> clap::Error {
     generate.error(
         clap::error::ErrorKind::MissingRequiredArgument,
         format!(
-            "no schema given: pass --schema <PATH> or set `schema` in {}",
+            "no schema given: pass --schema <PATH>, or set `schema` in the --json payload or {}",
             config_file::FILE_NAME
         ),
     )

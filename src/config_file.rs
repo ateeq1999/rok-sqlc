@@ -1,11 +1,14 @@
-//! `rok-sqlc.toml`: the optional project configuration file the CLI reads.
+//! `rok-sqlc.toml` and the `-j/--json` payload: the two configuration sources
+//! the CLI reads besides its flags.
 //!
-//! The file holds the same options as the command line. Without
-//! `-c/--config`, the CLI looks for it in the current directory and then each
-//! parent, like Cargo. Paths in the file resolve relative to the file's
-//! directory. The library entry point never reads it (ADR 0011).
+//! Both hold the same options as the command line, in the same shape. Without
+//! `-c/--config`, the CLI looks for `rok-sqlc.toml` in the current directory
+//! and then each parent, like Cargo. Paths in the file resolve relative to the
+//! file's directory; paths in a JSON payload resolve relative to the current
+//! directory, like flags. The library entry point reads neither (ADR 0011).
 
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -14,15 +17,31 @@ use serde::Deserialize;
 /// The file name looked for during discovery.
 pub(crate) const FILE_NAME: &str = "rok-sqlc.toml";
 
-/// The options a config file sets, with paths already resolved against the
-/// file's directory. `None` (or empty) means the file leaves the option to
-/// flags and defaults.
+/// The options one configuration source sets, with paths already resolved.
+/// `None` (or empty) means the source leaves the option to the sources below
+/// it.
 #[derive(Debug, Default)]
 pub(crate) struct FileConfig {
     pub(crate) schema: Vec<PathBuf>,
     pub(crate) queries: Vec<PathBuf>,
     pub(crate) output: Option<PathBuf>,
     pub(crate) resource: Option<String>,
+}
+
+impl FileConfig {
+    /// Layers `self` over `lower`: each option `self` sets wins, the rest come
+    /// from `lower`. A list replaces the lower list whole; it never appends.
+    pub(crate) fn over(self, lower: FileConfig) -> FileConfig {
+        let list = |upper: Vec<PathBuf>, lower: Vec<PathBuf>| {
+            if upper.is_empty() { lower } else { upper }
+        };
+        FileConfig {
+            schema: list(self.schema, lower.schema),
+            queries: list(self.queries, lower.queries),
+            output: self.output.or(lower.output),
+            resource: self.resource.or(lower.resource),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -36,9 +55,29 @@ struct RawFile {
     resource: Option<String>,
 }
 
+impl RawFile {
+    /// Joins every path onto `base`.
+    fn resolve(self, base: &Path) -> FileConfig {
+        let resolve = |paths: Option<OneOrMany>| -> Vec<PathBuf> {
+            paths
+                .map(OneOrMany::into_vec)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|p| base.join(p))
+                .collect()
+        };
+        FileConfig {
+            schema: resolve(self.schema),
+            queries: resolve(self.queries),
+            output: self.output.map(|p| base.join(p)),
+            resource: self.resource,
+        }
+    }
+}
+
 /// `schema = "a.sql"` and `schema = ["a.sql", "b.sql"]` are both accepted.
 #[derive(Debug, Deserialize)]
-#[serde(untagged)]
+#[serde(untagged, expecting = "expected a path or a list of paths")]
 enum OneOrMany {
     One(PathBuf),
     Many(Vec<PathBuf>),
@@ -68,19 +107,29 @@ pub(crate) fn load(path: &Path) -> Result<FileConfig> {
         .with_context(|| format!("failed to read config file {}", path.display()))?;
     let raw: RawFile =
         toml::from_str(&text).with_context(|| format!("invalid config file {}", path.display()))?;
-    let base = path.parent().unwrap_or(Path::new(""));
-    let resolve = |paths: Option<OneOrMany>| -> Vec<PathBuf> {
-        paths
-            .map(OneOrMany::into_vec)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|p| base.join(p))
-            .collect()
+    Ok(raw.resolve(path.parent().unwrap_or(Path::new(""))))
+}
+
+/// Reads and validates a `-j/--json` argument: `-` reads the payload from
+/// stdin, `@path` from a file, and anything else is the payload itself.
+/// Paths in the payload stay relative to the current directory, wherever the
+/// payload came from. Unknown keys and malformed JSON are errors naming the
+/// source.
+pub(crate) fn load_json(arg: &str) -> Result<FileConfig> {
+    let (text, source) = if arg == "-" {
+        let mut text = String::new();
+        std::io::stdin()
+            .read_to_string(&mut text)
+            .context("failed to read the JSON payload from stdin")?;
+        (text, "from stdin".to_owned())
+    } else if let Some(path) = arg.strip_prefix('@') {
+        let text = fs::read_to_string(path)
+            .with_context(|| format!("failed to read JSON payload file {path}"))?;
+        (text, format!("in {path}"))
+    } else {
+        (arg.to_owned(), "given to --json".to_owned())
     };
-    Ok(FileConfig {
-        schema: resolve(raw.schema),
-        queries: resolve(raw.queries),
-        output: raw.output.map(|p| base.join(p)),
-        resource: raw.resource,
-    })
+    let raw: RawFile =
+        serde_json::from_str(&text).with_context(|| format!("invalid JSON payload {source}"))?;
+    Ok(raw.resolve(Path::new("")))
 }
