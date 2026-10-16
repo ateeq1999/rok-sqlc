@@ -228,3 +228,54 @@ CREATE TABLE rls_notes (
 ALTER TABLE rls_notes ENABLE ROW LEVEL SECURITY;
 CREATE POLICY rls_notes_tenant ON rls_notes
     USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+
+-- Relationships (ticket 20). `tenant_id` is the tenant column and references
+-- `tenants`, which makes no relationship; `posts` has many `comments`, and
+-- the loaders stay inside the tenant and skip soft-deleted rows.
+CREATE TABLE tenants (
+    id UUID PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE posts (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants (id),
+    title TEXT NOT NULL,
+    deleted_at TIMESTAMPTZ
+);
+
+CREATE TABLE comments (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants (id),
+    post_id BIGINT NOT NULL REFERENCES posts (id),
+    body TEXT NOT NULL,
+    deleted_at TIMESTAMPTZ
+);
+
+-- Two foreign keys from `invoices` to `users`: the belongs-to names come from
+-- the columns, and the inverses add them (`invoices_by_created_by_user`).
+-- `user_profiles.user_id` is unique, so `users` has one `user_profile`.
+CREATE TABLE users (
+    id BIGSERIAL PRIMARY KEY,
+    email TEXT NOT NULL
+);
+
+CREATE TABLE invoices (
+    id BIGSERIAL PRIMARY KEY,
+    created_by_user_id BIGINT NOT NULL REFERENCES users (id),
+    approved_by_user_id BIGINT REFERENCES users (id),
+    total_cents BIGINT NOT NULL
+);
+
+CREATE TABLE user_profiles (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL UNIQUE REFERENCES users (id),
+    bio TEXT NOT NULL
+);
+
+-- A self-reference through `parent_id`: `parent` and `children`.
+CREATE TABLE org_units (
+    id BIGSERIAL PRIMARY KEY,
+    parent_id BIGINT REFERENCES org_units (id),
+    name TEXT NOT NULL
+);

@@ -852,6 +852,7 @@ fn build_table(
         version_column: None,
         soft_delete_column: None,
         tenant_column: None,
+        relationships: Vec::new(),
     })
 }
 

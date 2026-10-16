@@ -3,6 +3,7 @@ pub mod keys;
 pub mod models;
 pub mod queries;
 pub mod read;
+pub mod relationships;
 pub mod search;
 pub mod session;
 pub mod sql;
@@ -96,6 +97,7 @@ fn plan_files(schema_sql: &str, tables: &[Table], output: &Path) -> Vec<(PathBuf
         &[],
         output,
     )
+    .expect("the tables generate")
 }
 
 pub fn plan_files_with_queries(
@@ -106,25 +108,30 @@ pub fn plan_files_with_queries(
     conventions: &Conventions,
     derive: &[Derive],
     output: &Path,
-) -> Vec<(PathBuf, String)> {
+) -> Result<Vec<(PathBuf, String)>, String> {
     let serde = derive.contains(&Derive::Serde);
     let mut files = Vec::new();
     let mut resolved = keys::resolve(tables);
     conventions::apply(&mut resolved, conventions);
+    relationships::infer(&mut resolved)?;
     let tables = resolved.as_slice();
 
     for table in tables {
         let dir = output.join(&table.module_name);
         let filter = search::render_filter(table);
+        let loaders = relationships::render(table, tables);
         files.push((
             dir.join("mod.rs"),
-            render_resource_mod(table, filter.is_some()),
+            render_resource_mod(table, filter.is_some(), loaders.is_some()),
         ));
         files.push((dir.join("models.rs"), models::render(table, serde)));
         if let Some(filter) = filter {
             files.push((dir.join("filter.rs"), filter));
         }
         files.push((dir.join("read.rs"), read::render(table)));
+        if let Some(loaders) = loaders {
+            files.push((dir.join("relationships.rs"), loaders));
+        }
         files.push((dir.join("write.rs"), write::render(table)));
     }
 
@@ -159,10 +166,10 @@ pub fn plan_files_with_queries(
     ));
     files.push((output.join("schema.rs"), render_schema_snapshot(schema_sql)));
 
-    files
+    Ok(files)
 }
 
-fn render_resource_mod(table: &Table, has_filter: bool) -> String {
+fn render_resource_mod(table: &Table, has_filter: bool, has_relationships: bool) -> String {
     let mut output = format!("{HEADER}\n//! The `{}` table.\n\n", table.display_name());
     if has_filter {
         output.push_str("/// The `search` filter and sort keys.\npub mod filter;\n");
@@ -171,10 +178,15 @@ fn render_resource_mod(table: &Table, has_filter: bool) -> String {
         "/// The row type, its key, and the inputs `create` and `update` take.\n\
          pub mod models;\n\
          /// Lookups, listing, counting, and search.\n\
-         pub mod read;\n\
-         /// `create`, `update`, and `delete`.\n\
-         pub mod write;\n",
+         pub mod read;\n",
     );
+    if has_relationships {
+        output.push_str(
+            "/// Loaders fetching each relationship for many rows in one query.\n\
+             pub mod relationships;\n",
+        );
+    }
+    output.push_str("/// `create`, `update`, and `delete`.\npub mod write;\n");
     output
 }
 
@@ -210,6 +222,10 @@ const RESERVED_LOCALS: &[&str] = &[
     "limit",
     "offset",
     "expected_version",
+    "rows",
+    "keys",
+    "loaded",
+    "related",
 ];
 
 /// The function-parameter name for a key column.
@@ -621,6 +637,7 @@ pub(crate) mod test_support {
             version_column: None,
             soft_delete_column: None,
             tenant_column: None,
+            relationships: Vec::new(),
         }
     }
 }

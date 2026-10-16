@@ -64,19 +64,25 @@ fn own_typed_id(table: &Table) -> Option<TypedId> {
 /// type: only a reference to the whole primary key of a table in `tables`,
 /// matched by schema and name (an unqualified name and `public.` agree).
 fn referenced_id(tables: &[Table], foreign_key: &ForeignKey) -> Option<(TypedId, String)> {
-    fn normalize(schema: Option<&str>) -> Option<&str> {
-        schema.filter(|schema| *schema != "public")
-    }
-    let target = tables.iter().find(|table| {
-        table.sql_name == foreign_key.referenced_table
-            && normalize(table.schema.as_deref())
-                == normalize(foreign_key.referenced_schema.as_deref())
-    })?;
+    let target = referenced_table(tables, foreign_key)?;
     let id = own_typed_id(target)?;
     match target.primary_key_columns().as_slice() {
         [key] if key.sql_name == foreign_key.referenced_column => Some((id, key.sqlx_type.clone())),
         _ => None,
     }
+}
+
+/// The table among `tables` a foreign key references, matched exactly by
+/// schema and name (an unqualified name and `public.` agree).
+pub fn referenced_table<'a>(tables: &'a [Table], foreign_key: &ForeignKey) -> Option<&'a Table> {
+    fn normalize(schema: Option<&str>) -> Option<&str> {
+        schema.filter(|schema| *schema != "public")
+    }
+    tables.iter().find(|table| {
+        table.sql_name == foreign_key.referenced_table
+            && normalize(table.schema.as_deref())
+                == normalize(foreign_key.referenced_schema.as_deref())
+    })
 }
 
 /// The key struct's name for a composite primary key.

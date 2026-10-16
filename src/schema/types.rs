@@ -88,6 +88,51 @@ pub struct Table {
     /// configured and this table has that column. The parser leaves it
     /// `None`; the generator applies the conventions.
     pub tenant_column: Option<String>,
+    /// The relationships inferred from foreign keys (ADR 0014): belongs-to
+    /// first, in foreign key order, then the inverses, in table order. The
+    /// parser leaves it empty; the generator infers it over the tables
+    /// generated together.
+    pub relationships: Vec<Relationship>,
+}
+
+/// A relationship from a table to another table, or to itself, inferred from
+/// one single-column foreign key (ADR 0014). Both tables are generated in the
+/// same run, and the two columns it joins on have the same type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Relationship {
+    /// The relationship's name, unique among the table's relationships and a
+    /// valid Rust identifier: `category`, `products`,
+    /// `invoices_by_created_by_user`, `parent`, `children`.
+    pub name: String,
+    pub kind: RelationshipKind,
+    /// The related table's module name; module names are unique among the
+    /// tables generated together.
+    pub target: String,
+    /// The column of this table's rows the relationship joins on (SQL name):
+    /// the foreign key column for a belongs-to, the referenced column for a
+    /// has-many or has-one.
+    pub column: String,
+    /// The column of the related table's rows equal to `column` (SQL name).
+    pub target_column: String,
+}
+
+/// Which way a [`Relationship`] runs, and how many rows it reaches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelationshipKind {
+    /// This table holds the foreign key; at most one related row.
+    BelongsTo,
+    /// The related table holds the foreign key; any number of related rows.
+    HasMany,
+    /// The related table holds the foreign key, and that column alone is a
+    /// unique key there; at most one related row.
+    HasOne,
+}
+
+impl RelationshipKind {
+    /// Whether one row relates to any number of rows.
+    pub fn is_to_many(self) -> bool {
+        self == RelationshipKind::HasMany
+    }
 }
 
 impl Table {

@@ -153,7 +153,8 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
         &config.conventions,
         &config.derive,
         output_dir,
-    );
+    )
+    .map_err(anyhow::Error::msg)?;
 
     // Any generated file under the output directory that this run does not
     // produce is stale. A kept queries module protects both layouts

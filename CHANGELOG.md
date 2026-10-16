@@ -125,6 +125,20 @@ against earlier development snapshots.
   inputs and update patches. A partial unique index whose condition is
   exactly `<column> IS NULL` now gets a `get_by_<cols>` lookup. Query files
   are not rewritten.
+- Relationships inferred from foreign keys between the tables generated
+  together (ADR 0014): a belongs-to per foreign key (`category_id` →
+  `category`), its inverse has-many named after the child module
+  (`products`, or `invoices_by_created_by_user` when the child has several
+  foreign keys to the parent), a has-one when the foreign key column is a
+  unique key, and `parent`/`children` for a `parent_id` self-reference. The
+  tenant column's foreign key is not a relationship. Each resource with
+  relationships gets `relationships.rs` with a `load_<name>` loader per
+  relationship: it takes already-fetched rows and loads the relationship for
+  all of them in one `= ANY($n)` query, returning a `HashMap` keyed by the
+  joining key (typed id where there is one): one row per key for to-one,
+  a list per key (empty when nothing relates) for to-many. Loaders on a
+  tenant table take the tenant and skip soft-deleted rows. Two relationships
+  of a table with the same name fail generation, naming both.
 - `-k/--check` reports drift without writing and exits 1 when generated
   files are missing, changed, or stale. Successful runs remove stale
   generated files.

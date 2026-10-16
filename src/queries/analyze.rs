@@ -488,6 +488,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
             version_column: None,
             soft_delete_column: None,
             tenant_column: None,
+            relationships: Vec::new(),
         }));
         Ok(())
     }
