@@ -7,7 +7,9 @@
 
 use crate::queries::{AnalyzedQuery, Param, ResultShape, ReturnMode};
 
-use super::{HEADER, QueryModule, StaticQuery, push_doc, push_fn_head, sql, types_import};
+use super::{
+    HEADER, QueryModule, StaticQuery, doc_name, push_doc, push_fn_head, sql, types_import,
+};
 
 /// Queries with more parameters than this take a `{Name}Params` struct
 /// instead of positional arguments.
@@ -28,7 +30,7 @@ pub fn render_mod(modules: &[QueryModule]) -> String {
     // Sorted the way rustfmt sorts `mod` declarations.
     let mut names: Vec<&str> = modules.iter().map(|module| module.name.as_str()).collect();
     names.sort_unstable();
-    let mut output = format!("{HEADER}\n// One module per query file.\n\n");
+    let mut output = format!("{HEADER}\n//! One module per query file.\n\n");
     for name in names {
         output.push_str(&format!("pub mod {name};\n"));
     }
@@ -40,7 +42,7 @@ pub fn render_mod(modules: &[QueryModule]) -> String {
 /// through it.
 fn render_at(queries: &[AnalyzedQuery], db_path: &str) -> String {
     let mut output =
-        format!("{HEADER}\n// Functions for the annotated queries in the query file.\n");
+        format!("{HEADER}\n//! Functions for the annotated queries in the query file.\n");
     let types = types_import(db_path, mentioned_types(queries).iter().map(String::as_str));
     if !types.is_empty() {
         output.push_str(&format!("\n{types}"));
@@ -62,6 +64,11 @@ fn render_query(output: &mut String, query: &AnalyzedQuery, db_path: &str) {
         output.push_str("#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]\n");
         output.push_str(&format!("pub struct {}Row {{\n", query.name));
         for column in columns {
+            push_doc(
+                output,
+                4,
+                &[&format!("The {} column.", doc_name(&column.sql_name))],
+            );
             if column.rust_name != column.sql_name {
                 output.push_str(&format!(
                     "    #[sqlx(rename = {})]\n",
@@ -83,6 +90,7 @@ fn render_query(output: &mut String, query: &AnalyzedQuery, db_path: &str) {
         output.push_str("#[derive(Debug, Clone, PartialEq)]\n");
         output.push_str(&format!("pub struct {}Params {{\n", query.name));
         for param in &query.params {
+            push_doc(output, 4, &[&format!("Bound to `${}`.", param.index)]);
             output.push_str(&format!("    pub {}: {},\n", param.name, param.rust_type));
         }
         output.push_str("}\n");
@@ -241,7 +249,7 @@ mod tests {
             ]),
         )]);
         assert!(rendered.contains(
-            "#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]\npub struct ListThingsRow {\n    pub id: i64,\n    #[sqlx(rename = \"type\")]\n    pub type_: Option<String>,\n}\n"
+            "#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]\npub struct ListThingsRow {\n    /// The `id` column.\n    pub id: i64,\n    /// The `type` column.\n    #[sqlx(rename = \"type\")]\n    pub type_: Option<String>,\n}\n"
         ));
         assert!(rendered.contains(
             "pub async fn list_things<'e, E>(executor: E, id: i64) -> Result<Vec<ListThingsRow>, sqlx::Error>"
@@ -257,7 +265,11 @@ mod tests {
             .map(|index| param(index, &format!("p{index}"), "i32"))
             .collect();
         let rendered = render(&[query(ReturnMode::ExecRows, params, ResultShape::None)]);
-        assert!(rendered.contains("pub struct ListThingsParams {\n    pub p1: i32,"));
+        assert!(
+            rendered.contains(
+                "pub struct ListThingsParams {\n    /// Bound to `$1`.\n    pub p1: i32,"
+            )
+        );
         assert!(
             rendered
                 .contains("(executor: E, params: ListThingsParams) -> Result<u64, sqlx::Error>")

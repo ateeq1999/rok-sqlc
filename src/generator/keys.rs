@@ -220,6 +220,11 @@ fn render_key_struct(output: &mut String, table: &Table, keys: &[&Column]) {
     output.push_str(&format!("#[derive({derives})]\n"));
     output.push_str(&format!("pub struct {} {{\n", key_struct_name(table)));
     for key in keys {
+        push_doc(
+            output,
+            4,
+            &[&format!("The {} column.", super::doc_name(&key.sql_name))],
+        );
         output.push_str(&format!(
             "    pub {}: {},\n",
             key.rust_name,
@@ -240,7 +245,9 @@ pub fn render_row_key(output: &mut String, table: &Table) {
     let name = key_struct_name(table);
     output.push_str(&format!("\nimpl {} {{\n", table.struct_name));
     push_doc(output, 4, &["The row's primary key."]);
-    output.push_str(&format!("    pub fn key(&self) -> {name} {{\n"));
+    output.push_str(&format!(
+        "    #[must_use]\n    pub fn key(&self) -> {name} {{\n"
+    ));
     output.push_str(&format!("        {name} {{\n"));
     for key in keys {
         let clone = if key.is_copy() { "" } else { ".clone()" };

@@ -104,7 +104,7 @@ fn generates_composite_keys_arrays_and_time() -> Result<()> {
     assert!(models.contains("pub cut_off: chrono::NaiveTime,"));
 
     assert!(models.contains(
-        "pub struct LineItemKey {\n    pub order_id: uuid::Uuid,\n    pub product_id: uuid::Uuid,\n}"
+        "pub struct LineItemKey {\n    /// The `order_id` column.\n    pub order_id: uuid::Uuid,\n    /// The `product_id` column.\n    pub product_id: uuid::Uuid,\n}"
     ));
 
     let read = fs::read_to_string(out.join("line_items/read.rs"))?;
@@ -238,17 +238,29 @@ fn generates_products_fixture_with_singular_names_and_schema_qualified_sql() -> 
         "/// A row of the `catalog.products` table.
 #[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
 pub struct Product {
+    /// The `id` column.
     pub id: ProductId,
+    /// The `sku` column.
     pub sku: String,
+    /// The `name` column.
     pub name: String,
+    /// The `category_id` column.
     pub category_id: i64,
+    /// The `supplier_id` column.
     pub supplier_id: Option<uuid::Uuid>,
+    /// The `price_cents` column.
     pub price_cents: i64,
+    /// The `stock_on_hand` column.
     pub stock_on_hand: i32,
+    /// The `reorder_level` column.
     pub reorder_level: i16,
+    /// The `weight_kg` column.
     pub weight_kg: Option<f64>,
+    /// The `discontinued` column.
     pub discontinued: bool,
+    /// The `released_on` column.
     pub released_on: Option<chrono::NaiveDate>,
+    /// The `created_at` column.
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 "

@@ -1178,7 +1178,7 @@ async fn enums_keep_their_exact_labels(pool: &PgPool) {
     )
     .await
     .unwrap();
-    assert_eq!(very_high, [archived.clone()]);
+    assert_eq!(very_high, std::slice::from_ref(&archived));
 
     let not_archived = read::search(
         pool,
@@ -1299,7 +1299,7 @@ async fn value_list_columns_round_trip(pool: &PgPool) {
     )
     .await
     .unwrap();
-    assert_eq!(found, [delivered.clone()]);
+    assert_eq!(found, std::slice::from_ref(&delivered));
 
     let pending = shipments_with_status(pool, ShipmentStatus::Pending)
         .await

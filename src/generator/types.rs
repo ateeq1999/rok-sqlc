@@ -10,11 +10,11 @@
 use crate::schema::EnumType;
 
 use super::sql::{ident, str_literal};
-use super::{HEADER, MAX_WIDTH, push_doc};
+use super::{HEADER, MAX_WIDTH, doc_name, push_doc};
 
 pub fn render(enums: &[EnumType]) -> String {
     let mut output = format!(
-        "{HEADER}\n// Enum types and value-list columns from the schema; each variant keeps its\n// exact database value.\n"
+        "{HEADER}\n//! Enum types and value-list columns from the schema; each variant keeps its\n//! exact database value.\n"
     );
     for enum_type in enums {
         output.push('\n');
@@ -39,6 +39,7 @@ fn render_enum_type(output: &mut String, enum_type: &EnumType) {
     ));
     output.push_str(&format!("pub enum {} {{\n", enum_type.rust_name));
     for variant in &enum_type.variants {
+        push_doc(output, 4, &[&doc_name(&variant.label)]);
         output.push_str(&format!(
             "    #[sqlx(rename = {})]\n    {},\n",
             str_literal(&variant.label),
@@ -61,7 +62,7 @@ fn render_value_list(output: &mut String, enum_type: &EnumType, column: &str) {
     output.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\n");
     output.push_str(&format!("pub enum {name} {{\n"));
     for variant in &enum_type.variants {
-        push_doc(output, 4, &[&format!("`{}`", variant.label)]);
+        push_doc(output, 4, &[&doc_name(&variant.label)]);
         output.push_str(&format!("    {},\n", variant.rust_name));
     }
     output.push_str("}\n\n");
@@ -73,7 +74,9 @@ fn render_value_list(output: &mut String, enum_type: &EnumType, column: &str) {
         str_literal(column)
     ));
     push_doc(output, 4, &["The exact database value."]);
-    output.push_str("    pub fn as_str(self) -> &'static str {\n        match self {\n");
+    output.push_str(
+        "    #[must_use]\n    pub fn as_str(self) -> &'static str {\n        match self {\n",
+    );
     for variant in &enum_type.variants {
         push_arm(
             output,

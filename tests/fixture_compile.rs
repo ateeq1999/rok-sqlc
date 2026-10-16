@@ -52,7 +52,7 @@ fn cargo(app_dir: &Path, args: &[&str]) -> Command {
 }
 
 #[test]
-fn generated_code_compiles_without_warnings() -> Result<()> {
+fn generated_code_passes_the_lint_gate() -> Result<()> {
     let _guard = FIXTURE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -62,12 +62,18 @@ fn generated_code_compiles_without_warnings() -> Result<()> {
     }
     generate_fixture()?;
 
-    // The fixture crate is `#![deny(warnings)]`; `--all-targets` also
-    // type-checks the PostgreSQL integration tests.
-    let status = cargo(&app_dir(), &["check", "--quiet", "--all-targets"])
-        .status()
-        .context("failed to run cargo check in tests/fixture-app")?;
-    ensure!(status.success(), "generated code failed cargo check");
+    // The fixture crate denies warnings and `missing_docs` and turns on the
+    // selected pedantic lints (ADR 0013); `--all-targets` also type-checks
+    // the PostgreSQL integration tests.
+    let status = cargo(
+        &app_dir(),
+        &["clippy", "--quiet", "--all-targets", "--", "-Dwarnings"],
+    )
+    .status()
+    .context(
+        "failed to run cargo clippy in tests/fixture-app (install it with `rustup component add clippy`)",
+    )?;
+    ensure!(status.success(), "generated code failed the lint gate");
     Ok(())
 }
 
