@@ -40,6 +40,9 @@ fn generate_fixture() -> Result<Vec<PathBuf>> {
     // Only `touched_notes` has these columns; every other table generates
     // as if no convention were configured.
     config.conventions.managed_columns = vec!["updated_at".into(), "row_version".into()];
+    // Only `versioned_documents` has this column, so only its `update`
+    // checks a version and returns an `UpdateOutcome`.
+    config.conventions.version_column = Some("revision".into());
 
     let report = rok_sqlc::generate(&config)?;
     Ok(report.written.into_iter().chain(report.unchanged).collect())

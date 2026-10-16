@@ -66,6 +66,7 @@ async fn generated_crud_against_postgres() {
     foreign_keys_resolve_to_the_table_in_their_schema(&pool).await;
     unique_key_lookups_find_one_row_or_none(&pool).await;
     managed_columns_are_left_to_the_database(&pool).await;
+    versioned_updates_detect_concurrent_edits(&pool).await;
 }
 
 /// A category's typed id goes straight into a product's foreign key field
@@ -1450,4 +1451,112 @@ async fn managed_columns_are_left_to_the_database(pool: &PgPool) {
 
     let stored = read::get_by_id(pool, created.id).await.unwrap();
     assert_eq!(stored, Some(updated));
+}
+
+/// `versioned_documents` is generated with `revision` as its version column:
+/// `update` takes the revision the caller last saw, and the `bump_revision`
+/// trigger advances it on every update. `revision` is managed, so neither
+/// `NewVersionedDocument` nor `UpdateVersionedDocument` has it (the struct
+/// literals below name every field).
+async fn versioned_updates_detect_concurrent_edits(pool: &PgPool) {
+    use db::UpdateOutcome;
+    use db::versioned_documents::models::{
+        NewVersionedDocument, UpdateVersionedDocument, VersionedDocumentId,
+    };
+    use db::versioned_documents::{read, write};
+
+    let created = write::create(
+        pool,
+        NewVersionedDocument {
+            title: "draft".to_owned(),
+            note: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(created.revision, 1);
+
+    // Two editors both saw revision 1; the first one to save wins.
+    let first = write::update(
+        pool,
+        created.id,
+        1,
+        UpdateVersionedDocument {
+            title: Some("first editor".to_owned()),
+            note: None,
+        },
+    )
+    .await
+    .unwrap();
+    let UpdateOutcome::Updated(saved) = first else {
+        panic!("the first update should apply, got {first:?}");
+    };
+    assert_eq!(saved.title, "first editor");
+    assert_eq!(saved.revision, 2, "the trigger advanced the revision");
+
+    let second = write::update(
+        pool,
+        created.id,
+        1,
+        UpdateVersionedDocument {
+            title: Some("second editor".to_owned()),
+            note: Some(Some("stale".to_owned())),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(second, UpdateOutcome::VersionConflict);
+    let stored = read::get_by_id(pool, created.id).await.unwrap();
+    assert_eq!(stored, Some(saved.clone()), "the stale update changed nothing");
+
+    // Inside a caller-owned transaction, with the current revision.
+    let mut tx = pool.begin().await.unwrap();
+    let retried = write::update(
+        &mut *tx,
+        created.id,
+        2,
+        UpdateVersionedDocument {
+            title: Some("second editor".to_owned()),
+            note: None,
+        },
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let UpdateOutcome::Updated(retried) = retried else {
+        panic!("an update at the current revision should apply, got {retried:?}");
+    };
+    assert_eq!(retried.revision, 3);
+
+    // An empty patch returns the current row without bumping the revision,
+    // and still reports a stale revision as a conflict.
+    let unchanged = write::update(pool, created.id, 3, UpdateVersionedDocument::default())
+        .await
+        .unwrap();
+    assert_eq!(unchanged, UpdateOutcome::Updated(retried.clone()));
+    let stale_empty = write::update(pool, created.id, 2, UpdateVersionedDocument::default())
+        .await
+        .unwrap();
+    assert_eq!(stale_empty, UpdateOutcome::VersionConflict);
+    let stored = read::get_by_id(pool, created.id).await.unwrap();
+    assert_eq!(stored.map(|row| row.revision), Some(3));
+
+    // A key no row has is not found, with or without a patch.
+    let missing = VersionedDocumentId::from(i64::from(created.id) + 1_000);
+    let patched_missing = write::update(
+        pool,
+        missing,
+        1,
+        UpdateVersionedDocument {
+            title: Some("ghost".to_owned()),
+            note: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(patched_missing, UpdateOutcome::NotFound);
+    let empty_missing = write::update(pool, missing, 1, UpdateVersionedDocument::default())
+        .await
+        .unwrap();
+    assert_eq!(empty_missing, UpdateOutcome::NotFound);
 }

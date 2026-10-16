@@ -37,7 +37,12 @@ pub fn render(table: &Table) -> String {
     } else {
         types_import("super::super", [super::keys::key_type(table).as_str()])
     };
-    let mut output = format!("{HEADER}\n{types}{}", use_models(&imports));
+    let outcome = if has_versioned_update(table) {
+        "use super::super::UpdateOutcome;\n"
+    } else {
+        ""
+    };
+    let mut output = format!("{HEADER}\n{outcome}{types}{}", use_models(&imports));
 
     if insert_columns.is_empty() {
         output.push_str(
@@ -60,7 +65,12 @@ pub fn render(table: &Table) -> String {
     }
 
     if has_update {
-        render_update(&mut output, table, &keys, &update_columns);
+        match version_column(table) {
+            Some(version) => {
+                render_versioned_update(&mut output, table, version, &keys, &update_columns);
+            }
+            None => render_update(&mut output, table, &keys, &update_columns),
+        }
     } else {
         output.push_str(
             "\n// No updatable columns detected; update is not generated for this table.\n",
@@ -233,6 +243,167 @@ fn render_update(output: &mut String, table: &Table, key_columns: &[&Column], co
         "sqlx::QueryBuilder::<sqlx::Postgres>::new",
         &str_literal(&format!("UPDATE {} SET ", table_ref(table))),
     );
+    push_assignments(output, columns);
+    push_key_condition(output, table, key_columns);
+    push_returning(output, table);
+    push_build_and_fetch(output, table, "fetch_optional");
+    output.push_str("}\n");
+}
+
+/// Whether `table` gets a versioned `update`, which returns the shared
+/// `UpdateOutcome`.
+pub fn has_versioned_update(table: &Table) -> bool {
+    !table.primary_key.is_empty()
+        && !table.update_columns().is_empty()
+        && version_column(table).is_some()
+}
+
+/// The parameter a versioned `update` takes the caller's last-seen version as.
+const VERSION_PARAM: &str = "expected_version";
+
+/// The table's version column, when it has one and the column can be
+/// compared (it is not part of the key).
+fn version_column(table: &Table) -> Option<&Column> {
+    let name = table.version_column.as_deref()?;
+    table
+        .columns
+        .iter()
+        .find(|column| column.sql_name == name && !column.is_primary_key)
+}
+
+/// The SQL name of the `index`-th key column as `rok_sqlc_target` exposes it,
+/// prefixed so it cannot be mistaken for one of the table's own columns.
+fn target_key_alias(index: usize) -> String {
+    format!("rok_sqlc_key_{index}")
+}
+
+/// `update` for a table with a version column (ADR 0006): the version check
+/// is part of the `UPDATE`'s condition, and the same statement reports
+/// whether the row was updated, is at another version, or does not exist, so
+/// the generic executor is used once.
+fn render_versioned_update(
+    output: &mut String,
+    table: &Table,
+    version: &Column,
+    key_columns: &[&Column],
+    columns: &[&Column],
+) {
+    let params = vec![
+        keys::key_param(table),
+        format!("{VERSION_PARAM}: {}", version.field_type()),
+        format!("input: Update{}", table.struct_name),
+    ];
+
+    output.push('\n');
+    let first = format!(
+        "Applies a partial update if the row's `{}` is still `{VERSION_PARAM}`.",
+        version.rust_name
+    );
+    push_doc(
+        output,
+        0,
+        &[
+            &first,
+            "",
+            "Returns the updated row, `NotFound` if no row has the given primary key, or",
+            "`VersionConflict` if the row is at another version, in which case nothing",
+            "changes. An empty patch issues no `UPDATE`: it returns the current row,",
+            "unchanged, when the row is at the expected version.",
+        ],
+    );
+    push_fn_head(
+        output,
+        "update",
+        &params,
+        &format!("Result<UpdateOutcome<{}>, sqlx::Error>", table.struct_name),
+    );
+
+    output.push_str("    if input.is_empty() {\n");
+    output.push_str(&format!(
+        "        let Some(row) = super::read::get_by_id(executor, {}).await? else {{\n",
+        keys::key_binding(table)
+    ));
+    output.push_str("            return Ok(UpdateOutcome::NotFound);\n");
+    output.push_str("        };\n");
+    output.push_str(&format!(
+        "        if row.{} != {VERSION_PARAM} {{\n",
+        version.rust_name
+    ));
+    output.push_str("            return Ok(UpdateOutcome::VersionConflict);\n");
+    output.push_str("        }\n");
+    output.push_str("        return Ok(UpdateOutcome::Updated(row));\n");
+    output.push_str("    }\n\n");
+
+    // `rok_sqlc_target` finds the row by key alone, in the statement's
+    // snapshot, so a row at another version is told apart from a missing one.
+    let aliases: Vec<String> = key_columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| {
+            format!("{} AS {}", ident(&column.sql_name), target_key_alias(index))
+        })
+        .collect();
+    push_let_call(
+        output,
+        4,
+        "let mut query",
+        "sqlx::QueryBuilder::<sqlx::Postgres>::new",
+        &str_literal("WITH rok_sqlc_target AS ("),
+    );
+    push_query_push(
+        output,
+        &format!("SELECT {} FROM {}", aliases.join(", "), table_ref(table)),
+    );
+    push_key_condition(output, table, key_columns);
+    push_query_push(
+        output,
+        &format!("), rok_sqlc_updated AS (UPDATE {} SET ", table_ref(table)),
+    );
+    push_assignments(output, columns);
+    let joins: Vec<String> = key_columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| {
+            format!(
+                "{} = rok_sqlc_target.{}",
+                ident(&column.sql_name),
+                target_key_alias(index)
+            )
+        })
+        .collect();
+    push_query_push(
+        output,
+        &format!(
+            " FROM rok_sqlc_target WHERE {} AND {} = ",
+            joins.join(" AND "),
+            ident(&version.sql_name)
+        ),
+    );
+    output.push_str(&format!("    query.push_bind({VERSION_PARAM});\n"));
+    let mut tail = returning_clause(table);
+    tail.push(")".to_owned());
+    tail.push(
+        "SELECT rok_sqlc_updated.*, EXISTS (SELECT 1 FROM rok_sqlc_updated) AS rok_sqlc_applied"
+            .to_owned(),
+    );
+    tail.push("FROM rok_sqlc_target LEFT JOIN rok_sqlc_updated ON TRUE".to_owned());
+    output.push_str("    query.push(\n");
+    output.push_str(&super::sql::raw_block(&tail, 8));
+    output.push_str(",\n    );\n");
+
+    output.push_str("    let Some(row) = query.build().fetch_optional(executor).await? else {\n");
+    output.push_str("        return Ok(UpdateOutcome::NotFound);\n");
+    output.push_str("    };\n");
+    output.push_str("    let applied: bool = sqlx::Row::try_get(&row, \"rok_sqlc_applied\")?;\n");
+    output.push_str("    if !applied {\n");
+    output.push_str("        return Ok(UpdateOutcome::VersionConflict);\n");
+    output.push_str("    }\n");
+    output.push_str("    Ok(UpdateOutcome::Updated(sqlx::FromRow::from_row(&row)?))\n");
+    output.push_str("}\n");
+}
+
+/// One `if let Some(value)` assignment per patch field, in column order.
+fn push_assignments(output: &mut String, columns: &[&Column]) {
     output.push_str("    let mut assignments = query.separated(\", \");\n");
     for column in columns {
         output.push_str(&format!(
@@ -246,17 +417,35 @@ fn render_update(output: &mut String, table: &Table, key_columns: &[&Column], co
         output.push_str("        assignments.push_bind_unseparated(value);\n");
         output.push_str("    }\n");
     }
+}
+
+/// ` WHERE k1 = $n AND k2 = $m`, binding the key.
+fn push_key_condition(output: &mut String, table: &Table, key_columns: &[&Column]) {
     for (index, (column, bind)) in key_columns.iter().zip(keys::key_binds(table)).enumerate() {
         let connective = if index == 0 { " WHERE" } else { " AND" };
-        output.push_str(&format!(
-            "    query.push({});\n",
-            str_literal(&format!("{connective} {} = ", ident(&column.sql_name)))
-        ));
+        push_query_push(
+            output,
+            &format!("{connective} {} = ", ident(&column.sql_name)),
+        );
         output.push_str(&format!("    query.push_bind({bind});\n"));
     }
-    push_returning(output, table);
-    push_build_and_fetch(output, table, "fetch_optional");
-    output.push_str("}\n");
+}
+
+/// `query.push(text);`, laid out as rustfmt lays it out: on one line when it
+/// fits, otherwise with `.push(...)` moved below `query`, otherwise with the
+/// literal on its own line.
+fn push_query_push(output: &mut String, text: &str) {
+    let literal = str_literal(text);
+    let one_line = format!("    query.push({literal});");
+    let chained = format!("        .push({literal});");
+    if one_line.len() <= super::MAX_WIDTH {
+        output.push_str(&one_line);
+        output.push('\n');
+    } else if chained.len() <= super::MAX_WIDTH {
+        output.push_str(&format!("    query\n{chained}\n"));
+    } else {
+        output.push_str(&format!("    query.push(\n        {literal},\n    );\n"));
+    }
 }
 
 fn render_delete(output: &mut String, table: &Table, key_columns: &[&Column]) {

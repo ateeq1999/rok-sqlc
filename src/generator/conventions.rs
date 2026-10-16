@@ -10,10 +10,18 @@ use crate::Conventions;
 use crate::schema::Table;
 
 /// Marks, in each of `tables`, the columns `conventions` names.
+///
+/// The version column is recorded on the tables that have it, and is always
+/// managed: the database advances it, so callers never write it.
 pub fn apply(tables: &mut [Table], conventions: &Conventions) {
+    let version = conventions.version_column.as_deref();
     for table in tables {
+        table.version_column = version
+            .filter(|name| table.columns.iter().any(|column| column.sql_name == *name))
+            .map(str::to_owned);
         for column in &mut table.columns {
-            column.is_managed = conventions.managed_columns.contains(&column.sql_name);
+            column.is_managed = conventions.managed_columns.contains(&column.sql_name)
+                || Some(column.sql_name.as_str()) == version;
         }
     }
 }

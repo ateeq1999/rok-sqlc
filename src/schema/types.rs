@@ -76,6 +76,10 @@ pub struct Table {
     /// Unique constraints and unique indexes on plain columns, in the order
     /// the migrations declare them; the primary key is not repeated here.
     pub unique_keys: Vec<UniqueKey>,
+    /// The version column (ADR 0010), as its SQL name: set only when the
+    /// version convention is configured and this table has the column. The
+    /// parser leaves it `None`; the generator applies the conventions.
+    pub version_column: Option<String>,
 }
 
 impl Table {

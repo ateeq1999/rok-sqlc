@@ -144,3 +144,24 @@ $$;
 
 CREATE TRIGGER touch_row BEFORE UPDATE ON touched_notes
     FOR EACH ROW EXECUTE FUNCTION touch_row();
+
+-- Version column: tests/fixture_compile.rs generates the fixture with
+-- `version_column = "revision"`, so `update` takes the expected revision and
+-- returns an `UpdateOutcome`. A `touch_row`-style trigger advances it.
+CREATE TABLE versioned_documents (
+    id BIGSERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    note TEXT,
+    revision BIGINT NOT NULL DEFAULT 1
+);
+
+CREATE FUNCTION bump_revision() RETURNS trigger
+LANGUAGE plpgsql AS $$
+begin
+  new.revision := old.revision + 1;
+  return new;
+end;
+$$;
+
+CREATE TRIGGER bump_revision BEFORE UPDATE ON versioned_documents
+    FOR EACH ROW EXECUTE FUNCTION bump_revision();

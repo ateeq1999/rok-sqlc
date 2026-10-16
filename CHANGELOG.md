@@ -85,8 +85,15 @@ against earlier development snapshots.
   (`rok_sqlc::Conventions` in the library), off by default, with a `rok`
   preset for the Rok ERP. Managed columns (`managed_columns`, such as
   `updated_at` and `row_version`) are left out of create inputs and update
-  patches and kept in rows. The tenant, soft-delete, and version keys are
-  validated but not applied yet. See ADR 0010.
+  patches and kept in rows. The tenant and soft-delete keys are validated
+  but not applied yet. See ADR 0010.
+- A version column (`version_column`, `row_version` in the `rok` preset) for
+  optimistic concurrency. On a table that has it, `update` takes
+  `expected_version` and returns `UpdateOutcome<Row>` (`Updated(row)`,
+  `NotFound`, or `VersionConflict`), defined once in `db/mod.rs`. The check
+  is part of the `UPDATE`'s condition, and one statement tells a stale
+  version from a missing row. The version column is always managed. Tables
+  without the column keep the plain `update`. See ADRs 0006 and 0010.
 - `-k/--check` reports drift without writing and exits 1 when generated
   files are missing, changed, or stale. Successful runs remove stale
   generated files.

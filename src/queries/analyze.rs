@@ -485,6 +485,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
             primary_key: Vec::new(),
             foreign_keys: Vec::new(),
             unique_keys: Vec::new(),
+            version_column: None,
         }));
         Ok(())
     }

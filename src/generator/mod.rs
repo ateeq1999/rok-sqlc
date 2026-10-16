@@ -151,6 +151,7 @@ const RESERVED_LOCALS: &[&str] = &[
     "result",
     "limit",
     "offset",
+    "expected_version",
 ];
 
 /// The function-parameter name for a key column.
@@ -394,8 +395,27 @@ pub fn render_db_mod(tables: &[Table], has_types: bool, queries: QueriesModule<'
     for module in modules {
         output.push_str(&format!("pub mod {module};\n"));
     }
+    if tables.iter().any(write::has_versioned_update) {
+        output.push_str(UPDATE_OUTCOME);
+    }
     output
 }
+
+/// The result of every versioned `update` (a table with a version column),
+/// defined once in `db/mod.rs`.
+const UPDATE_OUTCOME: &str = "
+/// What an `update` on a table with a version column did.
+#[must_use]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateOutcome<T> {
+    /// The row was at the expected version and is now updated, as stored.
+    Updated(T),
+    /// No row has the given primary key.
+    NotFound,
+    /// The row is at another version, so nothing changed.
+    VersionConflict,
+}
+";
 
 fn dependency_hints(types: &[String]) -> String {
     let uses = |needle: &str| types.iter().any(|rust_type| rust_type.contains(needle));
@@ -498,6 +518,7 @@ pub(crate) mod test_support {
             primary_key: primary_key.iter().map(|key| (*key).to_owned()).collect(),
             foreign_keys: Vec::new(),
             unique_keys: Vec::new(),
+            version_column: None,
         }
     }
 }
