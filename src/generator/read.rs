@@ -3,8 +3,8 @@ use crate::schema::{Column, Table};
 use super::search::SearchApi;
 use super::sql::{column_clause, key_order, key_predicate, table_ref};
 use super::{
-    HEADER, StaticQuery, keys, param_name, push_build_and_fetch, push_doc, push_fn_head,
-    types_import, use_list, use_paths,
+    HEADER, StaticQuery, keys, param_name, param_type, push_build_and_fetch, push_doc,
+    push_fn_head, types_import, use_list, use_paths,
 };
 
 pub fn render(table: &Table) -> String {
@@ -122,16 +122,6 @@ fn unique_lookups(table: &Table) -> Vec<Lookup<'_>> {
         .collect()
 }
 
-/// A lookup parameter's type: text is borrowed as `&str`; anything else
-/// (typed ids included) is taken by value.
-fn lookup_param_type(column: &Column) -> &str {
-    if column.typed_id.is_none() && column.sqlx_type == "String" {
-        "&str"
-    } else {
-        column.value_type()
-    }
-}
-
 fn render_unique_lookup(output: &mut String, table: &Table, lookup: &Lookup<'_>) {
     let mut sql = column_clause("SELECT", table);
     sql.push(format!("FROM {}", table_ref(table)));
@@ -140,7 +130,7 @@ fn render_unique_lookup(output: &mut String, table: &Table, lookup: &Lookup<'_>)
     let described: Vec<String> = lookup
         .columns
         .iter()
-        .map(|column| format!("`{}`", column.sql_name))
+        .map(|column| super::doc_name(&column.sql_name))
         .collect();
     output.push('\n');
     push_doc(
@@ -154,7 +144,7 @@ fn render_unique_lookup(output: &mut String, table: &Table, lookup: &Lookup<'_>)
     let params: Vec<String> = lookup
         .columns
         .iter()
-        .map(|column| format!("{}: {}", param_name(column), lookup_param_type(column)))
+        .map(|column| format!("{}: {}", param_name(column), param_type(column)))
         .collect();
     push_fn_head(
         output,
@@ -190,7 +180,7 @@ fn push_search_preamble(output: &mut String, table: &Table) {
 fn render_search_after(output: &mut String, table: &Table) {
     let key_columns = table.primary_key_columns();
     let name = &table.struct_name;
-    let key_type = keys::key_type(table);
+    let key_type = keys::key_param_type(table);
     let key_pattern = keys::key_binding(table);
     let binds = keys::key_binds(table);
 
@@ -531,6 +521,34 @@ mod tests {
         assert!(rendered.contains("No primary key detected"));
         assert!(rendered.contains("pub async fn list<'e, E>(executor: E)"));
         assert!(rendered.contains("pub async fn count<'e, E>(executor: E)"));
+    }
+
+    /// A text key is borrowed; `Copy` keys stay by value.
+    #[test]
+    fn text_keys_are_borrowed() {
+        let mut code = column("code", "String");
+        code.typed_id = Some(crate::schema::TypedId {
+            module: "users".to_owned(),
+            name: "UserId".to_owned(),
+        });
+        let rendered = render(&table(vec![code, column("email", "String")], &["code"]));
+        assert!(rendered.contains("get_by_id<'e, E>(executor: E, code: &UserId)"));
+        assert!(rendered.contains("exists_by_id<'e, E>(executor: E, code: &UserId)"));
+        assert!(
+            rendered.contains("    after: Option<&UserId>,\n"),
+            "{rendered}"
+        );
+
+        let rendered = render(&table(
+            vec![column("order_id", "uuid::Uuid"), column("sku", "String")],
+            &["order_id", "sku"],
+        ));
+        assert!(
+            rendered.contains("(executor: E, key: &UserKey)"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("    .bind(key.order_id)\n    .bind(&key.sku)\n"));
+        assert!(rendered.contains("    after: Option<&UserKey>,\n"));
     }
 
     #[test]

@@ -176,6 +176,20 @@ pub fn param_name(column: &Column) -> String {
     }
 }
 
+/// The type a key or lookup parameter takes a column's value as: text is
+/// borrowed (`&str`, or `&` its typed id) because binding it needs no
+/// ownership; every other value, `Copy` keys included, is taken by value.
+pub fn param_type(column: &Column) -> String {
+    if column.sqlx_type == "String" {
+        match &column.typed_id {
+            Some(id) => format!("&{}", id.name),
+            None => "&str".to_owned(),
+        }
+    } else {
+        column.value_type().to_owned()
+    }
+}
+
 /// `use {prefix}::...;` for sorted `names`, wrapped like rustfmt wraps a use
 /// list that does not fit on one line.
 pub fn use_list(prefix: &str, names: &[String]) -> String {

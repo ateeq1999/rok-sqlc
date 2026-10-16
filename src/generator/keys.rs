@@ -12,7 +12,7 @@
 
 use crate::schema::{Column, ForeignKey, Table, TypedId};
 
-use super::{param_name, push_doc};
+use super::{param_name, param_type, push_doc};
 
 /// Copies `tables` with every column's typed id filled in.
 pub fn resolve(tables: &[Table]) -> Vec<Table> {
@@ -102,18 +102,32 @@ pub fn key_binding(table: &Table) -> String {
     }
 }
 
-/// The key parameter of a generated function, e.g. `id: ProductId`.
-pub fn key_param(table: &Table) -> String {
-    format!("{}: {}", key_binding(table), key_type(table))
+/// The type of the key parameter: [`key_type`], borrowed when it is not
+/// `Copy` (a text key, or a key struct with a text column).
+pub fn key_param_type(table: &Table) -> String {
+    match table.primary_key_columns().as_slice() {
+        [key] => param_type(key),
+        keys if keys.iter().all(|key| key.is_copy()) => key_struct_name(table),
+        _ => format!("&{}", key_struct_name(table)),
+    }
 }
 
-/// The bind expressions of the key, one per key column in key order.
+/// The key parameter of a generated function, e.g. `id: ProductId`.
+pub fn key_param(table: &Table) -> String {
+    format!("{}: {}", key_binding(table), key_param_type(table))
+}
+
+/// The bind expressions of the key, one per key column in key order. A
+/// borrowed key struct's fields that are not `Copy` are bound by reference.
 pub fn key_binds(table: &Table) -> Vec<String> {
     match table.primary_key_columns().as_slice() {
         [key] => vec![param_name(key)],
         keys => keys
             .iter()
-            .map(|key| format!("key.{}", key.rust_name))
+            .map(|key| {
+                let borrow = if key.is_copy() { "" } else { "&" };
+                format!("{borrow}key.{}", key.rust_name)
+            })
             .collect(),
     }
 }

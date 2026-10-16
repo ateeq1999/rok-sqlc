@@ -144,3 +144,17 @@ $$;
 
 CREATE TRIGGER touch_row BEFORE UPDATE ON touched_notes
     FOR EACH ROW EXECUTE FUNCTION touch_row();
+
+-- Text keys: the typed id wraps `String`, so the generated functions borrow
+-- it (`&CurrencyId`); a key struct with a text column is borrowed too.
+CREATE TABLE currencies (
+    code TEXT PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE currency_rates (
+    currency_code TEXT NOT NULL REFERENCES currencies (code),
+    day DATE NOT NULL,
+    rate NUMERIC(12, 6) NOT NULL,
+    PRIMARY KEY (currency_code, day)
+);

@@ -175,7 +175,28 @@ fn render_query(output: &mut String, query: &AnalyzedQuery, db_path: &str) {
 }
 
 fn signature_param(param: &Param) -> String {
-    format!("{}: {}", param.name, param.rust_type)
+    format!("{}: {}", param.name, borrowed(&param.rust_type))
+}
+
+/// A positional parameter's type: text and lists are borrowed (`&str`,
+/// `&[T]`, also inside `Option`), since binding them needs no ownership.
+fn borrowed(rust_type: &str) -> String {
+    if let Some(inner) = rust_type
+        .strip_prefix("Option<")
+        .and_then(|rest| rest.strip_suffix('>'))
+    {
+        return format!("Option<{}>", borrowed(inner));
+    }
+    if rust_type == "String" {
+        return "&str".to_owned();
+    }
+    match rust_type
+        .strip_prefix("Vec<")
+        .and_then(|rest| rest.strip_suffix('>'))
+    {
+        Some(item) => format!("&[{item}]"),
+        None => rust_type.to_owned(),
+    }
 }
 
 fn row_type(query: &AnalyzedQuery, db_path: &str) -> String {
@@ -257,6 +278,31 @@ mod tests {
         assert!(rendered.contains(
             "    sqlx::query_as::<_, ListThingsRow>(\n        r#\"\n        SELECT id, label\n        FROM things\n        WHERE id = $1\n        \"#,\n    )\n    .bind(id)\n    .fetch_all(executor)\n    .await\n}\n"
         ));
+    }
+
+    /// Text and list parameters are borrowed: binding them needs no
+    /// ownership. A params struct is an input and stays owned.
+    #[test]
+    fn text_and_list_params_are_borrowed() {
+        let rendered = render(&[query(
+            ReturnMode::Exec,
+            vec![
+                param(1, "name", "String"),
+                param(2, "note", "Option<String>"),
+                param(3, "ids", "Vec<i64>"),
+            ],
+            ResultShape::None,
+        )]);
+        assert!(
+            rendered.contains("    name: &str,\n    note: Option<&str>,\n    ids: &[i64],\n"),
+            "{rendered}"
+        );
+
+        let params = (1..=4)
+            .map(|index| param(index, &format!("p{index}"), "String"))
+            .collect();
+        let rendered = render(&[query(ReturnMode::Exec, params, ResultShape::None)]);
+        assert!(rendered.contains("    pub p1: String,\n"));
     }
 
     #[test]
