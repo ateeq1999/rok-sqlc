@@ -70,7 +70,12 @@ const EXPECTED: &[Expected] = &[
     Expected {
         fixture: "legacy_modules/inventory",
         tables: &[],
-        queries: &[],
+        // `products.sku` is not unique in this schema, so the upsert would
+        // fail at runtime.
+        queries: &[(
+            "UpsertProduct",
+            "ON CONFLICT (sku) matches no unique key; unique keys of `products`: (id)",
+        )],
         functions: &[
             "create_product",
             "create_products",
@@ -78,7 +83,6 @@ const EXPECTED: &[Expected] = &[
             "delete_product",
             "list_products_by_category",
             "list_products_offset",
-            "upsert_product",
         ],
     },
     Expected {

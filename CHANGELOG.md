@@ -64,8 +64,17 @@ against earlier development snapshots.
   as text and keep each exact value.
 - Typed search: per-table `Filter` and `SortKey` types, `search`, and keyset
   pagination with `search_after`.
+- Unique-key lookups: every unique constraint (inline, table-level, or added
+  by `ALTER TABLE`) and unique index on plain columns gets
+  `read::get_by_<col>[_and_<col>...]`, returning `Option<Row>`. Text key
+  columns are taken as `&str`, other columns by value (typed ids included).
+  Expression indexes and partial indexes get no lookup.
 - Annotated query files (`-- name: X :one|:maybe_one|:many|:exec|:execrows`)
   generate typed query functions, including `WITH` (CTE) queries.
+- A query file's `ON CONFLICT (cols)` target must be a unique key of the
+  table (the primary key, a unique constraint, or a full unique index, in
+  any column order); otherwise generation fails with a `path:line`
+  diagnostic listing the table's unique keys.
 - `--schema` accepts files or migration directories and can be repeated;
   `ALTER TABLE` statements in later migrations change earlier tables.
   Diagnostics print `path:line:`.

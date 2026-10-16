@@ -109,3 +109,16 @@ CREATE TABLE refunds (
     id BIGSERIAL PRIMARY KEY,
     status TEXT NOT NULL CHECK (status IN ('requested', 'paid'))
 );
+
+-- Unique keys: the composite unique constraint gets
+-- `get_by_organization_id_and_code`; the expression index and the partial
+-- index (its condition is not a soft-delete condition) get no lookup.
+CREATE TABLE app.branches (
+    id BIGSERIAL PRIMARY KEY,
+    organization_id UUID NOT NULL,
+    code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    UNIQUE (organization_id, code)
+);
+CREATE UNIQUE INDEX branches_lower_name ON app.branches (lower(name));
+CREATE UNIQUE INDEX branches_open_name ON app.branches (name) WHERE code <> 'CLOSED';
