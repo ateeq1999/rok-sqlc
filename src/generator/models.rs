@@ -1,17 +1,26 @@
-use crate::schema::{Column, Table};
+use crate::schema::{Column, Table, mentions_generated_type};
 
-use super::{HEADER, insert_field_type, push_and_chain, push_doc, types_import, update_field_type};
+use super::{
+    HEADER, insert_field_type, keys, push_and_chain, push_doc, update_field_type, use_paths,
+};
 
 pub fn render(table: &Table) -> String {
     let mut output = format!("{HEADER}\n");
-    let types = types_import(
-        "super::super",
-        table.columns.iter().map(|column| column.rust_type.as_str()),
-    );
-    if !types.is_empty() {
-        output.push_str(&format!("{types}\n"));
+    let mut imports = keys::id_imports(table, &table.columns, true);
+    if table
+        .columns
+        .iter()
+        .any(|column| mentions_generated_type(&column.rust_type))
+    {
+        imports.push("super::super::types".to_owned());
     }
+    if !imports.is_empty() {
+        output.push_str(&use_paths(&imports));
+        output.push('\n');
+    }
+    keys::render_key_type(&mut output, table);
     render_row(&mut output, table);
+    keys::render_row_key(&mut output, table);
 
     let insert_columns = table.insert_columns();
     if !insert_columns.is_empty() {
@@ -40,7 +49,8 @@ fn render_row(output: &mut String, table: &Table) {
         }
         output.push_str(&format!(
             "    pub {}: {},\n",
-            column.rust_name, column.rust_type
+            column.rust_name,
+            column.field_type()
         ));
     }
     output.push_str("}\n");

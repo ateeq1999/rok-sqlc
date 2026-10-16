@@ -1,14 +1,15 @@
 //! Executes the generated CRUD code against a real PostgreSQL database.
 //!
 //! Runs only when `ROK_SQLC_TEST_DATABASE_URL` is set. The database is reset
-//! (its `public` and `app` schemas are dropped), so point it at a throwaway
+//! (its `public`, `app`, and `legacy` schemas are dropped), so point it at a throwaway
 //! database, never one holding data you care about.
 
 use rok_sqlc_fixture_app::db;
 use rust_decimal::Decimal;
 use sqlx::PgPool;
 
-use db::patch_targets::models::{NewPatchTarget, PatchTarget, UpdatePatchTarget};
+use db::categories::models::CategoryId;
+use db::patch_targets::models::{NewPatchTarget, PatchTarget, PatchTargetId, UpdatePatchTarget};
 
 async fn fresh_database() -> Option<PgPool> {
     let Ok(url) = std::env::var("ROK_SQLC_TEST_DATABASE_URL") else {
@@ -17,11 +18,20 @@ async fn fresh_database() -> Option<PgPool> {
     };
     let pool = PgPool::connect(&url).await.expect("connect to test database");
     sqlx::raw_sql(
-        "DROP SCHEMA IF EXISTS app CASCADE; DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;",
+        "DROP SCHEMA IF EXISTS app CASCADE; DROP SCHEMA IF EXISTS legacy CASCADE;
+         DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;",
     )
     .execute(&pool)
     .await
     .expect("reset test database");
+    // A table outside the generator's input that shares its name with the
+    // generated `app.patch_targets`; `app.patch_links` references both.
+    sqlx::raw_sql(
+        "CREATE SCHEMA legacy; CREATE TABLE legacy.patch_targets (id BIGINT PRIMARY KEY);",
+    )
+    .execute(&pool)
+    .await
+    .expect("create the ungenerated legacy table");
     sqlx::raw_sql(db::schema::SCHEMA_SQL)
         .execute(&pool)
         .await
@@ -52,11 +62,113 @@ async fn generated_crud_against_postgres() {
     altered_table_has_its_final_columns(&pool).await;
     enums_keep_their_exact_labels(&pool).await;
     value_list_columns_round_trip(&pool).await;
+    typed_ids_flow_from_rows_to_foreign_keys(&pool).await;
+    foreign_keys_resolve_to_the_table_in_their_schema(&pool).await;
+}
+
+/// A category's typed id goes straight into a product's foreign key field
+/// and into a product filter; typed ids hash, order, display, and convert.
+async fn typed_ids_flow_from_rows_to_foreign_keys(pool: &PgPool) {
+    use std::collections::HashSet;
+
+    use db::categories::models::{CategoryId, NewCategory};
+    use db::products::filter::ProductFilter;
+    use db::products::models::{NewProduct, ProductId};
+    use db::search::{Ordered, Page, Sort};
+
+    let category = db::categories::write::create(
+        pool,
+        NewCategory {
+            name: "typed".to_owned(),
+            description: None,
+        },
+    )
+    .await
+    .unwrap();
+    let product_id = ProductId::from(uuid::Uuid::from_u128(7_001));
+    let product = db::products::write::create(
+        pool,
+        NewProduct {
+            id: product_id,
+            sku: "T-1".to_owned(),
+            name: "Typed".to_owned(),
+            category_id: category.id,
+            supplier_id: None,
+            price_cents: None,
+            stock_on_hand: None,
+            reorder_level: None,
+            weight_kg: None,
+            discontinued: None,
+            released_on: None,
+            created_at: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(product.category_id, category.id);
+
+    let found = db::products::read::search(
+        pool,
+        ProductFilter {
+            category_id: vec![Ordered::Eq(category.id)],
+            ..Default::default()
+        },
+        Sort::asc(db::products::filter::ProductSortKey::Sku),
+        Page::first(10),
+    )
+    .await
+    .unwrap();
+    assert_eq!(found, vec![product.clone()], "a category's id filters its products");
+
+    let fetched = db::products::read::get_by_id(pool, product_id).await.unwrap();
+    assert_eq!(fetched, Some(product));
+    let parent = db::categories::read::get_by_id(pool, category.id).await.unwrap();
+    assert_eq!(parent.map(|row| row.name), Some("typed".to_owned()));
+
+    // `Copy`: the id is used again after being passed by value above.
+    let raw: i64 = category.id.into();
+    assert_eq!(CategoryId::from(raw), category.id);
+    assert_eq!(category.id.to_string(), raw.to_string());
+    assert_eq!(product_id.to_string(), "00000000-0000-0000-0000-000000001b59");
+    assert!(CategoryId::from(1) < CategoryId::from(2));
+    let distinct: HashSet<CategoryId> = [category.id, category.id, CategoryId::from(raw + 1)]
+        .into_iter()
+        .collect();
+    assert_eq!(distinct.len(), 2);
+}
+
+/// `app.patch_links` references `app.patch_targets` (generated, so the field
+/// is a `PatchTargetId`) and `legacy.patch_targets` (not generated, so the
+/// field keeps `i64`).
+async fn foreign_keys_resolve_to_the_table_in_their_schema(pool: &PgPool) {
+    use db::patch_links::models::NewPatchLink;
+    use db::patch_targets::models::PatchTargetId;
+
+    let target = db::patch_targets::write::create(pool, base_patch_target())
+        .await
+        .unwrap();
+    sqlx::raw_sql("INSERT INTO legacy.patch_targets (id) VALUES (42)")
+        .execute(pool)
+        .await
+        .unwrap();
+    let target_id: PatchTargetId = target.id;
+    let legacy_target_id: Option<i64> = Some(42);
+    let link = db::patch_links::write::create(
+        pool,
+        NewPatchLink {
+            target_id,
+            legacy_target_id,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(link.target_id, target.id);
+    assert_eq!(link.legacy_target_id, Some(42));
 }
 
 /// Seeds five products in a fresh category, priced 100..=500, and returns
 /// the category id.
-async fn seed_search_products(pool: &PgPool) -> i64 {
+async fn seed_search_products(pool: &PgPool) -> CategoryId {
     use db::categories::models::NewCategory;
     use db::products::models::NewProduct;
 
@@ -78,7 +190,7 @@ async fn seed_search_products(pool: &PgPool) -> i64 {
             pool,
             NewProduct {
                 // Keys descend as rows are inserted, so physical order differs from key order.
-                id: uuid::Uuid::from_u128(506 - n as u128),
+                id: uuid::Uuid::from_u128(506 - n as u128).into(),
                 sku: format!("S-{n}"),
                 name: name.to_owned(),
                 category_id: category.id,
@@ -155,9 +267,9 @@ async fn search_filters_and_pages(pool: &PgPool) {
     keyset_pagination_follows_the_primary_key(pool, category).await;
 }
 
-async fn keyset_pagination_follows_the_primary_key(pool: &PgPool, category: i64) {
+async fn keyset_pagination_follows_the_primary_key(pool: &PgPool, category: CategoryId) {
     use db::feature_line_items::filter::FeatureLineItemFilter;
-    use db::feature_line_items::models::NewFeatureLineItem;
+    use db::feature_line_items::models::{FeatureLineItemKey, NewFeatureLineItem};
     use db::products::filter::ProductFilter;
     use db::products::read::search_after;
     use db::search::{Limit, MAX_PAGE_SIZE, Ordered, Page};
@@ -202,7 +314,10 @@ async fn keyset_pagination_follows_the_primary_key(pool: &PgPool, category: i64)
     let after_first = db::feature_line_items::read::search_after(
         pool,
         FeatureLineItemFilter::default(),
-        Some((id(1), id(1))),
+        Some(FeatureLineItemKey {
+            order_id: id(1),
+            product_id: id(1),
+        }),
         Limit::new(10),
     )
     .await
@@ -222,7 +337,7 @@ async fn keyset_pagination_follows_the_primary_key(pool: &PgPool, category: i64)
     assert_eq!(Limit::new(10_000).get(), MAX_PAGE_SIZE);
 }
 
-async fn sorting_is_allowlisted_and_stable(pool: &PgPool, category: i64) {
+async fn sorting_is_allowlisted_and_stable(pool: &PgPool, category: CategoryId) {
     use db::products::filter::{ProductFilter, ProductSortKey};
     use db::products::read::search;
     use db::search::{Ordered, Page, Sort};
@@ -262,7 +377,7 @@ async fn sorting_is_allowlisted_and_stable(pool: &PgPool, category: i64) {
     );
 }
 
-async fn null_checks_and_equality_filters(pool: &PgPool, category: i64) {
+async fn null_checks_and_equality_filters(pool: &PgPool, category: CategoryId) {
     use db::products::filter::{ProductFilter, ProductSortKey};
     use db::products::read::search;
     use db::search::{Equality, Ordered, Page, Sort};
@@ -306,8 +421,8 @@ async fn null_checks_and_equality_filters(pool: &PgPool, category: i64) {
 
     let by_id = skus_where(ProductFilter {
         id: vec![Equality::NotIn(vec![
-            uuid::Uuid::from_u128(501),
-            uuid::Uuid::from_u128(503),
+            uuid::Uuid::from_u128(501).into(),
+            uuid::Uuid::from_u128(503).into(),
         ])],
         supplier_id_is_null: Some(true),
         ..Default::default()
@@ -317,8 +432,8 @@ async fn null_checks_and_equality_filters(pool: &PgPool, category: i64) {
 
     let picked = skus_where(ProductFilter {
         id: vec![Equality::In(vec![
-            uuid::Uuid::from_u128(501),
-            uuid::Uuid::from_u128(502),
+            uuid::Uuid::from_u128(501).into(),
+            uuid::Uuid::from_u128(502).into(),
         ])],
         discontinued: vec![Equality::Ne(true)],
         ..Default::default()
@@ -362,7 +477,7 @@ async fn null_checks_and_equality_filters(pool: &PgPool, category: i64) {
     assert!(old.is_empty());
 }
 
-async fn text_filters_escape_like_wildcards(pool: &PgPool, category: i64) {
+async fn text_filters_escape_like_wildcards(pool: &PgPool, category: CategoryId) {
     use db::products::filter::{ProductFilter, ProductSortKey};
     use db::products::read::search;
     use db::search::{Ordered, Page, Sort, Text};
@@ -445,7 +560,7 @@ async fn annotated_queries(pool: &PgPool) {
     let supplier = db::suppliers::write::create(
         pool,
         db::suppliers::models::NewSupplier {
-            id: uuid::Uuid::from_u128(900),
+            id: uuid::Uuid::from_u128(900).into(),
             name: "Acme".to_owned(),
             contact_email: None,
             is_active: None,
@@ -461,12 +576,12 @@ async fn annotated_queries(pool: &PgPool) {
             id: uuid::Uuid::from_u128(101),
             sku: "Q-1".to_owned(),
             name: "Query hammer".to_owned(),
-            category_id: category.id,
-            supplier_id: Some(supplier.id),
+            category_id: category.id.into(),
+            supplier_id: Some(supplier.id.into()),
             id_2: uuid::Uuid::from_u128(102),
             sku_2: "Q-2".to_owned(),
             name_2: "Query anvil".to_owned(),
-            category_id_2: category.id,
+            category_id_2: category.id.into(),
             supplier_id_2: None,
         },
     )
@@ -490,7 +605,7 @@ async fn annotated_queries(pool: &PgPool) {
     queries::update_product_stock(pool, uuid::Uuid::from_u128(101), 50)
         .await
         .unwrap();
-    let low_stock: Vec<String> = queries::list_products_by_category(pool, category.id, 10)
+    let low_stock: Vec<String> = queries::list_products_by_category(pool, category.id.into(), 10)
         .await
         .unwrap()
         .into_iter()
@@ -510,7 +625,7 @@ async fn annotated_queries(pool: &PgPool) {
     assert_eq!(joined[1].supplier_name, None, "LEFT JOIN without a supplier");
 
     assert_eq!(
-        queries::count_products_in_category(pool, category.id)
+        queries::count_products_in_category(pool, category.id.into())
             .await
             .unwrap(),
         2
@@ -518,20 +633,20 @@ async fn annotated_queries(pool: &PgPool) {
     let stock = queries::category_stock(pool).await.unwrap();
     let ours = stock
         .iter()
-        .find(|row| row.category_id == category.id)
+        .find(|row| row.category_id == i64::from(category.id))
         .expect("category has stock");
     assert_eq!(ours.total_stock, 50);
 
-    let stocked = queries::stocked_categories(pool, 1, category.id)
+    let stocked = queries::stocked_categories(pool, 1, category.id.into())
         .await
         .unwrap();
     assert_eq!(stocked.len(), 1, "the CTE pre-aggregates per category");
-    assert_eq!(stocked[0].id, category.id);
+    assert_eq!(stocked[0].id, i64::from(category.id));
     assert_eq!(stocked[0].category_name, "query-cat");
     assert_eq!(stocked[0].product_count, 1, "only the hammer has stock >= 1");
     assert_eq!(stocked[0].total_stock, Some(50));
     assert!(
-        queries::stocked_categories(pool, 51, category.id)
+        queries::stocked_categories(pool, 51, category.id.into())
             .await
             .unwrap()
             .is_empty(),
@@ -697,7 +812,7 @@ async fn empty_and_missing_updates(pool: &PgPool) {
         .unwrap();
     assert_eq!(unchanged, Some(row), "empty patch returns the current row");
 
-    let missing_id = i64::MAX;
+    let missing_id = PatchTargetId::from(i64::MAX);
     let empty_missing = write::update(pool, missing_id, UpdatePatchTarget::default())
         .await
         .unwrap();
@@ -849,7 +964,7 @@ async fn uuid_keys_listing_and_pagination(pool: &PgPool) {
         let product = write::create(
             pool,
             NewProduct {
-                id: uuid::Uuid::from_u128(id),
+                id: uuid::Uuid::from_u128(id).into(),
                 sku: format!("SKU-{id}"),
                 name: format!("Product {id}"),
                 category_id: category.id,
@@ -872,25 +987,27 @@ async fn uuid_keys_listing_and_pagination(pool: &PgPool) {
         .await
         .unwrap()
         .iter()
-        .map(|row| row.id.as_u128())
+        .map(|row| uuid::Uuid::from(row.id).as_u128())
         .collect();
     assert_eq!(all, [1, 2, 3, 4, 5]);
 
     let mut paged = Vec::new();
     for page in 0..3 {
         let rows = read::list_page(pool, 2, page * 2).await.unwrap();
-        paged.extend(rows.iter().map(|row| row.id.as_u128()));
+        paged.extend(rows.iter().map(|row| uuid::Uuid::from(row.id).as_u128()));
     }
     assert_eq!(paged, all, "pages neither repeat nor skip rows");
     assert_eq!(read::count(pool).await.unwrap(), 5);
 
-    let first = read::get_by_id(pool, uuid::Uuid::from_u128(3)).await.unwrap().unwrap();
+    let first = read::get_by_id(pool, uuid::Uuid::from_u128(3).into()).await.unwrap().unwrap();
     assert_eq!(first.price_cents, 1999);
     assert_eq!(first.weight_kg, Some(1.5));
 }
 
 async fn composite_keys_arrays_and_numeric(pool: &PgPool) {
-    use db::feature_line_items::models::{NewFeatureLineItem, UpdateFeatureLineItem};
+    use db::feature_line_items::models::{
+        FeatureLineItemKey, NewFeatureLineItem, UpdateFeatureLineItem,
+    };
     use db::feature_line_items::{read, write};
 
     let order_id = uuid::Uuid::from_u128(10);
@@ -916,17 +1033,25 @@ async fn composite_keys_arrays_and_numeric(pool: &PgPool) {
         unit_price: Some(Decimal::new(2500, 2)),
         ..Default::default()
     };
-    let updated = write::update(pool, order_id, product_id, patch)
-        .await
-        .unwrap()
-        .unwrap();
+    let key = FeatureLineItemKey {
+        order_id,
+        product_id,
+    };
+    assert_eq!(row.key(), key, "a row hands back its key");
+    let updated = write::update(pool, key, patch).await.unwrap().unwrap();
     assert_eq!(updated.weekdays, None);
     assert_eq!(updated.unit_price, Decimal::new(2500, 2));
     assert_eq!(updated.labels, ["a", "b"]);
+    assert_eq!(read::get_by_id(pool, key).await.unwrap(), Some(updated));
 
-    assert!(read::exists_by_id(pool, order_id, product_id).await.unwrap());
-    assert!(!read::exists_by_id(pool, product_id, order_id).await.unwrap(), "key order matters");
-    assert!(write::delete(pool, order_id, product_id).await.unwrap());
+    let swapped = FeatureLineItemKey {
+        order_id: product_id,
+        product_id: order_id,
+    };
+    assert!(read::exists_by_id(pool, key).await.unwrap());
+    assert!(!read::exists_by_id(pool, swapped).await.unwrap(), "key parts are not interchangeable");
+    assert!(write::delete(pool, key).await.unwrap());
+    assert!(!read::exists_by_id(pool, key).await.unwrap());
 }
 
 /// `revised_notes` is created in extra_schema.sql and altered in
@@ -1085,7 +1210,7 @@ async fn enums_keep_their_exact_labels(pool: &PgPool) {
         .await
         .unwrap();
     assert_eq!(found.len(), 1);
-    assert_eq!(found[0].id, routine.id);
+    assert_eq!(found[0].id, i64::from(routine.id));
     assert_eq!(found[0].priority, TicketPriority::High);
     assert_eq!(found[0].state, None);
 }

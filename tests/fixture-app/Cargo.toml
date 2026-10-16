@@ -2,6 +2,7 @@
 name = "rok-sqlc-fixture-app"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
 publish = false
 
 [dependencies]
@@ -12,3 +13,8 @@ rust_decimal = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[features]
+# Compiles src/typed_id_mixup.rs, which must fail to compile (see
+# tests/fixture_compile.rs in rok-sqlc).
+typed-id-mixup = []

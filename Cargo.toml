@@ -4,6 +4,22 @@ version = "0.1.0"
 edition = "2024"
 description = "Generate SQLx Rust database modules from SQL schema files"
 license = "MIT OR Apache-2.0"
+rust-version = "1.88"
+repository = "https://github.com/ateeq1999/rok-sqlc"
+readme = "README.md"
+keywords = ["sqlx", "postgres", "codegen", "sql", "database"]
+categories = ["database", "development-tools", "command-line-utilities"]
+# Ship only what builds the library and binary. The integration tests need
+# the module corpus and the fixture crates, which stay in the repository.
+include = [
+    "/src/**/*.rs",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE-MIT",
+    "/LICENSE-APACHE",
+]
 
 [lib]
 name = "rok_sqlc"

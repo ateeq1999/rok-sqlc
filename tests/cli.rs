@@ -44,7 +44,8 @@ fn generates_resource_modules() -> Result<()> {
 
     let models = fs::read_to_string(out.join("users/models.rs"))?;
     assert!(models.contains("pub struct User {"));
-    assert!(models.contains("pub id: uuid::Uuid,"));
+    assert!(models.contains("pub struct UserId(pub uuid::Uuid);"));
+    assert!(models.contains("pub id: UserId,"));
     assert!(models.contains("pub email: String,"));
 
     let read = fs::read_to_string(out.join("users/read.rs"))?;
@@ -55,9 +56,9 @@ fn generates_resource_modules() -> Result<()> {
     let write = fs::read_to_string(out.join("users/write.rs"))?;
     assert!(write.contains("pub async fn create<'e, E>(executor: E, input: NewUser)"));
     assert!(write.contains(
-        "pub async fn update<'e, E>(\n    executor: E,\n    id: uuid::Uuid,\n    input: UpdateUser,\n)"
+        "pub async fn update<'e, E>(\n    executor: E,\n    id: UserId,\n    input: UpdateUser,\n)"
     ));
-    assert!(write.contains("pub async fn delete<'e, E>(executor: E, id: uuid::Uuid)"));
+    assert!(write.contains("pub async fn delete<'e, E>(executor: E, id: UserId)"));
 
     for generated in [&read, &write] {
         assert!(
@@ -102,13 +103,60 @@ fn generates_composite_keys_arrays_and_time() -> Result<()> {
     assert!(models.contains("pub weekdays: Option<Vec<i32>>,"));
     assert!(models.contains("pub cut_off: chrono::NaiveTime,"));
 
-    let read = fs::read_to_string(out.join("line_items/read.rs"))?;
-    assert!(read.contains(
-        "pub async fn get_by_id<'e, E>(\n    executor: E,\n    order_id: uuid::Uuid,\n    product_id: uuid::Uuid,\n)"
+    assert!(models.contains(
+        "pub struct LineItemKey {\n    pub order_id: uuid::Uuid,\n    pub product_id: uuid::Uuid,\n}"
     ));
+
+    let read = fs::read_to_string(out.join("line_items/read.rs"))?;
+    assert!(read.contains("get_by_id<'e, E>(\n    executor: E,\n    key: LineItemKey,\n)"));
     assert!(read.contains("WHERE order_id = $1 AND product_id = $2"));
-    assert!(read.contains(".bind(order_id)"));
-    assert!(read.contains(".bind(product_id)"));
+    assert!(read.contains(".bind(key.order_id)"));
+    assert!(read.contains(".bind(key.product_id)"));
+    assert!(read.contains("    after: Option<LineItemKey>,\n"));
+    Ok(())
+}
+
+/// `core.users` and `audit.users` share a name, so only the first one
+/// declared is generated (the other's module name collides). A foreign key
+/// takes the generated table's typed id only when its schema matches.
+#[test]
+fn foreign_keys_resolve_to_the_table_in_their_schema() -> Result<()> {
+    let generate = |first: &str, second: &str| -> Result<String> {
+        let dir = TempDir::new()?;
+        let schema = dir.path().join("schema.sql");
+        fs::write(
+            &schema,
+            format!(
+                "CREATE TABLE {first}.users (id UUID PRIMARY KEY);
+                 CREATE TABLE {second}.users (id UUID PRIMARY KEY);
+                 CREATE TABLE posts (
+                     id BIGSERIAL PRIMARY KEY,
+                     author_id UUID NOT NULL REFERENCES core.users (id),
+                     auditor_id UUID REFERENCES audit.users (id)
+                 );"
+            ),
+        )?;
+        run(&[
+            "generate",
+            "--schema",
+            schema.to_str().unwrap(),
+            "--output",
+            output_dir(&dir).to_str().unwrap(),
+            "--lenient",
+        ])?;
+        Ok(fs::read_to_string(
+            output_dir(&dir).join("posts/models.rs"),
+        )?)
+    };
+
+    let core_generated = generate("core", "audit")?;
+    assert!(core_generated.contains("use super::super::users::models::UserId;"));
+    assert!(core_generated.contains("    pub author_id: UserId,\n"));
+    assert!(core_generated.contains("    pub auditor_id: Option<uuid::Uuid>,\n"));
+
+    let audit_generated = generate("audit", "core")?;
+    assert!(audit_generated.contains("    pub author_id: uuid::Uuid,\n"));
+    assert!(audit_generated.contains("    pub auditor_id: Option<UserId>,\n"));
     Ok(())
 }
 
@@ -184,11 +232,13 @@ fn generates_products_fixture_with_singular_names_and_schema_qualified_sql() -> 
 
     let out = output_dir(&dir);
     let models = fs::read_to_string(out.join("products/models.rs"))?;
+    // `--resource` leaves categories and suppliers ungenerated, so the
+    // foreign keys to them keep their raw types.
     assert!(models.contains(
         "/// A row of the `catalog.products` table.
 #[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
 pub struct Product {
-    pub id: uuid::Uuid,
+    pub id: ProductId,
     pub sku: String,
     pub name: String,
     pub category_id: i64,
@@ -208,7 +258,7 @@ pub struct Product {
 
     let read = fs::read_to_string(out.join("products/read.rs"))?;
     assert!(read.contains(
-        "pub async fn get_by_id<'e, E>(executor: E, id: uuid::Uuid) -> Result<Option<Product>, sqlx::Error>
+        "pub async fn get_by_id<'e, E>(executor: E, id: ProductId) -> Result<Option<Product>, sqlx::Error>
 where
     E: sqlx::PgExecutor<'e>,
 {

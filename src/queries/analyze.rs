@@ -434,6 +434,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
                 has_default: false,
                 is_generated: false,
                 value_list: None,
+                typed_id: None,
             });
         }
         self.ctes.push(Rc::new(Table {

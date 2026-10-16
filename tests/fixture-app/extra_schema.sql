@@ -64,6 +64,17 @@ CREATE TABLE revised_notes (
     legacy TEXT NOT NULL
 );
 
+-- Foreign keys to two tables named `patch_targets` in different schemas.
+-- `app.patch_targets` is generated, so `target_id` uses its typed id;
+-- `legacy.patch_targets` is created by tests/fixture-app/tests/postgres.rs
+-- before this schema and is not generated, so `legacy_target_id` keeps `i64`.
+CREATE TABLE app.patch_links (
+    id BIGSERIAL PRIMARY KEY,
+    target_id BIGINT NOT NULL REFERENCES app.patch_targets (id),
+    legacy_target_id BIGINT REFERENCES legacy.patch_targets (id)
+);
+
+
 -- Enum types whose labels are mixed-case, upper-case, and spaced; each
 -- variant keeps its exact label. `app.ticket_state` is schema-qualified and
 -- gains a value in alter_schema.sql.

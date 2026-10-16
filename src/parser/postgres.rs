@@ -890,6 +890,7 @@ fn build_column(
             } if referred_columns.len() == 1 => {
                 foreign_key = Some(ForeignKey {
                     column: column_name.clone(),
+                    referenced_schema: object_schema_name(foreign_table),
                     referenced_table: object_leaf_name(foreign_table),
                     referenced_column: ident_name(&referred_columns[0]),
                 });
@@ -1005,6 +1006,7 @@ fn constraint_foreign_key(constraint: &TableConstraint) -> Option<ForeignKey> {
             ..
         } if columns.len() == 1 && referred_columns.len() == 1 => Some(ForeignKey {
             column: ident_name(&columns[0]),
+            referenced_schema: object_schema_name(foreign_table),
             referenced_table: object_leaf_name(foreign_table),
             referenced_column: ident_name(&referred_columns[0]),
         }),
@@ -1080,6 +1082,7 @@ impl RawColumn {
             has_default: self.has_default,
             is_generated: self.is_generated,
             value_list: None,
+            typed_id: None,
         }
     }
 }
@@ -1446,7 +1449,26 @@ mod tests {
             "CREATE TABLE posts (id BIGSERIAL PRIMARY KEY, author_id UUID, FOREIGN KEY (author_id) REFERENCES users (id));",
         );
         assert_eq!(table.foreign_keys.len(), 1);
+        assert_eq!(table.foreign_keys[0].referenced_schema, None);
         assert_eq!(table.foreign_keys[0].referenced_table, "users");
+    }
+
+    #[test]
+    fn foreign_keys_keep_the_referenced_schema() {
+        let table = one_table(
+            "CREATE TABLE posts (
+                id BIGSERIAL PRIMARY KEY,
+                author_id UUID REFERENCES core.users (id),
+                editor_id UUID,
+                FOREIGN KEY (editor_id) REFERENCES \"Audit\".users (id)
+            );",
+        );
+        let schemas: Vec<Option<&str>> = table
+            .foreign_keys
+            .iter()
+            .map(|key| key.referenced_schema.as_deref())
+            .collect();
+        assert_eq!(schemas, [Some("core"), Some("Audit")]);
     }
 
     #[test]
@@ -1621,6 +1643,10 @@ mod tests {
         assert!(table.columns[0].is_primary_key);
         assert_eq!(table.foreign_keys.len(), 1);
         assert_eq!(table.foreign_keys[0].column, "author_id");
+        assert_eq!(
+            table.foreign_keys[0].referenced_schema.as_deref(),
+            Some("app")
+        );
         assert_eq!(table.foreign_keys[0].referenced_table, "users");
         assert_eq!(table.foreign_keys[0].referenced_column, "id");
         assert_eq!(table.unique_keys, [UniqueKey::new(vec!["slug".to_owned()])]);

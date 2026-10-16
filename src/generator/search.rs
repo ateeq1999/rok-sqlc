@@ -6,10 +6,10 @@
 //! Conditions are rendered from schema column names only; every value is
 //! bound.
 
-use crate::schema::{Column, FilterKind, Table};
+use crate::schema::{Column, FilterKind, Table, mentions_generated_type};
 
 use super::sql::{ident, str_literal};
-use super::{HEADER, push_doc, types_import};
+use super::{HEADER, push_doc};
 
 /// Which search functions a resource gets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +48,7 @@ impl FilterKind {
     fn condition_type(self, column: &Column) -> String {
         match self {
             FilterKind::Text => self.type_name().to_owned(),
-            _ => format!("{}<{}>", self.type_name(), column.sqlx_type),
+            _ => format!("{}<{}>", self.type_name(), column.value_type()),
         }
     }
 }
@@ -122,21 +122,28 @@ pub fn render_filter(table: &Table) -> Option<String> {
     }
     imports.sort_unstable();
     imports.dedup();
-    match imports.as_slice() {
-        [] => {}
-        [single] => output.push_str(&format!("use super::super::search::{single};\n")),
-        many => output.push_str(&format!(
-            "use super::super::search::{{{}}};\n",
-            many.join(", ")
-        )),
-    }
-    output.push_str(&types_import(
-        "super::super",
+    let mut paths = match imports.as_slice() {
+        [] => Vec::new(),
+        [single] => vec![format!("super::super::search::{single}")],
+        many => vec![format!("super::super::search::{{{}}}", many.join(", "))],
+    };
+    // Typed ids appear in `Ordered<_>`/`Equality<_>` conditions only.
+    paths.extend(super::keys::id_imports(
+        table,
         filterable
             .iter()
-            .map(|(column, _)| column.sqlx_type.as_str()),
+            .filter(|(_, kind)| *kind != FilterKind::Text)
+            .map(|(column, _)| *column),
+        false,
     ));
-    if output.len() > HEADER.len() + 1 {
+    if filterable
+        .iter()
+        .any(|(column, _)| mentions_generated_type(column.value_type()))
+    {
+        paths.push("super::super::types".to_owned());
+    }
+    if !paths.is_empty() {
+        output.push_str(&super::use_paths(&paths));
         output.push('\n');
     }
     push_doc(

@@ -11,8 +11,8 @@ use crate::schema::{Column, Table};
 
 use super::sql::{column_clause, ident, key_predicate, str_literal, table_ref};
 use super::{
-    HEADER, MAX_WIDTH, StaticQuery, key_params, param_name, push_and_chain, push_build_and_fetch,
-    push_doc, push_fn_head, push_let_call, types_import,
+    HEADER, StaticQuery, keys, push_and_chain, push_build_and_fetch, push_doc, push_fn_head,
+    push_let_call, types_import, use_list,
 };
 
 pub fn render(table: &Table) -> String {
@@ -28,12 +28,15 @@ pub fn render(table: &Table) -> String {
     if has_update {
         imports.push(format!("Update{}", table.struct_name));
     }
+    imports.extend(super::keys::key_items(table));
     imports.sort();
-    // Key parameters use the key columns' types.
-    let types = types_import(
-        "super::super",
-        keys.iter().map(|key| key.sqlx_type.as_str()),
-    );
+    // Key parameters use the key's type: an enum key column's type, never a
+    // key struct's fields.
+    let types = if keys.is_empty() {
+        String::new()
+    } else {
+        types_import("super::super", [super::keys::key_type(table).as_str()])
+    };
     let mut output = format!("{HEADER}\n{types}{}", use_models(&imports));
 
     if insert_columns.is_empty() {
@@ -71,20 +74,7 @@ pub fn render(table: &Table) -> String {
 /// `use super::models::...;` for sorted `names`, wrapped like rustfmt wraps a
 /// use list that does not fit on one line.
 fn use_models(names: &[String]) -> String {
-    if let [name] = names {
-        return format!("use super::models::{name};\n");
-    }
-    let one_line = format!("use super::models::{{{}}};", names.join(", "));
-    if one_line.len() <= MAX_WIDTH {
-        return format!("{one_line}\n");
-    }
-    let inner = format!("    {},", names.join(", "));
-    if inner.len() <= MAX_WIDTH {
-        format!("use super::models::{{\n{inner}\n}};\n")
-    } else {
-        let lines: String = names.iter().map(|name| format!("    {name},\n")).collect();
-        format!("use super::models::{{\n{lines}}};\n")
-    }
+    use_list("super::models", names)
 }
 
 fn returning_clause(table: &Table) -> Vec<String> {
@@ -208,8 +198,8 @@ fn render_dynamic_create(output: &mut String, table: &Table, columns: &[&Column]
     output.push_str("}\n");
 }
 
-fn render_update(output: &mut String, table: &Table, keys: &[&Column], columns: &[&Column]) {
-    let mut params = key_params(keys);
+fn render_update(output: &mut String, table: &Table, key_columns: &[&Column], columns: &[&Column]) {
+    let mut params = vec![keys::key_param(table)];
     params.push(format!("input: Update{}", table.struct_name));
 
     output.push('\n');
@@ -229,11 +219,10 @@ fn render_update(output: &mut String, table: &Table, keys: &[&Column], columns: 
         &format!("Result<Option<{}>, sqlx::Error>", table.struct_name),
     );
 
-    let key_arguments: Vec<String> = keys.iter().map(|column| param_name(column)).collect();
     output.push_str("    if input.is_empty() {\n");
     output.push_str(&format!(
         "        return super::read::get_by_id(executor, {}).await;\n",
-        key_arguments.join(", ")
+        keys::key_binding(table)
     ));
     output.push_str("    }\n\n");
 
@@ -257,20 +246,20 @@ fn render_update(output: &mut String, table: &Table, keys: &[&Column], columns: 
         output.push_str("        assignments.push_bind_unseparated(value);\n");
         output.push_str("    }\n");
     }
-    for (index, column) in keys.iter().enumerate() {
+    for (index, (column, bind)) in key_columns.iter().zip(keys::key_binds(table)).enumerate() {
         let connective = if index == 0 { " WHERE" } else { " AND" };
         output.push_str(&format!(
             "    query.push({});\n",
             str_literal(&format!("{connective} {} = ", ident(&column.sql_name)))
         ));
-        output.push_str(&format!("    query.push_bind({});\n", param_name(column)));
+        output.push_str(&format!("    query.push_bind({bind});\n"));
     }
     push_returning(output, table);
     push_build_and_fetch(output, table, "fetch_optional");
     output.push_str("}\n");
 }
 
-fn render_delete(output: &mut String, table: &Table, keys: &[&Column]) {
+fn render_delete(output: &mut String, table: &Table, key_columns: &[&Column]) {
     output.push('\n');
     push_doc(
         output,
@@ -280,16 +269,16 @@ fn render_delete(output: &mut String, table: &Table, keys: &[&Column]) {
     push_fn_head(
         output,
         "delete",
-        &key_params(keys),
+        &[keys::key_param(table)],
         "Result<bool, sqlx::Error>",
     );
     StaticQuery {
         call: "sqlx::query",
         sql: vec![
             format!("DELETE FROM {}", table_ref(table)),
-            format!("WHERE {}", key_predicate(keys, 1)),
+            format!("WHERE {}", key_predicate(key_columns, 1)),
         ],
-        binds: keys.iter().map(|column| param_name(column)).collect(),
+        binds: keys::key_binds(table),
         execute: "execute(executor)",
     }
     .push(output, 4, "let result = ", "?;");
@@ -383,11 +372,11 @@ mod tests {
             &["order_id", "product_id"],
         ));
         assert!(rendered.contains(
-            "pub async fn update<'e, E>(\n    executor: E,\n    order_id: uuid::Uuid,\n    product_id: uuid::Uuid,\n    input: UpdateUser,\n) -> Result<Option<User>, sqlx::Error>"
+            "pub async fn update<'e, E>(\n    executor: E,\n    key: UserKey,\n    input: UpdateUser,\n) -> Result<Option<User>, sqlx::Error>"
         ));
-        assert!(rendered.contains("    if input.is_empty() {\n        return super::read::get_by_id(executor, order_id, product_id).await;\n    }\n"));
+        assert!(rendered.contains("    if input.is_empty() {\n        return super::read::get_by_id(executor, key).await;\n    }\n"));
         assert!(rendered.contains("    if let Some(value) = input.quantity {\n        assignments.push(\"quantity = \");\n        assignments.push_bind_unseparated(value);\n    }\n"));
-        assert!(rendered.contains("    query.push(\" WHERE order_id = \");\n    query.push_bind(order_id);\n    query.push(\" AND product_id = \");\n    query.push_bind(product_id);\n"));
+        assert!(rendered.contains("    query.push(\" WHERE order_id = \");\n    query.push_bind(key.order_id);\n    query.push(\" AND product_id = \");\n    query.push_bind(key.product_id);\n"));
         assert!(
             !rendered.contains("sets.len()"),
             "placeholders come from QueryBuilder, not arithmetic"
@@ -486,6 +475,31 @@ mod tests {
         assert_eq!(
             use_models(&names("ControlledSubstanceEntry")),
             "use super::models::{\n    ControlledSubstanceEntry, NewControlledSubstanceEntry, UpdateControlledSubstanceEntry,\n};\n"
+        );
+        // 99 columns on one line: rustfmt already wraps it (98 is the most).
+        let at_limit = [
+            "ExpenseCategory",
+            "ExpenseCategoryId",
+            "NewExpenseCategory",
+            "UpdateExpenseCategory",
+        ]
+        .map(str::to_owned);
+        assert_eq!(
+            use_models(&at_limit),
+            "use super::models::{\n    ExpenseCategory, ExpenseCategoryId, NewExpenseCategory, UpdateExpenseCategory,\n};\n"
+        );
+        // A list too long for one indented line is packed greedily, as
+        // rustfmt's mixed import layout does.
+        let packed = [
+            "CustomFieldDefinition",
+            "CustomFieldDefinitionId",
+            "NewCustomFieldDefinition",
+            "UpdateCustomFieldDefinition",
+        ]
+        .map(str::to_owned);
+        assert_eq!(
+            use_models(&packed),
+            "use super::models::{\n    CustomFieldDefinition, CustomFieldDefinitionId, NewCustomFieldDefinition,\n    UpdateCustomFieldDefinition,\n};\n"
         );
         let huge = "VeryLongTableNameThatKeepsGoingAndGoingAndGoing";
         assert!(use_models(&names(huge)).contains(&format!("{{\n    {huge},\n    New{huge},\n")));
