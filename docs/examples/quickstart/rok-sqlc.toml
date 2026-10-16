@@ -1,0 +1,3 @@
+schema  = ["migrations/"]
+queries = ["queries.sql"]
+output  = "src/db"

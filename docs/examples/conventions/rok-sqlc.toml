@@ -1,0 +1,5 @@
+schema = "migrations/"
+output = "src/db"
+
+[conventions]
+preset = "rok"
