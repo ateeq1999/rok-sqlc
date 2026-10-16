@@ -23,6 +23,10 @@ pub struct EnumType {
     pub rust_name: String,
     /// Variants in the database's sort order.
     pub variants: Vec<EnumVariant>,
+    /// For a value-list column's enum, the column it restricts as written in
+    /// DDL (`catalog.products.product_type`); such an enum encodes as text.
+    /// `None` for a database enum type.
+    pub column: Option<String>,
 }
 
 impl EnumType {
@@ -121,6 +125,10 @@ pub struct Column {
     /// The database always owns the value (serial, identity, or GENERATED);
     /// the column is never inserted or updated by generated code.
     pub is_generated: bool,
+    /// The values a `CHECK (col IN ('a', ...))` restricts this text column to,
+    /// deduplicated in list order. The parser turns such a column into a
+    /// value-list enum; `None` for other columns.
+    pub value_list: Option<Vec<String>>,
 }
 
 /// How a column can be filtered by the generated `search` API.

@@ -1,12 +1,12 @@
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use sqlparser::ast::{
     AlterTableOperation, AlterType, AlterTypeAddValue, AlterTypeAddValuePosition,
     AlterTypeOperation, ArrayElemTypeDef, ColumnDef, ColumnOption, CreateIndex, CreateTable,
     DataType, ExactNumberInfo, Expr, Ident, IndexColumn, ObjectName, ObjectNamePart, Spanned,
-    Statement, TableConstraint, TimezoneInfo, UserDefinedTypeRepresentation,
+    Statement, TableConstraint, TimezoneInfo, UserDefinedTypeRepresentation, Value,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -48,8 +48,8 @@ pub fn parse_schema(sql: &str) -> Result<ParsedSchema> {
 /// it could not apply.
 ///
 /// Later statements change earlier tables: `ALTER TABLE` adds, drops, and
-/// renames columns and adds primary key, unique, and foreign key
-/// constraints, and `CREATE UNIQUE INDEX` on plain columns records a unique
+/// renames columns and adds primary key, unique, foreign key, and value-list
+/// check constraints, and `CREATE UNIQUE INDEX` on plain columns records a unique
 /// key. Any other `ALTER TABLE` clause on a known table fails that table.
 /// Statements that leave the model unchanged (row-level security, policies,
 /// non-unique indexes, grants, triggers, comments, functions, `SELECT`
@@ -60,6 +60,8 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
     let mut failures = Vec::new();
     let mut seen_modules: HashSet<String> = HashSet::new();
     let mut enums = EnumRegistry::default();
+    // Where each table was created, for failures found after every statement.
+    let mut created: HashMap<String, (PathBuf, Option<usize>)> = HashMap::new();
 
     for source in sources {
         let statements = Parser::parse_sql(&dialect, source.sql).with_context(|| {
@@ -87,6 +89,8 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
                         )
                     }
                     Ok(table) if seen_modules.insert(table.module_name.clone()) => {
+                        created
+                            .insert(table.module_name.clone(), (source.path.to_path_buf(), line));
                         tables.push(table);
                         continue;
                     }
@@ -154,14 +158,31 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
         }
     }
 
+    // Value lists become enums once every statement has shaped their tables.
+    let (value_lists, broken) = resolve_value_lists(&mut tables, &enums);
+    tables.retain(|table| {
+        let Some(reason) = broken.get(&table.module_name) else {
+            return true;
+        };
+        let (path, line) = created.remove(&table.module_name).unwrap_or_default();
+        failures.push(TableFailure {
+            path: Some(path),
+            line,
+            ..table_failure(&table.sql_name, reason.clone())
+        });
+        false
+    });
+
     if tables.is_empty() && failures.is_empty() {
         bail!("no supported CREATE TABLE statements found");
     }
 
+    let mut all_enums = enums.into_generatable();
+    all_enums.extend(value_lists);
     Ok(ParsedSchema {
         schema: Schema {
             tables,
-            enums: enums.into_generatable(),
+            enums: all_enums,
         },
         failures,
     })
@@ -173,6 +194,73 @@ fn uses_type(table: &Table, rust_path: &str) -> bool {
     table.columns.iter().any(|column| {
         column.sqlx_type == rust_path || column.sqlx_type == format!("Vec<{rust_path}>")
     })
+}
+
+/// Turns every value-list column into an enum named after its table and
+/// column (`products.product_type` → `ProductProductType`), in table and
+/// column order. A table whose value list cannot be generated (unusable or
+/// colliding labels, or a name another enum already took) is reported by
+/// module name with the reason, and its other value lists are not generated.
+fn resolve_value_lists(
+    tables: &mut [Table],
+    enums: &EnumRegistry,
+) -> (Vec<EnumType>, HashMap<String, String>) {
+    let mut generated: Vec<EnumType> = Vec::new();
+    let mut broken = HashMap::new();
+    for table in tables.iter_mut() {
+        let mut table_enums = Vec::new();
+        let mut failure = None;
+        for column in &table.columns {
+            let Some(labels) = &column.value_list else {
+                continue;
+            };
+            let rust_name =
+                naming::type_name(&format!("{}_{}", table.struct_name, column.rust_name));
+            let taken = enums.has_rust_name(&rust_name)
+                || generated
+                    .iter()
+                    .chain(&table_enums)
+                    .any(|other: &EnumType| other.rust_name == rust_name);
+            let variants = if taken {
+                Err(format!(
+                    "its Rust name `{rust_name}` is already used by another enum type"
+                ))
+            } else {
+                enum_variants(labels.clone())
+            };
+            match variants {
+                Ok(variants) => table_enums.push(EnumType {
+                    schema: None,
+                    sql_name: column.sql_name.clone(),
+                    rust_name,
+                    variants,
+                    column: Some(format!("{}.{}", table.display_name(), column.sql_name)),
+                }),
+                Err(reason) => {
+                    failure = Some(format!(
+                        "column `{}`: value list cannot be generated: {reason}",
+                        column.sql_name
+                    ));
+                    break;
+                }
+            }
+        }
+        if let Some(reason) = failure {
+            broken.insert(table.module_name.clone(), reason);
+            continue;
+        }
+        for enum_type in table_enums {
+            let column = table
+                .columns
+                .iter_mut()
+                .find(|column| Some(&column.sql_name) == Some(&enum_type.sql_name))
+                .expect("value-list enums come from the table's columns");
+            column.sqlx_type = enum_type.rust_path();
+            column.rust_type = rust_type(&column.sqlx_type, column.nullable);
+            generated.push(enum_type);
+        }
+    }
+    (generated, broken)
 }
 
 /// Enum types defined so far. A type that cannot be generated (unusable or
@@ -233,6 +321,13 @@ impl EnumRegistry {
         })
     }
 
+    /// Whether any enum type, generatable or not, has this Rust name.
+    fn has_rust_name(&self, rust_name: &str) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| entry.enum_type.rust_name == rust_name)
+    }
+
     fn lookup(&self, name: &ObjectName) -> Option<&EnumEntry> {
         self.position(name).map(|index| &self.entries[index])
     }
@@ -274,6 +369,7 @@ impl EnumRegistry {
                 sql_name,
                 rust_name,
                 variants: Vec::new(),
+                column: None,
             },
             broken,
         };
@@ -498,6 +594,11 @@ fn add_column(
     }
     table.foreign_keys.extend(built.foreign_key);
     table.columns.push(built.raw.into_column(built.inline_pk));
+    for (column, labels) in built.value_lists {
+        if let Some(index) = column_index(table, &column) {
+            restrict_to_values(&mut table.columns[index], labels);
+        }
+    }
     Ok(())
 }
 
@@ -603,6 +704,13 @@ fn add_constraint(
                 .foreign_keys
                 .extend(constraint_foreign_key(constraint));
         }
+        TableConstraint::Check { expr, .. }
+            if let Some((name, labels)) = value_list_check(expr)
+                && let Some(index) = column_index(table, &name)
+                && table.columns[index].sqlx_type == "String" =>
+        {
+            restrict_to_values(&mut table.columns[index], labels);
+        }
         other => return Err(format!("unsupported ALTER TABLE clause `ADD {other}`")),
     }
     Ok(())
@@ -655,6 +763,7 @@ fn build_table(
     let mut foreign_keys = Vec::new();
     let mut unique_keys = Vec::new();
     let mut inline_primary_keys: Vec<String> = Vec::new();
+    let mut value_lists: Vec<(String, Vec<String>)> = Vec::new();
 
     for column_def in &create.columns {
         let built = build_column(column_def, enums).map_err(fail)?;
@@ -668,6 +777,7 @@ fn build_table(
             unique_keys.push(UniqueKey::new(vec![built.raw.sql_name.clone()]));
         }
         foreign_keys.extend(built.foreign_key);
+        value_lists.extend(built.value_lists);
         raw_columns.push(built.raw);
     }
 
@@ -689,6 +799,7 @@ fn build_table(
                     unique_keys.push(UniqueKey::new(keys));
                 }
             }
+            TableConstraint::Check { expr, .. } => value_lists.extend(value_list_check(expr)),
             other => foreign_keys.extend(constraint_foreign_key(other)),
         }
     }
@@ -707,13 +818,18 @@ fn build_table(
         }
     }
 
-    let columns: Vec<Column> = raw_columns
+    let mut columns: Vec<Column> = raw_columns
         .into_iter()
         .map(|raw| {
             let is_primary_key = primary_key.contains(&raw.sql_name);
             raw.into_column(is_primary_key)
         })
         .collect();
+    for (name, labels) in value_lists {
+        if let Some(column) = columns.iter_mut().find(|column| column.sql_name == name) {
+            restrict_to_values(column, labels);
+        }
+    }
 
     check_search_names(&columns).map_err(fail)?;
     let module_name = naming::rust_identifier(&sql_name).map_err(fail)?;
@@ -738,6 +854,9 @@ struct BuiltColumn {
     inline_pk: bool,
     unique: bool,
     foreign_key: Option<ForeignKey>,
+    /// Value-list `CHECK`s declared inline, by the column they name (usually
+    /// this one, but PostgreSQL lets a column check name any column).
+    value_lists: Vec<(String, Vec<String>)>,
 }
 
 fn build_column(
@@ -751,6 +870,7 @@ fn build_column(
     let mut inline_pk = false;
     let mut unique = false;
     let mut foreign_key = None;
+    let mut value_lists = Vec::new();
     let mut is_generated = is_serial_type(&column_def.data_type);
     let mut has_default = is_generated;
     for option in &column_def.options {
@@ -775,6 +895,7 @@ fn build_column(
                 });
             }
             ColumnOption::Default(_) => has_default = true,
+            ColumnOption::Check(expr) => value_lists.extend(value_list_check(expr)),
             ColumnOption::Generated { .. } | ColumnOption::Identity(_) => {
                 has_default = true;
                 is_generated = true;
@@ -799,7 +920,57 @@ fn build_column(
         inline_pk,
         unique,
         foreign_key,
+        value_lists,
     })
+}
+
+/// The column and values of a value-list check, `col IN ('a', 'b', …)`
+/// (parenthesized or not), with duplicate values dropped. Any other shape,
+/// including `NOT IN` and lists holding anything but string literals, is
+/// `None`.
+fn value_list_check(expr: &Expr) -> Option<(String, Vec<String>)> {
+    match expr {
+        Expr::Nested(inner) => value_list_check(inner),
+        Expr::InList {
+            expr,
+            list,
+            negated: false,
+        } => {
+            let Expr::Identifier(column) = expr.as_ref() else {
+                return None;
+            };
+            let mut labels: Vec<String> = Vec::with_capacity(list.len());
+            for item in list {
+                let Expr::Value(value) = item else {
+                    return None;
+                };
+                let Value::SingleQuotedString(label) = &value.value else {
+                    return None;
+                };
+                if !labels.contains(label) {
+                    labels.push(label.clone());
+                }
+            }
+            Some((ident_name(column), labels))
+        }
+        _ => None,
+    }
+}
+
+/// Restricts a text column to a list of values. A second value list on the
+/// same column keeps only the values both allow. Other column types are left
+/// alone, like checks of any other shape.
+fn restrict_to_values(column: &mut Column, labels: Vec<String>) {
+    if column.sqlx_type != "String" {
+        return;
+    }
+    column.value_list = Some(match column.value_list.take() {
+        Some(existing) => existing
+            .into_iter()
+            .filter(|label| labels.contains(label))
+            .collect(),
+        None => labels,
+    });
 }
 
 fn field_taken(raw: &RawColumn) -> String {
@@ -908,6 +1079,7 @@ impl RawColumn {
             is_primary_key,
             has_default: self.has_default,
             is_generated: self.is_generated,
+            value_list: None,
         }
     }
 }
@@ -1784,5 +1956,194 @@ mod tests {
                 .reason
                 .contains("reserved for the generated `db/types.rs`")
         );
+    }
+
+    fn enum_summary(schema: &Schema) -> Vec<(String, Option<&str>, Vec<&str>)> {
+        schema
+            .enums
+            .iter()
+            .map(|enum_type| {
+                (
+                    enum_type.rust_name.clone(),
+                    enum_type.column.as_deref(),
+                    enum_type
+                        .variants
+                        .iter()
+                        .map(|variant| variant.label.as_str())
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn value_list_columns_become_enums_named_after_table_and_column() {
+        let parsed = parse(
+            "CREATE TABLE catalog.products (
+                 id BIGSERIAL PRIMARY KEY,
+                 product_type TEXT NOT NULL DEFAULT 'stocked'
+                     CHECK (product_type IN ('stocked', 'Made To Order', 'stocked')),
+                 measures VARCHAR(20),
+                 type TEXT CHECK (type IN ('a', 'b')),
+                 CONSTRAINT measures_known CHECK (measures IN ('count', 'weight'))
+             );
+             CREATE TABLE orders (
+                 id BIGSERIAL PRIMARY KEY,
+                 status TEXT NOT NULL CHECK (status IN ('open', 'closed'))
+             );
+             CREATE TABLE invoices (
+                 id BIGSERIAL PRIMARY KEY,
+                 status TEXT NOT NULL CHECK (status IN ('draft', 'paid'))
+             );",
+        );
+        assert!(parsed.failures.is_empty(), "{:?}", parsed.failures);
+        assert_eq!(
+            enum_summary(&parsed.schema),
+            [
+                (
+                    "ProductProductType".to_owned(),
+                    Some("catalog.products.product_type"),
+                    vec!["stocked", "Made To Order"],
+                ),
+                (
+                    "ProductMeasures".to_owned(),
+                    Some("catalog.products.measures"),
+                    vec!["count", "weight"],
+                ),
+                (
+                    "ProductType".to_owned(),
+                    Some("catalog.products.type"),
+                    vec!["a", "b"],
+                ),
+                (
+                    "OrderStatus".to_owned(),
+                    Some("orders.status"),
+                    vec!["open", "closed"],
+                ),
+                (
+                    "InvoiceStatus".to_owned(),
+                    Some("invoices.status"),
+                    vec!["draft", "paid"],
+                ),
+            ]
+        );
+        let products = &parsed.schema.tables[0].columns;
+        assert_eq!(products[1].rust_type, "types::ProductProductType");
+        assert_eq!(products[1].sqlx_type, "types::ProductProductType");
+        assert!(products[1].has_default);
+        assert_eq!(products[2].rust_type, "Option<types::ProductMeasures>");
+        assert_eq!(
+            products[2].filter_kind(),
+            Some(crate::schema::FilterKind::Equality)
+        );
+        assert_eq!(products[3].rust_type, "Option<types::ProductType>");
+        assert_eq!(
+            parsed.schema.tables[2].columns[1].rust_type,
+            "types::InvoiceStatus"
+        );
+    }
+
+    #[test]
+    fn checks_of_any_other_shape_leave_columns_as_they_are() {
+        let table = one_table(
+            "CREATE TABLE things (
+                 id BIGSERIAL PRIMARY KEY,
+                 negated TEXT CHECK (negated NOT IN ('a')),
+                 numbers INTEGER CHECK (numbers IN (1, 2)),
+                 mixed TEXT CHECK (mixed IN ('a', 1)),
+                 combined TEXT CHECK (combined IN ('a') OR combined IS NULL),
+                 pattern TEXT CHECK (pattern ~ '^[a-z]+$'),
+                 tags TEXT[] CHECK (tags IN ('a')),
+                 CHECK (length(pattern) > 1)
+             );",
+        );
+        let types: Vec<&str> = table
+            .columns
+            .iter()
+            .map(|column| column.rust_type.as_str())
+            .collect();
+        assert_eq!(
+            types,
+            [
+                "i64",
+                "Option<String>",
+                "Option<i32>",
+                "Option<String>",
+                "Option<String>",
+                "Option<String>",
+                "Option<Vec<String>>",
+            ]
+        );
+    }
+
+    #[test]
+    fn value_lists_follow_alter_table() {
+        let parsed = parse_files(&[
+            (
+                "0001.up.sql",
+                "CREATE TABLE orders (id BIGSERIAL PRIMARY KEY, state TEXT NOT NULL);
+                 ALTER TABLE orders ADD CONSTRAINT state_known CHECK (state IN ('new', 'done'));
+                 ALTER TABLE orders ADD COLUMN channel TEXT CHECK (channel IN ('web', 'shop'));",
+            ),
+            (
+                "0002.up.sql",
+                "ALTER TABLE orders RENAME COLUMN state TO status;",
+            ),
+        ]);
+        assert!(parsed.failures.is_empty(), "{:?}", parsed.failures);
+        assert_eq!(
+            enum_summary(&parsed.schema),
+            [
+                (
+                    "OrderStatus".to_owned(),
+                    Some("orders.status"),
+                    vec!["new", "done"],
+                ),
+                (
+                    "OrderChannel".to_owned(),
+                    Some("orders.channel"),
+                    vec!["web", "shop"],
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn value_lists_that_cannot_be_generated_fail_their_tables() {
+        let parsed = parse(
+            "CREATE TYPE order_status AS ENUM ('a');
+             CREATE TABLE clash (id BIGSERIAL PRIMARY KEY, x TEXT CHECK (x IN ('in progress', 'IN_PROGRESS')));
+             CREATE TABLE blank (id BIGSERIAL PRIMARY KEY, x TEXT CHECK (x IN ('!!')));
+             CREATE TABLE orders (id BIGSERIAL PRIMARY KEY, status TEXT CHECK (status IN ('a')));
+             CREATE TABLE fine (id BIGSERIAL PRIMARY KEY, x TEXT CHECK (x IN ('a')));",
+        );
+        let reasons: Vec<(&str, &str)> = parsed
+            .failures
+            .iter()
+            .map(|failure| (failure.table.as_str(), failure.reason.as_str()))
+            .collect();
+        assert_eq!(
+            reasons,
+            [
+                (
+                    "clash",
+                    "column `x`: value list cannot be generated: labels `in progress` and `IN_PROGRESS` both map to the variant `InProgress`"
+                ),
+                (
+                    "blank",
+                    "column `x`: value list cannot be generated: label `!!` has no characters usable in a Rust identifier"
+                ),
+                (
+                    "orders",
+                    "column `status`: value list cannot be generated: its Rust name `OrderStatus` is already used by another enum type"
+                ),
+            ]
+        );
+        assert_eq!(parsed.failures[0].line, Some(2));
+        let names: Vec<String> = enum_summary(&parsed.schema)
+            .into_iter()
+            .map(|(name, ..)| name)
+            .collect();
+        assert_eq!(names, ["OrderStatus", "FineX"]);
     }
 }

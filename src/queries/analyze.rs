@@ -433,6 +433,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
                 is_primary_key: false,
                 has_default: false,
                 is_generated: false,
+                value_list: None,
             });
         }
         self.ctes.push(Rc::new(Table {
