@@ -104,6 +104,14 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
     }
 
     generator::conventions::check(&selected, &config.conventions).map_err(anyhow::Error::msg)?;
+    // `[relationships]` is checked against the whole schema, so a run limited
+    // to some tables (`--resource`) accepts the same configuration.
+    generator::relationships::check_changes(
+        &parsed.schema.tables,
+        &config.conventions,
+        &config.relationships,
+    )
+    .map_err(anyhow::Error::msg)?;
 
     let query_inputs = query_inputs(&config.queries)?;
     if !query_inputs.is_empty() && selected.iter().any(|table| table.module_name == "queries") {
@@ -152,6 +160,7 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
         queries_module,
         &config.conventions,
         &config.derive,
+        &config.relationships,
         output_dir,
     )
     .map_err(anyhow::Error::msg)?;

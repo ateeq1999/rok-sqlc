@@ -9,6 +9,7 @@ use std::process::Command;
 use std::sync::Mutex;
 
 use anyhow::{Context, Result, ensure};
+use rok_sqlc::RelationshipChange;
 
 mod common;
 
@@ -52,6 +53,25 @@ fn generate_fixture() -> Result<Vec<PathBuf>> {
     // Rows, ids, keys, enums, inputs, and patches derive serde, which the
     // PostgreSQL tests round-trip through JSON.
     config.derive = vec![rok_sqlc::Derive::Serde];
+    // Renamed and opted-out relationships (see `expense_claims` in
+    // `extra_schema.sql`).
+    let claims = config
+        .relationships
+        .entry("expense_claims".into())
+        .or_default();
+    claims.insert(
+        "created_by_user".into(),
+        RelationshipChange::Rename("author".into()),
+    );
+    claims.insert("approved_by_user".into(), RelationshipChange::OptOut);
+    config
+        .relationships
+        .entry("users".into())
+        .or_default()
+        .insert(
+            "expense_claims_by_created_by_user".into(),
+            RelationshipChange::Rename("authored_expense_claims".into()),
+        );
 
     let report = rok_sqlc::generate(&config)?;
     Ok(report.written.into_iter().chain(report.unchanged).collect())

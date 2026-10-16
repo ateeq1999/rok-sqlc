@@ -139,6 +139,15 @@ against earlier development snapshots.
   a list per key (empty when nothing relates) for to-many. Loaders on a
   tenant table take the tenant and skip soft-deleted rows. Two relationships
   of a table with the same name fail generation, naming both.
+- A `[relationships]` section (config file, JSON payload, or
+  `Config::relationships` with `rok_sqlc::RelationshipChange`) renames or
+  opts out inferred relationships, by table and inferred name:
+  `[relationships.invoices]` with `created_by_user = "author"` generates
+  `load_author`, and `approved_by_user = false` generates nothing for that
+  foreign key on either side. Entries are checked against the whole schema,
+  so `--resource` runs accept the same configuration; an entry naming an
+  unknown table or relationship, an invalid name, or a rename that collides
+  fails, naming the entry (`relationships.invoices.created_by_user`).
 - `-k/--check` reports drift without writing and exits 1 when generated
   files are missing, changed, or stale. Successful runs remove stale
   generated files.

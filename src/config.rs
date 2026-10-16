@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// What to generate and how: the one configuration model behind the CLI and
@@ -50,6 +51,32 @@ pub struct Config {
     /// Extra derives for the generated rows, typed ids, key structs, enums,
     /// inputs, and patches (ADR 0013). Empty by default.
     pub derive: Vec<Derive>,
+    /// Renames and opt-outs of inferred relationships (ADR 0014), by table
+    /// (its SQL name, schema-qualified name, or module name) and then by the
+    /// relationship's inferred name. Empty by default.
+    ///
+    /// ```
+    /// use rok_sqlc::RelationshipChange;
+    /// let mut config = rok_sqlc::Config::default();
+    /// let invoices = config.relationships.entry("invoices".into()).or_default();
+    /// invoices.insert("created_by_user".into(), RelationshipChange::Rename("author".into()));
+    /// invoices.insert("approved_by_user".into(), RelationshipChange::OptOut);
+    /// ```
+    pub relationships: BTreeMap<String, BTreeMap<String, RelationshipChange>>,
+}
+
+/// What configuration does to one inferred relationship (the
+/// `[relationships]` section of the config file).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RelationshipChange {
+    /// Generate the relationship under this name instead: its loader becomes
+    /// `load_<name>`. The name must be a snake_case Rust identifier and must
+    /// not collide with the table's other relationships.
+    Rename(String),
+    /// Generate nothing for the relationship, nor for its other side (the
+    /// inverse of a belongs-to, or the belongs-to of an inverse).
+    OptOut,
 }
 
 /// An opt-in derive for generated types.
@@ -86,6 +113,7 @@ impl Default for Config {
             lenient: false,
             conventions: Conventions::default(),
             derive: Vec::new(),
+            relationships: BTreeMap::new(),
         }
     }
 }
