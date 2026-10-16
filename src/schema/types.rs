@@ -134,6 +134,10 @@ pub struct Column {
     /// table's id for a foreign key to it. The parser leaves it `None`; the
     /// generator fills it in for the tables it generates.
     pub typed_id: Option<TypedId>,
+    /// A managed column (ADR 0010): the database maintains it, so it is
+    /// never inserted or updated by generated code but stays in rows. The
+    /// parser leaves it `false`; the generator applies the conventions.
+    pub is_managed: bool,
 }
 
 /// A generated typed id: `name` is defined in `<module>/models.rs`.
@@ -192,9 +196,10 @@ impl Column {
         format!("{}_is_null", self.rust_name.trim_end_matches('_'))
     }
 
-    /// The caller may supply this column on insert.
+    /// The caller may supply this column on insert: it is neither generated
+    /// nor managed.
     pub fn is_insertable(&self) -> bool {
-        !self.is_generated
+        !self.is_generated && !self.is_managed
     }
 
     /// The caller may omit this column on insert so the database default applies.
@@ -202,10 +207,10 @@ impl Column {
         self.is_insertable() && self.has_default
     }
 
-    /// The caller may change this column on update: it is neither generated
-    /// nor part of the primary key.
+    /// The caller may change this column on update: it is neither generated,
+    /// managed, nor part of the primary key.
     pub fn is_updatable(&self) -> bool {
-        !self.is_generated && !self.is_primary_key
+        !self.is_generated && !self.is_managed && !self.is_primary_key
     }
 
     /// The Rust type of one non-null value: the typed id when the column has

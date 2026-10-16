@@ -44,6 +44,9 @@ pub struct Config {
     /// Skip unsupported tables and queries (listed in the report) instead
     /// of failing.
     pub lenient: bool,
+    /// Opt-in conventions about what certain columns mean across tables.
+    /// All off by default; [`Conventions::rok`] gives the Rok preset.
+    pub conventions: Conventions,
 }
 
 impl Default for Config {
@@ -57,6 +60,68 @@ impl Default for Config {
             check: false,
             force: false,
             lenient: false,
+            conventions: Conventions::default(),
+        }
+    }
+}
+
+/// Opt-in conventions: columns that mean the same thing in every table that
+/// has them (ADR 0010). Each convention applies only to the tables that have
+/// the named column, and all are off by default.
+///
+/// ```
+/// let mut conventions = rok_sqlc::Conventions::rok();
+/// conventions.soft_delete_column = Some("removed_at".into());
+/// let mut config = rok_sqlc::Config::default();
+/// config.conventions = conventions;
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Conventions {
+    /// The tenant column, which scopes every generated operation on a table
+    /// to one tenant given by the caller.
+    pub tenant_column: Option<String>,
+    /// The PostgreSQL setting the generated session helper sets to the
+    /// current tenant, for row-level security policies.
+    pub tenant_setting: Option<String>,
+    /// The PostgreSQL setting the generated session helper sets to the
+    /// acting user, for audit triggers.
+    pub user_setting: Option<String>,
+    /// The soft-delete column: a nullable timestamp recording when a row was
+    /// deleted.
+    pub soft_delete_column: Option<String>,
+    /// Managed columns, maintained by the database (defaults and triggers):
+    /// left out of create inputs and update patches, kept in rows.
+    pub managed_columns: Vec<String>,
+    /// The version column, for optimistic concurrency on update.
+    pub version_column: Option<String>,
+}
+
+impl Conventions {
+    /// The preset names [`Conventions::preset`] knows.
+    pub const PRESETS: &[&str] = &["rok"];
+
+    /// The Rok ERP's conventions: tenant column `organization_id` (with the
+    /// settings `app.organization_id` and `app.user_id`), soft-delete column
+    /// `deleted_at`, managed columns `updated_at` and `row_version`, and
+    /// version column `row_version`.
+    pub fn rok() -> Self {
+        Self {
+            tenant_column: Some("organization_id".to_owned()),
+            tenant_setting: Some("app.organization_id".to_owned()),
+            user_setting: Some("app.user_id".to_owned()),
+            soft_delete_column: Some("deleted_at".to_owned()),
+            managed_columns: vec!["updated_at".to_owned(), "row_version".to_owned()],
+            version_column: Some("row_version".to_owned()),
+        }
+    }
+
+    /// The preset with this name (one of [`Conventions::PRESETS`]), or
+    /// `None` for an unknown name.
+    pub fn preset(name: &str) -> Option<Self> {
+        match name {
+            "rok" => Some(Self::rok()),
+            _ => None,
         }
     }
 }

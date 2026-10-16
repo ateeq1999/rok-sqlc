@@ -229,6 +229,11 @@ fn generate_fixture(fixture: Fixture) -> Result<Outcome> {
     config.output = db_dir().join(&fixture.id);
     config.force = true;
     config.lenient = true;
+    // The migration-based fixtures are the Rok ERP, which the `rok` preset
+    // describes; the legacy single-file schemas predate its conventions.
+    if fixture.migrations {
+        config.conventions = rok_sqlc::Conventions::rok();
+    }
 
     let report = rok_sqlc::generate(&config)
         .with_context(|| format!("fixture `{}` failed to generate", fixture.id))?;

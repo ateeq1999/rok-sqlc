@@ -72,6 +72,12 @@ against earlier development snapshots.
 - `--queries` accepts files or directories and can be repeated.
 - `rok-sqlc.toml` discovery (or `-c/--config`) and a `-j/--json`
   configuration payload, layered as flags > payload > file > defaults.
+- A `[conventions]` section in `rok-sqlc.toml` and the JSON payload
+  (`rok_sqlc::Conventions` in the library), off by default, with a `rok`
+  preset for the Rok ERP. Managed columns (`managed_columns`, such as
+  `updated_at` and `row_version`) are left out of create inputs and update
+  patches and kept in rows. The tenant, soft-delete, and version keys are
+  validated but not applied yet. See ADR 0010.
 - `-k/--check` reports drift without writing and exits 1 when generated
   files are missing, changed, or stale. Successful runs remove stale
   generated files.

@@ -1088,6 +1088,7 @@ impl RawColumn {
             is_generated: self.is_generated,
             value_list: None,
             typed_id: None,
+            is_managed: false,
         }
     }
 }

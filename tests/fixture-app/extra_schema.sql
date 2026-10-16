@@ -109,3 +109,25 @@ CREATE TABLE refunds (
     id BIGSERIAL PRIMARY KEY,
     status TEXT NOT NULL CHECK (status IN ('requested', 'paid'))
 );
+
+-- Managed columns: tests/fixture_compile.rs generates the fixture with
+-- `managed_columns = ["updated_at", "row_version"]`, and a trigger shaped like
+-- the Rok ERP's `core.touch_row` maintains both on update.
+CREATE TABLE touched_notes (
+    id BIGSERIAL PRIMARY KEY,
+    body TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    row_version BIGINT NOT NULL DEFAULT 1
+);
+
+CREATE FUNCTION touch_row() RETURNS trigger
+LANGUAGE plpgsql AS $$
+begin
+  new.updated_at := clock_timestamp();
+  new.row_version := old.row_version + 1;
+  return new;
+end;
+$$;
+
+CREATE TRIGGER touch_row BEFORE UPDATE ON touched_notes
+    FOR EACH ROW EXECUTE FUNCTION touch_row();
