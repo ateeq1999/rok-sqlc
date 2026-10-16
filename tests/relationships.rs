@@ -106,3 +106,54 @@ CREATE TABLE profiles (
     assert!(!dir.path().join("out").exists());
     Ok(())
 }
+
+#[test]
+fn a_relationship_named_like_a_filter_field_fails_generation() -> Result<()> {
+    // `category_id` makes a belongs-to named `category`, and the search
+    // filter already has a `category` field for the text column.
+    let (dir, result) = generate(
+        "CREATE TABLE categories (id BIGINT PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE products (
+    id BIGINT PRIMARY KEY,
+    category TEXT,
+    category_id BIGINT NOT NULL REFERENCES categories (id)
+);
+",
+        "",
+    );
+
+    let message = format!("{:#}", result.unwrap_err());
+    assert!(
+        message.contains(
+            "the `category` relationship of `products` collides with the search filter's `category` field for column `category`"
+        ),
+        "{message}"
+    );
+    assert!(!dir.path().join("out").exists());
+    Ok(())
+}
+
+#[test]
+fn relationship_filters_skip_tenant_tables_from_untenanted_ones() -> Result<()> {
+    let (dir, result) = generate(
+        "CREATE TABLE users (id BIGINT PRIMARY KEY, email TEXT NOT NULL);
+CREATE TABLE notes (
+    id BIGINT PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    author_id BIGINT NOT NULL REFERENCES users (id)
+);
+",
+        "[conventions]\ntenant_column = \"tenant_id\"\n",
+    );
+    result?;
+    let notes = fs::read_to_string(dir.path().join("out/notes/filter.rs"))?;
+    assert!(
+        notes.contains("pub author: Option<Box<UserFilter>>,"),
+        "{notes}"
+    );
+    // A `users` search has no tenant to scope `notes` by, so it gets no
+    // `notes` filter.
+    let users = fs::read_to_string(dir.path().join("out/users/filter.rs"))?;
+    assert!(!users.contains("pub notes:"), "{users}");
+    Ok(())
+}

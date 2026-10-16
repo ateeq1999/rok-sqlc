@@ -118,7 +118,7 @@ pub fn plan_files_with_queries(
 
     for table in tables {
         let dir = output.join(&table.module_name);
-        let filter = search::render_filter(table);
+        let filter = search::render_filter(table, tables);
         let loaders = relationships::render(table, tables);
         files.push((
             dir.join("mod.rs"),
@@ -128,7 +128,7 @@ pub fn plan_files_with_queries(
         if let Some(filter) = filter {
             files.push((dir.join("filter.rs"), filter));
         }
-        files.push((dir.join("read.rs"), read::render(table)));
+        files.push((dir.join("read.rs"), read::render(table, tables)));
         if let Some(loaders) = loaders {
             files.push((dir.join("relationships.rs"), loaders));
         }
@@ -800,7 +800,10 @@ pub mod users;"
             vec![column("id", "i64"), column("email", "String")],
             &["id"],
         );
-        for rendered in [read::render(&table), write::render(&table)] {
+        for rendered in [
+            read::render(&table, std::slice::from_ref(&table)),
+            write::render(&table),
+        ] {
             assert!(rendered.contains("E: sqlx::PgExecutor<'e>,"));
             assert!(!rendered.contains("PgPool"));
             assert!(!rendered.contains("PgConnection"));

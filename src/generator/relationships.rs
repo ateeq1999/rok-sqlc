@@ -71,6 +71,7 @@ pub fn infer(tables: &mut [Table]) -> Result<(), String> {
     }
     for table in tables.iter() {
         check_names(table)?;
+        super::search::check_filter_fields(table, tables)?;
     }
     Ok(())
 }

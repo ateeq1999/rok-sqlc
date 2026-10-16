@@ -231,10 +231,17 @@ CREATE POLICY rls_notes_tenant ON rls_notes
 
 -- Relationships (ticket 20). `tenant_id` is the tenant column and references
 -- `tenants`, which makes no relationship; `posts` has many `comments`, and
--- the loaders stay inside the tenant and skip soft-deleted rows.
+-- the loaders stay inside the tenant and skip soft-deleted rows. A comment's
+-- `author_id` (ticket 22) points from a tenant table to the untenanted
+-- `users`, so posts can be searched by their comments' authors.
 CREATE TABLE tenants (
     id UUID PRIMARY KEY,
     name TEXT NOT NULL
+);
+
+CREATE TABLE users (
+    id BIGSERIAL PRIMARY KEY,
+    email TEXT NOT NULL
 );
 
 CREATE TABLE posts (
@@ -248,6 +255,7 @@ CREATE TABLE comments (
     id BIGSERIAL PRIMARY KEY,
     tenant_id UUID NOT NULL REFERENCES tenants (id),
     post_id BIGINT NOT NULL REFERENCES posts (id),
+    author_id BIGINT REFERENCES users (id),
     body TEXT NOT NULL,
     deleted_at TIMESTAMPTZ
 );
@@ -255,11 +263,6 @@ CREATE TABLE comments (
 -- Two foreign keys from `invoices` to `users`: the belongs-to names come from
 -- the columns, and the inverses add them (`invoices_by_created_by_user`).
 -- `user_profiles.user_id` is unique, so `users` has one `user_profile`.
-CREATE TABLE users (
-    id BIGSERIAL PRIMARY KEY,
-    email TEXT NOT NULL
-);
-
 CREATE TABLE invoices (
     id BIGSERIAL PRIMARY KEY,
     created_by_user_id BIGINT NOT NULL REFERENCES users (id),

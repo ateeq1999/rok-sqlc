@@ -139,6 +139,18 @@ against earlier development snapshots.
   a list per key (empty when nothing relates) for to-many. Loaders on a
   tenant table take the tenant and skip soft-deleted rows. Two relationships
   of a table with the same name fail generation, naming both.
+- Relationship filters (ADR 0014): a resource's `{Struct}Filter` gains an
+  `Option<Box<{Related}Filter>>` field per relationship
+  (`ProductFilter { category: Some(Box::new(CategoryFilter { name, .. })), .. }`),
+  rendered as a correlated `EXISTS` subquery so rows never repeat; for a
+  to-many relationship it means "at least one related row matches". An
+  empty related filter requires a related row (a `NULL` foreign key has
+  none). Soft-deleted related rows never match, and a related tenant
+  table's rows must share the searched row's tenant; an untenanted
+  resource gets no filter field into a tenant table. Filters nest up to
+  `db::search::MAX_RELATIONSHIP_DEPTH` (4) deep, and `search` fails with
+  `sqlx::Error::InvalidArgument` beyond it. A relationship named like one of
+  the filter's column fields fails generation, naming both.
 - `-k/--check` reports drift without writing and exits 1 when generated
   files are missing, changed, or stale. Successful runs remove stale
   generated files.
