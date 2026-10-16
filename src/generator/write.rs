@@ -12,7 +12,7 @@ use crate::schema::{Column, Table};
 use super::sql::{column_clause, ident, key_predicate, str_literal, table_ref};
 use super::{
     HEADER, StaticQuery, keys, push_and_chain, push_build_and_fetch, push_doc, push_fn_head,
-    push_let_call, use_list,
+    push_let_call, types_import, use_list,
 };
 
 pub fn render(table: &Table) -> String {
@@ -30,7 +30,14 @@ pub fn render(table: &Table) -> String {
     }
     imports.extend(super::keys::key_items(table));
     imports.sort();
-    let mut output = format!("{HEADER}\n{}", use_models(&imports));
+    // Key parameters use the key's type: an enum key column's type, never a
+    // key struct's fields.
+    let types = if keys.is_empty() {
+        String::new()
+    } else {
+        types_import("super::super", [super::keys::key_type(table).as_str()])
+    };
+    let mut output = format!("{HEADER}\n{types}{}", use_models(&imports));
 
     if insert_columns.is_empty() {
         output.push_str(

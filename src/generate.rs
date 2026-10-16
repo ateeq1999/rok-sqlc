@@ -143,7 +143,13 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
         modules => generator::QueriesModule::GenerateModules(modules),
     };
 
-    let files = generator::plan_files_with_queries(&sql, &selected, queries_module, output_dir);
+    let files = generator::plan_files_with_queries(
+        &sql,
+        &selected,
+        &parsed.schema.enums,
+        queries_module,
+        output_dir,
+    );
 
     // Any generated file under the output directory that this run does not
     // produce is stale. A kept queries module protects both layouts

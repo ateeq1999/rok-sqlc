@@ -60,6 +60,7 @@ async fn generated_crud_against_postgres() {
     query_modules_per_file(&pool).await;
     search_filters_and_pages(&pool).await;
     altered_table_has_its_final_columns(&pool).await;
+    enums_keep_their_exact_labels(&pool).await;
     typed_ids_flow_from_rows_to_foreign_keys(&pool).await;
     foreign_keys_resolve_to_the_table_in_their_schema(&pool).await;
 }
@@ -90,7 +91,7 @@ async fn typed_ids_flow_from_rows_to_foreign_keys(pool: &PgPool) {
             id: product_id,
             sku: "T-1".to_owned(),
             name: "Typed".to_owned(),
-            category_id: category.id.into(),
+            category_id: category.id,
             supplier_id: None,
             price_cents: None,
             stock_on_hand: None,
@@ -191,7 +192,7 @@ async fn seed_search_products(pool: &PgPool) -> CategoryId {
                 id: uuid::Uuid::from_u128(506 - n as u128).into(),
                 sku: format!("S-{n}"),
                 name: name.to_owned(),
-                category_id: category.id.into(),
+                category_id: category.id,
                 supplier_id: None,
                 price_cents: Some(n * 100),
                 stock_on_hand: None,
@@ -965,7 +966,7 @@ async fn uuid_keys_listing_and_pagination(pool: &PgPool) {
                 id: uuid::Uuid::from_u128(id).into(),
                 sku: format!("SKU-{id}"),
                 name: format!("Product {id}"),
-                category_id: category.id.into(),
+                category_id: category.id,
                 supplier_id: None,
                 price_cents: (index == 0).then_some(1999),
                 stock_on_hand: None,
@@ -1087,4 +1088,128 @@ async fn altered_table_has_its_final_columns(pool: &PgPool) {
             body: "added".to_owned(),
         }
     );
+}
+
+/// `ticket_priority` and `app.ticket_state` (extended by alter_schema.sql)
+/// are database enums; their columns use the generated `db::types` enums in
+/// rows, inputs, patches, filters, sort keys, arrays, and query files.
+async fn enums_keep_their_exact_labels(pool: &PgPool) {
+    use db::queries::tickets::tickets_with_priority;
+    use db::search::{Equality, Page, Sort};
+    use db::tickets::filter::{TicketFilter, TicketSortKey};
+    use db::tickets::models::{NewTicket, Ticket, UpdateTicket};
+    use db::tickets::{read, write};
+    use db::types::{TicketPriority, TicketState};
+
+    let urgent = write::create(
+        pool,
+        NewTicket {
+            priority: TicketPriority::VeryHigh,
+            state: Some(TicketState::Closed),
+            watch_levels: Some(vec![TicketPriority::Low, TicketPriority::Medium]),
+        },
+    )
+    .await
+    .unwrap();
+    let routine = write::create(
+        pool,
+        NewTicket {
+            priority: TicketPriority::High,
+            state: None,
+            watch_levels: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(routine.watch_levels, [], "the array default applies");
+
+    let stored = read::get_by_id(pool, urgent.id).await.unwrap().unwrap();
+    assert_eq!(
+        stored,
+        Ticket {
+            id: urgent.id,
+            priority: TicketPriority::VeryHigh,
+            state: Some(TicketState::Closed),
+            watch_levels: vec![TicketPriority::Low, TicketPriority::Medium],
+        }
+    );
+    let labels: (String, Option<String>, Vec<String>) = sqlx::query_as(
+        "SELECT priority::text, state::text, watch_levels::text[] FROM app.tickets WHERE id = $1",
+    )
+    .bind(urgent.id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        labels,
+        (
+            "Very High".to_owned(),
+            Some("CLOSED".to_owned()),
+            vec!["Low".to_owned(), "MEDIUM".to_owned()],
+        ),
+        "the database stores each variant's exact label"
+    );
+
+    // `Archived` exists only because of ALTER TYPE ... ADD VALUE.
+    let archived = write::update(
+        pool,
+        urgent.id,
+        UpdateTicket {
+            state: Some(Some(TicketState::Archived)),
+            watch_levels: Some(vec![TicketPriority::High]),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(archived.state, Some(TicketState::Archived));
+    assert_eq!(archived.watch_levels, [TicketPriority::High]);
+
+    let very_high = read::search(
+        pool,
+        TicketFilter {
+            priority: vec![Equality::Eq(TicketPriority::VeryHigh)],
+            ..Default::default()
+        },
+        Sort::asc(TicketSortKey::Id),
+        Page::first(10),
+    )
+    .await
+    .unwrap();
+    assert_eq!(very_high, [archived.clone()]);
+
+    let not_archived = read::search(
+        pool,
+        TicketFilter {
+            state: vec![Equality::NotIn(vec![TicketState::Archived])],
+            ..Default::default()
+        },
+        Sort::asc(TicketSortKey::Id),
+        Page::first(10),
+    )
+    .await
+    .unwrap();
+    assert!(not_archived.is_empty(), "a NULL state matches no condition");
+
+    // Enums sort in declaration order: `high` comes before `Very High`.
+    let by_priority = read::search(
+        pool,
+        TicketFilter::default(),
+        Sort::desc(TicketSortKey::Priority),
+        Page::first(10),
+    )
+    .await
+    .unwrap();
+    let priorities: Vec<TicketPriority> =
+        by_priority.iter().map(|ticket| ticket.priority).collect();
+    assert_eq!(priorities, [TicketPriority::VeryHigh, TicketPriority::High]);
+
+    let found = tickets_with_priority(pool, TicketPriority::High)
+        .await
+        .unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].id, i64::from(routine.id));
+    assert_eq!(found[0].priority, TicketPriority::High);
+    assert_eq!(found[0].state, None);
 }

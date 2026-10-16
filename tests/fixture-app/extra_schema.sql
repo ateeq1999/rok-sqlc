@@ -73,3 +73,23 @@ CREATE TABLE app.patch_links (
     target_id BIGINT NOT NULL REFERENCES app.patch_targets (id),
     legacy_target_id BIGINT REFERENCES legacy.patch_targets (id)
 );
+
+
+-- Enum types whose labels are mixed-case, upper-case, and spaced; each
+-- variant keeps its exact label. `app.ticket_state` is schema-qualified and
+-- gains a value in alter_schema.sql.
+CREATE TYPE ticket_priority AS ENUM ('Low', 'MEDIUM', 'high', 'Very High');
+CREATE TYPE app.ticket_state AS ENUM ('Open', 'CLOSED');
+
+CREATE TABLE app.tickets (
+    id BIGSERIAL PRIMARY KEY,
+    priority TICKET_PRIORITY NOT NULL,
+    state app.ticket_state,
+    watch_levels ticket_priority[] NOT NULL DEFAULT '{}'
+);
+
+-- An enum primary key: key parameters and the keyset cursor use the enum.
+CREATE TABLE priority_notes (
+    priority ticket_priority PRIMARY KEY,
+    note TEXT NOT NULL
+);

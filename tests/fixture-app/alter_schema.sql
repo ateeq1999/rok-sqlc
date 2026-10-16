@@ -9,3 +9,6 @@ ALTER TABLE revised_notes DROP COLUMN legacy;
 ALTER TABLE revised_notes ENABLE ROW LEVEL SECURITY;
 CREATE INDEX revised_notes_headline_index ON revised_notes (headline);
 COMMENT ON TABLE revised_notes IS 'Notes whose shape migrations changed';
+
+-- A value added to an enum type created earlier.
+ALTER TYPE app.ticket_state ADD VALUE 'Archived' AFTER 'CLOSED';

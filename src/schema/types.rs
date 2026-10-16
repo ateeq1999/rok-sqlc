@@ -3,6 +3,58 @@ use heck::ToUpperCamelCase;
 #[derive(Debug, Clone)]
 pub struct Schema {
     pub tables: Vec<Table>,
+    /// Enum types in definition order, generated into the shared `types` module.
+    pub enums: Vec<EnumType>,
+}
+
+/// The shared generated module holding enum types. A column of an enum type
+/// has the Rust type `types::{Name}`, and every generated file mentioning one
+/// imports `types` along its path to the `db` module.
+pub const TYPES_MODULE: &str = "types";
+
+/// A `CREATE TYPE … AS ENUM` type, after every `ALTER TYPE` applied to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnumType {
+    /// The schema qualifier as written (`app` in `app.status`); `None` when
+    /// unqualified or qualified with `public`.
+    pub schema: Option<String>,
+    pub sql_name: String,
+    /// The Rust enum name in the `types` module.
+    pub rust_name: String,
+    /// Variants in the database's sort order.
+    pub variants: Vec<EnumVariant>,
+}
+
+impl EnumType {
+    /// The type name as written in DDL, e.g. `app.status`.
+    pub fn display_name(&self) -> String {
+        match &self.schema {
+            Some(schema) => format!("{schema}.{}", self.sql_name),
+            None => self.sql_name.clone(),
+        }
+    }
+
+    /// The Rust type of a column of this enum, e.g. `types::Status`.
+    pub fn rust_path(&self) -> String {
+        format!("{TYPES_MODULE}::{}", self.rust_name)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnumVariant {
+    /// The exact database label.
+    pub label: String,
+    pub rust_name: String,
+}
+
+/// Whether a Rust type mentions a generated enum (`types::X`, possibly inside
+/// `Option<…>` or `Vec<…>`), so its file must import the `types` module.
+pub fn mentions_generated_type(rust_type: &str) -> bool {
+    let needle = format!("{TYPES_MODULE}::");
+    rust_type.match_indices(&needle).any(|(index, _)| {
+        !rust_type[..index]
+            .ends_with(|character: char| character.is_alphanumeric() || "_:".contains(character))
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -90,7 +142,7 @@ pub enum FilterKind {
     Ordered,
     /// Text: equality, sets, and literal substring matching.
     Text,
-    /// Booleans and UUIDs: equality and sets.
+    /// Booleans, UUIDs, and enums: equality and sets.
     Equality,
 }
 
@@ -111,6 +163,7 @@ impl Column {
             | "chrono::DateTime<chrono::Utc>" => Some(FilterKind::Ordered),
             "String" => Some(FilterKind::Text),
             "bool" | "uuid::Uuid" => Some(FilterKind::Equality),
+            enum_type if enum_type.starts_with("types::") => Some(FilterKind::Equality),
             _ => None,
         }
     }

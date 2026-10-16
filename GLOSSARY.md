@@ -92,6 +92,10 @@ _Avoid_: system column, audit column
 A column the database advances on every update, letting an update proceed only when the row is still at the version the caller last saw (optimistic concurrency).
 _Avoid_: revision, lock column
 
+**Enum type**:
+A PostgreSQL type declared by `CREATE TYPE … AS ENUM` (and extended by `ALTER TYPE … ADD VALUE`), generated as a Rust enum in the shared `types` module. Each variant keeps its exact database **label**.
+_Avoid_: enumeration, domain
+
 **Value-list column**:
 A text column restricted to a fixed list of values, treated like an enumerated type.
 _Avoid_: check enum, status string

@@ -6,7 +6,7 @@
 //! Conditions are rendered from schema column names only; every value is
 //! bound.
 
-use crate::schema::{Column, FilterKind, Table};
+use crate::schema::{Column, FilterKind, Table, mentions_generated_type};
 
 use super::sql::{ident, str_literal};
 use super::{HEADER, push_doc};
@@ -136,6 +136,12 @@ pub fn render_filter(table: &Table) -> Option<String> {
             .map(|(column, _)| *column),
         false,
     ));
+    if filterable
+        .iter()
+        .any(|(column, _)| mentions_generated_type(column.value_type()))
+    {
+        paths.push("super::super::types".to_owned());
+    }
     if !paths.is_empty() {
         output.push_str(&super::use_paths(&paths));
         output.push('\n');

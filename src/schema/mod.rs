@@ -1,3 +1,6 @@
 pub mod types;
 
-pub use types::{Column, FilterKind, ForeignKey, Schema, Table, TypedId, UniqueKey};
+pub use types::{
+    Column, EnumType, EnumVariant, FilterKind, ForeignKey, Schema, Table, TypedId, UniqueKey,
+    mentions_generated_type,
+};

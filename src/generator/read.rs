@@ -2,7 +2,9 @@ use crate::schema::Table;
 
 use super::search::SearchApi;
 use super::sql::{column_clause, key_order, key_predicate, table_ref};
-use super::{HEADER, StaticQuery, keys, push_build_and_fetch, push_doc, push_fn_head, use_list};
+use super::{
+    HEADER, StaticQuery, keys, push_build_and_fetch, push_doc, push_fn_head, types_import, use_list,
+};
 
 pub fn render(table: &Table) -> String {
     let api = SearchApi::for_table(table);
@@ -35,8 +37,8 @@ pub fn render(table: &Table) -> String {
     output
 }
 
-/// The `use` lines for the search types `read.rs` needs, sorted the way
-/// rustfmt sorts them (`super::super::` before `super::filter`).
+/// The `use` lines for the search and enum types `read.rs` needs, sorted the
+/// way rustfmt sorts them (`super::super::` before `super::filter`).
 fn search_imports(table: &Table, api: SearchApi) -> String {
     let name = &table.struct_name;
     let mut shared = Vec::new();
@@ -60,6 +62,16 @@ fn search_imports(table: &Table, api: SearchApi) -> String {
     if !shared.is_empty() {
         let shared = shared.into_iter().map(str::to_owned).collect();
         imports.push_str(&format!("use super::super::search::{};\n", braced(shared)));
+    }
+    // Key parameters and the keyset cursor use the key's type: an enum key
+    // column's type, never a key struct's fields.
+    if !table.primary_key.is_empty() {
+        imports.push_str(&types_import(
+            "super::super",
+            [keys::key_type(table).as_str()],
+        ));
+    }
+    if !local.is_empty() {
         imports.push_str(&format!("use super::filter::{};\n", braced(local)));
     }
     imports

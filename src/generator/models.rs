@@ -1,4 +1,4 @@
-use crate::schema::{Column, Table};
+use crate::schema::{Column, Table, mentions_generated_type};
 
 use super::{
     HEADER, insert_field_type, keys, push_and_chain, push_doc, update_field_type, use_paths,
@@ -6,7 +6,14 @@ use super::{
 
 pub fn render(table: &Table) -> String {
     let mut output = format!("{HEADER}\n");
-    let imports = keys::id_imports(table, &table.columns, true);
+    let mut imports = keys::id_imports(table, &table.columns, true);
+    if table
+        .columns
+        .iter()
+        .any(|column| mentions_generated_type(&column.rust_type))
+    {
+        imports.push("super::super::types".to_owned());
+    }
     if !imports.is_empty() {
         output.push_str(&use_paths(&imports));
         output.push('\n');

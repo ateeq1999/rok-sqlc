@@ -4,12 +4,13 @@ pub mod queries;
 pub mod read;
 pub mod search;
 pub mod sql;
+pub mod types;
 pub mod write;
 
 use std::path::{Path, PathBuf};
 
 use crate::queries::AnalyzedQuery;
-use crate::schema::{Column, Table};
+use crate::schema::{Column, EnumType, Table, mentions_generated_type};
 
 /// rustfmt's default `max_width`; generated code is laid out to be
 /// rustfmt-stable so regenerated files diff cleanly.
@@ -48,12 +49,13 @@ impl QueriesModule<'_> {
 
 #[cfg(test)]
 fn plan_files(schema_sql: &str, tables: &[Table], output: &Path) -> Vec<(PathBuf, String)> {
-    plan_files_with_queries(schema_sql, tables, QueriesModule::None, output)
+    plan_files_with_queries(schema_sql, tables, &[], QueriesModule::None, output)
 }
 
 pub fn plan_files_with_queries(
     schema_sql: &str,
     tables: &[Table],
+    enums: &[EnumType],
     queries: QueriesModule<'_>,
     output: &Path,
 ) -> Vec<(PathBuf, String)> {
@@ -90,7 +92,13 @@ pub fn plan_files_with_queries(
         QueriesModule::None | QueriesModule::Keep => {}
     }
     files.push((output.join("search.rs"), search::render_shared()));
-    files.push((output.join("mod.rs"), render_db_mod(tables, queries)));
+    if !enums.is_empty() {
+        files.push((output.join("types.rs"), types::render(enums)));
+    }
+    files.push((
+        output.join("mod.rs"),
+        render_db_mod(tables, !enums.is_empty(), queries),
+    ));
     files.push((output.join("schema.rs"), render_schema_snapshot(schema_sql)));
 
     files
@@ -185,6 +193,17 @@ pub fn use_paths(paths: &[String]) -> String {
     });
     sorted.dedup();
     sorted.iter().map(|path| format!("use {path};\n")).collect()
+}
+
+/// `use {db_path}::types;` when any of the Rust types a file mentions is a
+/// generated enum (`types::X`), else empty. `db_path` is the path from the
+/// file's module to `db`, e.g. `super::super` from a resource file.
+pub fn types_import<'a>(db_path: &str, rust_types: impl IntoIterator<Item = &'a str>) -> String {
+    if rust_types.into_iter().any(mentions_generated_type) {
+        format!("use {db_path}::types;\n")
+    } else {
+        String::new()
+    }
 }
 
 /// Appends `/// line` doc comments at `indent`.
@@ -324,7 +343,7 @@ pub fn push_build_and_fetch(output: &mut String, table: &Table, fetch: &str) {
     }
 }
 
-pub fn render_db_mod(tables: &[Table], queries: QueriesModule<'_>) -> String {
+pub fn render_db_mod(tables: &[Table], has_types: bool, queries: QueriesModule<'_>) -> String {
     let mut types: Vec<String> = tables
         .iter()
         .flat_map(|table| &table.columns)
@@ -351,6 +370,9 @@ pub fn render_db_mod(tables: &[Table], queries: QueriesModule<'_>) -> String {
         .collect();
     modules.push("schema");
     modules.push("search");
+    if has_types {
+        modules.push("types");
+    }
     if queries.is_declared() {
         modules.push("queries");
     }
@@ -486,7 +508,7 @@ mod tests {
     #[test]
     fn db_mod_lists_modules_and_conditional_dependencies() {
         let tables = vec![table(vec![column("id", "uuid::Uuid")], &["id"])];
-        let rendered = render_db_mod(&tables, QueriesModule::None);
+        let rendered = render_db_mod(&tables, false, QueriesModule::None);
         assert!(rendered.contains("pub mod users;"));
         assert!(rendered.contains("pub mod schema;"));
         assert!(rendered.contains("\"uuid\""));
@@ -497,20 +519,23 @@ mod tests {
     #[test]
     fn db_mod_declares_queries_when_generated_or_kept() {
         let tables = vec![table(vec![column("id", "i64")], &["id"])];
-        assert!(!render_db_mod(&tables, QueriesModule::None).contains("pub mod queries;"));
-        assert!(render_db_mod(&tables, QueriesModule::Keep).contains(
+        assert!(!render_db_mod(&tables, false, QueriesModule::None).contains("pub mod queries;"));
+        assert!(render_db_mod(&tables, false, QueriesModule::Keep).contains(
             "pub mod queries;
 pub mod schema;
 pub mod search;
 pub mod users;"
         ));
-        assert!(render_db_mod(&tables, QueriesModule::Generate(&[])).contains("pub mod queries;"));
+        assert!(
+            render_db_mod(&tables, false, QueriesModule::Generate(&[]))
+                .contains("pub mod queries;")
+        );
     }
 
     #[test]
     fn db_mod_hints_rust_decimal_when_used() {
         let tables = vec![table(vec![column("id", "rust_decimal::Decimal")], &["id"])];
-        let rendered = render_db_mod(&tables, QueriesModule::None);
+        let rendered = render_db_mod(&tables, false, QueriesModule::None);
         assert!(rendered.contains("\"rust_decimal\""));
         assert!(rendered.contains("rust_decimal = \"1\""));
         assert!(!rendered.contains("\"uuid\""));

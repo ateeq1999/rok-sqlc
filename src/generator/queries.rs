@@ -7,7 +7,7 @@
 
 use crate::queries::{AnalyzedQuery, Param, ResultShape, ReturnMode};
 
-use super::{HEADER, QueryModule, StaticQuery, push_doc, push_fn_head, sql};
+use super::{HEADER, QueryModule, StaticQuery, push_doc, push_fn_head, sql, types_import};
 
 /// Queries with more parameters than this take a `{Name}Params` struct
 /// instead of positional arguments.
@@ -36,10 +36,15 @@ pub fn render_mod(modules: &[QueryModule]) -> String {
 }
 
 /// `db_path` is the path from the rendered file to the `db` module; row
-/// structs of generated resources are reached through it.
+/// structs of generated resources and the `types` module are reached
+/// through it.
 fn render_at(queries: &[AnalyzedQuery], db_path: &str) -> String {
     let mut output =
         format!("{HEADER}\n// Functions for the annotated queries in the query file.\n");
+    let types = types_import(db_path, mentioned_types(queries).iter().map(String::as_str));
+    if !types.is_empty() {
+        output.push_str(&format!("\n{types}"));
+    }
     for query in queries {
         render_query(&mut output, query, db_path);
     }
