@@ -37,9 +37,11 @@ fn generate_fixture() -> Result<Vec<PathBuf>> {
     config.queries = vec![app_dir().join("queries")];
     config.output = app_dir().join("src/db");
     config.force = true;
-    // Only `touched_notes` has these columns; every other table generates
-    // as if no convention were configured.
+    // Only `touched_notes` has the managed columns and only `soft_notes` the
+    // soft-delete column; every other table generates as if no convention
+    // were configured.
     config.conventions.managed_columns = vec!["updated_at".into(), "row_version".into()];
+    config.conventions.soft_delete_column = Some("deleted_at".into());
 
     let report = rok_sqlc::generate(&config)?;
     Ok(report.written.into_iter().chain(report.unchanged).collect())

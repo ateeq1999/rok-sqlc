@@ -76,6 +76,10 @@ pub struct Table {
     /// Unique constraints and unique indexes on plain columns, in the order
     /// the migrations declare them; the primary key is not repeated here.
     pub unique_keys: Vec<UniqueKey>,
+    /// The soft-delete column (ADR 0010), when the soft-delete convention is
+    /// configured and this table has that column. The parser leaves it
+    /// `None`; the generator applies the conventions.
+    pub soft_delete_column: Option<String>,
 }
 
 impl Table {
@@ -120,19 +124,26 @@ impl Table {
             .collect()
     }
 
-    /// Columns a caller may supply on insert.
+    /// Whether `column` is this table's soft-delete column.
+    pub fn is_soft_delete_column(&self, column: &Column) -> bool {
+        self.soft_delete_column.as_deref() == Some(column.sql_name.as_str())
+    }
+
+    /// Columns a caller may supply on insert. The soft-delete column is left
+    /// out: only `delete` and `restore` set it.
     pub fn insert_columns(&self) -> Vec<&Column> {
         self.columns
             .iter()
-            .filter(|column| column.is_insertable())
+            .filter(|column| column.is_insertable() && !self.is_soft_delete_column(column))
             .collect()
     }
 
-    /// Columns a caller may change on update.
+    /// Columns a caller may change on update. The soft-delete column is left
+    /// out: only `delete` and `restore` set it.
     pub fn update_columns(&self) -> Vec<&Column> {
         self.columns
             .iter()
-            .filter(|column| column.is_updatable())
+            .filter(|column| column.is_updatable() && !self.is_soft_delete_column(column))
             .collect()
     }
 }

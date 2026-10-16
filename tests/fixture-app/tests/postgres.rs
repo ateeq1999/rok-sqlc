@@ -66,6 +66,7 @@ async fn generated_crud_against_postgres() {
     foreign_keys_resolve_to_the_table_in_their_schema(&pool).await;
     unique_key_lookups_find_one_row_or_none(&pool).await;
     managed_columns_are_left_to_the_database(&pool).await;
+    soft_deleted_rows_are_hidden_restored_and_removed(&pool).await;
 }
 
 /// A category's typed id goes straight into a product's foreign key field
@@ -1450,4 +1451,128 @@ async fn managed_columns_are_left_to_the_database(pool: &PgPool) {
 
     let stored = read::get_by_id(pool, created.id).await.unwrap();
     assert_eq!(stored, Some(updated));
+}
+
+/// `soft_notes` is generated with `deleted_at` as its soft-delete column:
+/// `NewSoftNote` and `UpdateSoftNote` have no `deleted_at` (the struct
+/// literals below name every field), `delete` hides a row from every read,
+/// `restore` brings it back, and `delete_permanently` removes it.
+async fn soft_deleted_rows_are_hidden_restored_and_removed(pool: &PgPool) {
+    use db::search::{Limit, Page, Sort};
+    use db::soft_notes::filter::{SoftNoteFilter, SoftNoteSortKey};
+    use db::soft_notes::models::{NewSoftNote, SoftNote, UpdateSoftNote};
+    use db::soft_notes::{read, write};
+
+    let create = |code: &str| {
+        write::create(
+            pool,
+            NewSoftNote {
+                code: code.to_owned(),
+                body: format!("note {code}"),
+            },
+        )
+    };
+    let note = create("A").await.unwrap();
+    let other = create("B").await.unwrap();
+    assert_eq!(note.deleted_at, None);
+
+    let ids = |rows: Vec<SoftNote>| rows.into_iter().map(|row| row.id).collect::<Vec<_>>();
+    let search = |filter: SoftNoteFilter| {
+        read::search(
+            pool,
+            filter,
+            Sort::asc(SoftNoteSortKey::Id),
+            Page::first(10),
+        )
+    };
+    let assert_visible = async |visible: bool| {
+        let expect = |ids: Vec<_>| {
+            if visible {
+                assert_eq!(ids, vec![note.id, other.id]);
+            } else {
+                assert_eq!(ids, vec![other.id]);
+            }
+        };
+        assert_eq!(
+            read::get_by_id(pool, note.id).await.unwrap().is_some(),
+            visible
+        );
+        assert_eq!(
+            read::get_by_code(pool, "A").await.unwrap().is_some(),
+            visible
+        );
+        assert_eq!(read::exists_by_id(pool, note.id).await.unwrap(), visible);
+        expect(ids(read::list(pool).await.unwrap()));
+        expect(ids(read::list_page(pool, 10, 0).await.unwrap()));
+        assert_eq!(
+            read::count(pool).await.unwrap(),
+            if visible { 2 } else { 1 }
+        );
+        expect(ids(search(SoftNoteFilter::default()).await.unwrap()));
+        expect(ids(read::search_after(
+            pool,
+            SoftNoteFilter::default(),
+            None,
+            Limit::new(10),
+        )
+        .await
+        .unwrap()));
+    };
+    assert_visible(true).await;
+
+    assert!(write::delete(pool, note.id).await.unwrap());
+    assert!(
+        !write::delete(pool, note.id).await.unwrap(),
+        "an already-deleted row does not change"
+    );
+    assert_visible(false).await;
+    let patch = UpdateSoftNote {
+        code: None,
+        body: Some("edited".to_owned()),
+    };
+    assert_eq!(write::update(pool, note.id, patch).await.unwrap(), None);
+    let empty = UpdateSoftNote {
+        code: None,
+        body: None,
+    };
+    assert_eq!(write::update(pool, note.id, empty).await.unwrap(), None);
+
+    let with_deleted = search(SoftNoteFilter {
+        include_deleted: true,
+        ..SoftNoteFilter::default()
+    })
+    .await
+    .unwrap();
+    assert_eq!(ids(with_deleted.clone()), vec![note.id, other.id]);
+    assert!(with_deleted[0].deleted_at.is_some());
+    assert_eq!(with_deleted[0].body, "note A", "the update changed nothing");
+
+    assert!(write::restore(pool, note.id).await.unwrap());
+    assert!(
+        !write::restore(pool, note.id).await.unwrap(),
+        "already live"
+    );
+    assert_visible(true).await;
+
+    // The partial unique index holds among live rows only: a deleted row and
+    // a live row share a code, and `get_by_code` finds the live one.
+    assert!(write::delete(pool, note.id).await.unwrap());
+    let replacement = create("A").await.unwrap();
+    assert_eq!(
+        read::get_by_code(pool, "A")
+            .await
+            .unwrap()
+            .map(|row| row.id),
+        Some(replacement.id)
+    );
+
+    assert!(write::delete_permanently(pool, note.id).await.unwrap());
+    assert!(!write::delete_permanently(pool, note.id).await.unwrap());
+    let remaining = search(SoftNoteFilter {
+        include_deleted: true,
+        ..SoftNoteFilter::default()
+    })
+    .await
+    .unwrap();
+    assert_eq!(ids(remaining), vec![other.id, replacement.id]);
 }

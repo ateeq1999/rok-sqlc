@@ -498,6 +498,7 @@ pub(crate) mod test_support {
             primary_key: primary_key.iter().map(|key| (*key).to_owned()).collect(),
             foreign_keys: Vec::new(),
             unique_keys: Vec::new(),
+            soft_delete_column: None,
         }
     }
 }
