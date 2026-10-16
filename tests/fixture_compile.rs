@@ -41,6 +41,9 @@ fn generate_fixture() -> Result<Vec<PathBuf>> {
     // soft-delete column; every other table generates as if no convention
     // were configured.
     config.conventions.managed_columns = vec!["updated_at".into(), "row_version".into()];
+    // Only `versioned_documents` has this column, so only its `update`
+    // checks a version and returns an `UpdateOutcome`.
+    config.conventions.version_column = Some("revision".into());
     config.conventions.soft_delete_column = Some("deleted_at".into());
     // Rows, ids, keys, enums, inputs, and patches derive serde, which the
     // PostgreSQL tests round-trip through JSON.
