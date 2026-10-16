@@ -13,6 +13,10 @@ against earlier development snapshots.
 
 ### Breaking changes to the generated API
 
+- Generated code targets SQLx 0.9 instead of 0.8: the consuming crate needs
+  `sqlx = "0.9"` (same feature names) and Rust 1.94 or newer, SQLx 0.9's
+  minimum. Search code takes `&mut sqlx::QueryBuilder<sqlx::Postgres>`, which
+  has no lifetime parameter in 0.9.
 - Struct names are singular: `Product`, `NewProduct`, and `UpdateProduct`
   for a `products` table, instead of names built from the plural table name.
 - Generated CRUD functions take a generic `executor: E` (any
@@ -72,10 +76,13 @@ against earlier development snapshots.
   files are missing, changed, or stale. Successful runs remove stale
   generated files.
 - Short aliases for every command and flag; `--help` and `--version` exit 0.
-- Crate metadata, license files, this changelog, and CI on Linux (Rust 1.88
-  and stable, with PostgreSQL), macOS, and Windows.
+- Crate metadata, license files, this changelog, and CI on Linux (Rust 1.88,
+  1.94, and stable, with PostgreSQL), macOS, and Windows.
 
 ### Changed
 
 - The minimum supported Rust version is 1.88 (`rust-version = "1.88"`).
+  Generated code needs Rust 1.94 (SQLx 0.9), so on toolchains below 1.94
+  the test suites that compile generated code print a skip notice instead
+  of running.
 - Usage errors print clap's message once and exit 1.

@@ -4,7 +4,7 @@ Every generated function takes its executor generically — `pub async fn get_by
 
 The schema cannot derive business transaction functions like "mark user active"; those belong to the query-file phase. What the schema *can* do is make its own CRUD composable inside a transaction, which is exactly what a generic executor buys. The parameter is named `executor` rather than `pool` because it is no longer necessarily a pool.
 
-`sqlx::PgExecutor` is a blanket impl over every `Executor<Database = Postgres>`, so it covers `&PgPool` and `&mut PgConnection`. `Transaction` itself is not an executor in SQLx 0.8 (that impl is not provided), so callers deref it with `&mut *tx`. With that, both of these compile against the same generated code:
+`sqlx::PgExecutor` is a blanket impl over every `Executor<Database = Postgres>`, so it covers `&PgPool` and `&mut PgConnection`. `Transaction` itself is not an executor in SQLx 0.9, as in 0.8 (that impl is not provided), so callers deref it with `&mut *tx`. With that, both of these compile against the same generated code:
 
 ```rust
 db::users::read::get_by_id(&pool, id).await?;

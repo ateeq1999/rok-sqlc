@@ -360,7 +360,10 @@ pub fn render_db_mod(tables: &[Table], has_types: bool, queries: QueriesModule<'
     }
 
     let mut output = format!("{HEADER}\n");
-    output.push_str("// The generated code requires these dependencies in the consuming crate:\n");
+    output.push_str(
+        "// The generated code requires these dependencies in the consuming crate\n\
+         // (SQLx 0.9 needs Rust 1.94 or newer):\n",
+    );
     output.push_str(&dependency_hints(&types));
     output.push('\n');
     // Sorted the way rustfmt sorts `mod` declarations.
@@ -404,7 +407,7 @@ fn dependency_hints(types: &[String]) -> String {
         features.push_str(", \"rust_decimal\"");
     }
 
-    let mut hints = format!("//   sqlx = {{ version = \"0.8\", features = [{features}] }}\n");
+    let mut hints = format!("//   sqlx = {{ version = \"0.9\", features = [{features}] }}\n");
     if uses_uuid {
         hints.push_str("//   uuid = \"1\"\n");
     }
@@ -515,6 +518,10 @@ mod tests {
         assert!(rendered.contains("\"uuid\""));
         assert!(!rendered.contains("\"chrono\""));
         assert!(rendered.contains("uuid = \"1\""));
+        assert!(rendered.contains(
+            "//   sqlx = { version = \"0.9\", features = [\"runtime-tokio\", \"postgres\", \"derive\", \"uuid\"] }"
+        ));
+        assert!(rendered.contains("(SQLx 0.9 needs Rust 1.94 or newer)"));
     }
 
     #[test]

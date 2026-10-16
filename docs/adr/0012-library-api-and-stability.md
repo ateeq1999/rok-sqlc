@@ -16,7 +16,7 @@ rok_sqlc::generate(&config)?;
 
 **Growth without breakage.** `Config`, `Report`, and the failure types are `#[non_exhaustive]`: new options and report details (for example source `path:line`) arrive in minor releases. Callers build a `Config` from `Config::default()` and assign fields.
 
-**What counts as breaking.** Changing the meaning of a `Config` field or the shape of `generate` is breaking. So is any change to the *generated* API (renamed functions, changed signatures, different types): regenerating after an upgrade must not break the user's code in a minor release. Generated code targets SQLx 0.8 only. The tool's minimum supported Rust version is 1.88; raising it is a minor-release change announced in the changelog.
+**What counts as breaking.** Changing the meaning of a `Config` field or the shape of `generate` is breaking. So is any change to the *generated* API (renamed functions, changed signatures, different types): regenerating after an upgrade must not break the user's code in a minor release. Generated code targets SQLx 0.9 only (0.9.0 and later 0.9.x), so it needs Rust 1.94, SQLx 0.9's minimum supported Rust version. Moving generated code to another SQLx version is a breaking change. The tool itself has a lower floor: its minimum supported Rust version is 1.88, because it does not depend on SQLx. Raising either floor is a minor-release change announced in the changelog.
 
 ## Considered Options
 

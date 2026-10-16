@@ -16,19 +16,22 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # fmt, clippy, and the full test suite on the minimum supported Rust
-  # version and stable. The PostgreSQL service makes the fixture-app
-  # integration suite (tests/fixture_compile.rs) and the module fixture
-  # smoke run (tests/module_fixtures.rs) execute instead of skipping. The
-  # module fixtures create databases, so the role needs CREATEDB; the
-  # service's `postgres` superuser has it.
+  # fmt, clippy, and the full test suite on three toolchains: the tool's
+  # minimum supported Rust version (1.88), generated code's floor (1.94,
+  # SQLx 0.9's MSRV), and stable. The suites that compile generated code
+  # (tests/fixture_compile.rs and tests/module_fixtures.rs) print
+  # "skipping: generated code needs Rust 1.94" and pass on 1.88; the 1.94
+  # and stable jobs run them. The PostgreSQL service makes the fixture-app
+  # integration suite and the module fixture smoke run execute instead of
+  # skipping. The module fixtures create databases, so the role needs
+  # CREATEDB; the service's `postgres` superuser has it.
   linux:
     name: Linux (Rust ${{ matrix.rust }}, PostgreSQL)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        rust: ["1.88", stable]
+        rust: ["1.88", "1.94", stable]
     services:
       postgres:
         image: postgres:17

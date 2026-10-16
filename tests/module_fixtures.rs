@@ -27,6 +27,8 @@ use std::sync::Mutex;
 
 use anyhow::{Context, Result, bail, ensure};
 
+mod common;
+
 /// Every test regenerates into the same fixture crate, so they run one at a time.
 static APP: Mutex<()> = Mutex::new(());
 
@@ -485,6 +487,10 @@ fn rejections_match(actual: &[(String, String)], expected: &[(&str, &str)]) -> b
 #[test]
 fn module_fixtures_compile_without_warnings() -> Result<()> {
     let _guard = lock();
+    if let Some(reason) = common::generated_code_skip_reason(&app_dir()) {
+        eprintln!("{reason}");
+        return Ok(());
+    }
     let outcomes = generate_all()?;
     ensure!(
         outcomes
@@ -546,6 +552,10 @@ fn module_fixtures_are_rustfmt_clean() -> Result<()> {
 #[test]
 fn module_fixtures_read_from_migrated_postgres() -> Result<()> {
     let _guard = lock();
+    if let Some(reason) = common::generated_code_skip_reason(&app_dir()) {
+        eprintln!("{reason}");
+        return Ok(());
+    }
     if std::env::var_os("ROK_SQLC_TEST_DATABASE_URL").is_none() {
         eprintln!(
             "skipping: set ROK_SQLC_TEST_DATABASE_URL to smoke-run the module fixtures against PostgreSQL"

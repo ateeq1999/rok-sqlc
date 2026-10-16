@@ -319,6 +319,9 @@ fn generates_decimal_columns_with_dependency_hints() -> Result<()> {
     let db_mod = fs::read_to_string(out.join("mod.rs"))?;
     assert!(db_mod.contains("\"rust_decimal\""));
     assert!(db_mod.contains("rust_decimal = \"1\""));
+    // The generated code targets SQLx 0.9, which needs Rust 1.94.
+    assert!(db_mod.contains("sqlx = { version = \"0.9\", features = ["));
+    assert!(db_mod.contains("Rust 1.94"));
     Ok(())
 }
 

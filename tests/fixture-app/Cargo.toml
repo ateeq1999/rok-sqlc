@@ -2,11 +2,11 @@
 name = "rok-sqlc-fixture-app"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.94"
 publish = false
 
 [dependencies]
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "derive", "uuid", "chrono", "rust_decimal"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "derive", "uuid", "chrono", "rust_decimal"] }
 uuid = "1"
 chrono = "0.4"
 rust_decimal = "1"

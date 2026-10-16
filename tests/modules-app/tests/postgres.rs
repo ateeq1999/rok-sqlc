@@ -8,7 +8,7 @@
 use std::str::FromStr;
 
 use rok_sqlc_modules_app::db::smoke;
-use sqlx::PgPool;
+use sqlx::{AssertSqlSafe, PgPool};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
 #[tokio::test]
@@ -18,13 +18,14 @@ async fn generated_reads_against_the_migrated_corpus() {
         return;
     };
     let admin = PgPool::connect(&url).await.expect("connect to PostgreSQL");
+    // Built from the process id alone, so the dynamic SQL below is safe.
     let name = format!("rok_sqlc_modules_{}", std::process::id());
     let drop_database = format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)");
-    sqlx::raw_sql(&drop_database)
+    sqlx::raw_sql(AssertSqlSafe(drop_database.as_str()))
         .execute(&admin)
         .await
         .expect("drop leftover database");
-    sqlx::raw_sql(&format!("CREATE DATABASE {name}"))
+    sqlx::raw_sql(AssertSqlSafe(format!("CREATE DATABASE {name}")))
         .execute(&admin)
         .await
         .expect("create fresh database");
@@ -41,7 +42,7 @@ async fn generated_reads_against_the_migrated_corpus() {
         Err(err) => Err(format!("connect to {name}: {err}")),
     };
 
-    sqlx::raw_sql(&drop_database)
+    sqlx::raw_sql(AssertSqlSafe(drop_database.as_str()))
         .execute(&admin)
         .await
         .expect("drop test database");
@@ -53,7 +54,7 @@ async fn generated_reads_against_the_migrated_corpus() {
 }
 
 async fn migrate_and_read(pool: &PgPool) -> Result<(), String> {
-    for (path, sql) in smoke::MIGRATIONS {
+    for &(path, sql) in smoke::MIGRATIONS {
         sqlx::raw_sql(sql)
             .execute(pool)
             .await

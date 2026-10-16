@@ -181,7 +181,7 @@ pub fn render_filter(table: &Table) -> Option<String> {
         &["Appends the `WHERE` clause for these conditions."],
     );
     output.push_str(
-        "    pub(crate) fn push_where(self, query: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>) {\n",
+        "    pub(crate) fn push_where(self, query: &mut sqlx::QueryBuilder<sqlx::Postgres>) {\n",
     );
     output.push_str("        query.push(\" WHERE TRUE\");\n");
     for column in &table.columns {
@@ -367,10 +367,10 @@ pub enum Ordered<T> {
 impl<T> Ordered<T> {
     /// Appends ` AND <column> <condition>`, binding every value.
     #[doc(hidden)]
-    pub fn push<'args>(self, column: &str, query: &mut QueryBuilder<'args, Postgres>)
+    pub fn push(self, column: &str, query: &mut QueryBuilder<Postgres>)
     where
-        T: 'args + sqlx::Encode<'args, Postgres> + sqlx::Type<Postgres>,
-        Vec<T>: 'args + sqlx::Encode<'args, Postgres> + sqlx::Type<Postgres>,
+        T: for<'q> sqlx::Encode<'q, Postgres> + sqlx::Type<Postgres>,
+        Vec<T>: for<'q> sqlx::Encode<'q, Postgres> + sqlx::Type<Postgres>,
     {
         query.push(" AND ");
         query.push(column);
@@ -403,10 +403,10 @@ pub enum Equality<T> {
 impl<T> Equality<T> {
     /// Appends ` AND <column> <condition>`, binding every value.
     #[doc(hidden)]
-    pub fn push<'args>(self, column: &str, query: &mut QueryBuilder<'args, Postgres>)
+    pub fn push(self, column: &str, query: &mut QueryBuilder<Postgres>)
     where
-        T: 'args + sqlx::Encode<'args, Postgres> + sqlx::Type<Postgres>,
-        Vec<T>: 'args + sqlx::Encode<'args, Postgres> + sqlx::Type<Postgres>,
+        T: for<'q> sqlx::Encode<'q, Postgres> + sqlx::Type<Postgres>,
+        Vec<T>: for<'q> sqlx::Encode<'q, Postgres> + sqlx::Type<Postgres>,
     {
         query.push(" AND ");
         query.push(column);
@@ -421,11 +421,7 @@ impl<T> Equality<T> {
 
 /// Appends ` AND <column> IS [NOT] NULL` for `Some(true)` / `Some(false)`.
 #[doc(hidden)]
-pub fn push_null_check(
-    column: &str,
-    is_null: Option<bool>,
-    query: &mut QueryBuilder<'_, Postgres>,
-) {
+pub fn push_null_check(column: &str, is_null: Option<bool>, query: &mut QueryBuilder<Postgres>) {
     match is_null {
         Some(true) => {
             query.push(" AND ");
@@ -457,7 +453,7 @@ pub enum Text {
 impl Text {
     /// Appends ` AND <column> <condition>`, binding every value.
     #[doc(hidden)]
-    pub fn push(self, column: &str, query: &mut QueryBuilder<'_, Postgres>) {
+    pub fn push(self, column: &str, query: &mut QueryBuilder<Postgres>) {
         query.push(" AND ");
         query.push(column);
         match self {
@@ -490,20 +486,37 @@ fn escape_like(value: &str) -> String {
     escaped
 }
 
-fn push_operator<'args, T>(query: &mut QueryBuilder<'args, Postgres>, operator: &str, value: T)
+fn push_operator<T>(query: &mut QueryBuilder<Postgres>, operator: &str, value: T)
 where
-    T: 'args + sqlx::Encode<'args, Postgres> + sqlx::Type<Postgres>,
+    T: for<'q> sqlx::Encode<'q, Postgres> + sqlx::Type<Postgres>,
 {
     query.push(operator);
     query.push_bind(value);
 }
 
-fn push_set<'args, T>(query: &mut QueryBuilder<'args, Postgres>, operator: &str, values: Vec<T>)
+fn push_set<T>(query: &mut QueryBuilder<Postgres>, operator: &str, values: Vec<T>)
 where
-    Vec<T>: 'args + sqlx::Encode<'args, Postgres> + sqlx::Type<Postgres>,
+    Vec<T>: for<'q> sqlx::Encode<'q, Postgres> + sqlx::Type<Postgres>,
 {
     query.push(operator);
     query.push_bind(values);
     query.push(")");
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::super::test_support::{column, table};
+    use super::*;
+
+    /// SQLx 0.9's `QueryBuilder` takes no lifetime parameter.
+    #[test]
+    fn search_code_names_query_builder_without_a_lifetime() {
+        let filter = render_filter(&table(vec![column("id", "i64")], &["id"]))
+            .expect("an i64 column is filterable");
+        for rendered in [render_shared(), filter] {
+            assert!(rendered.contains("QueryBuilder<"), "{rendered}");
+            assert!(!rendered.contains("QueryBuilder<'"), "{rendered}");
+        }
+    }
+}

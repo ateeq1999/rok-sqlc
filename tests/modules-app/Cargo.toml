@@ -2,14 +2,14 @@
 name = "rok-sqlc-modules-app"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.94"
 publish = false
 
 # The module fixture harness (`tests/module_fixtures.rs` in rok-sqlc)
 # generates every module fixture into `src/db/` and checks this crate.
 
 [dependencies]
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "derive", "uuid", "chrono", "json", "rust_decimal"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "derive", "uuid", "chrono", "json", "rust_decimal"] }
 uuid = "1"
 chrono = "0.4"
 serde_json = "1"

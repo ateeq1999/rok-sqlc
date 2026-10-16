@@ -704,11 +704,16 @@ fn add_constraint(
                 .foreign_keys
                 .extend(constraint_foreign_key(constraint));
         }
-        TableConstraint::Check { expr, .. }
-            if let Some((name, labels)) = value_list_check(expr)
-                && let Some(index) = column_index(table, &name)
-                && table.columns[index].sqlx_type == "String" =>
-        {
+        // Not an `if let` guard: those need Rust 1.95, above the MSRV.
+        TableConstraint::Check { expr, .. } => {
+            let target = value_list_check(expr).and_then(|(name, labels)| {
+                column_index(table, &name)
+                    .filter(|&index| table.columns[index].sqlx_type == "String")
+                    .map(|index| (index, labels))
+            });
+            let Some((index, labels)) = target else {
+                return Err(format!("unsupported ALTER TABLE clause `ADD {constraint}`"));
+            };
             restrict_to_values(&mut table.columns[index], labels);
         }
         other => return Err(format!("unsupported ALTER TABLE clause `ADD {other}`")),

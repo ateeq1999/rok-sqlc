@@ -10,6 +10,8 @@ use std::sync::Mutex;
 
 use anyhow::{Context, Result, ensure};
 
+mod common;
+
 /// Every test regenerates into the same fixture crate, so they run one at a time.
 static FIXTURE: Mutex<()> = Mutex::new(());
 
@@ -54,6 +56,10 @@ fn generated_code_compiles_without_warnings() -> Result<()> {
     let _guard = FIXTURE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(reason) = common::generated_code_skip_reason(&app_dir()) {
+        eprintln!("{reason}");
+        return Ok(());
+    }
     generate_fixture()?;
 
     // The fixture crate is `#![deny(warnings)]`; `--all-targets` also
@@ -73,6 +79,10 @@ fn passing_another_tables_typed_id_fails_to_compile() -> Result<()> {
     let _guard = FIXTURE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(reason) = common::generated_code_skip_reason(&app_dir()) {
+        eprintln!("{reason}");
+        return Ok(());
+    }
     generate_fixture()?;
 
     let output = cargo(
@@ -91,6 +101,27 @@ fn passing_another_tables_typed_id_fails_to_compile() -> Result<()> {
             && stderr.contains("typed_id_mixup.rs"),
         "cargo check failed for another reason:\n{stderr}"
     );
+    Ok(())
+}
+
+/// SQLx 0.9's `QueryBuilder` has no lifetime parameter, so naming one is a
+/// compile error in the consuming crate. Runs on every toolchain, unlike the
+/// compile checks.
+#[test]
+fn generated_code_names_no_query_builder_lifetime() -> Result<()> {
+    let _guard = FIXTURE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let files = generate_fixture()?;
+    ensure!(!files.is_empty(), "the fixture generated no files");
+    for file in &files {
+        let text = std::fs::read_to_string(file)?;
+        ensure!(
+            !text.contains("QueryBuilder<'"),
+            "{} names a QueryBuilder lifetime",
+            file.display()
+        );
+    }
     Ok(())
 }
 
@@ -119,6 +150,10 @@ fn generated_code_passes_postgres_integration_tests() -> Result<()> {
     let _guard = FIXTURE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(reason) = common::generated_code_skip_reason(&app_dir()) {
+        eprintln!("{reason}");
+        return Ok(());
+    }
     if std::env::var_os("ROK_SQLC_TEST_DATABASE_URL").is_none() {
         eprintln!(
             "skipping: set ROK_SQLC_TEST_DATABASE_URL to run the PostgreSQL integration tests"

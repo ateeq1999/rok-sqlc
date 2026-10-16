@@ -172,10 +172,11 @@ tempfile = "3"
 
 Use versions compatible with the Rust toolchain you support; update the
 `sqlparser` version as needed. The generated application---not
-necessarily the CLI itself---needs SQLx:
+necessarily the CLI itself---needs SQLx 0.9, which requires Rust 1.94 or
+newer:
 
 ``` toml
-sqlx = { version = "0.8", features = [
+sqlx = { version = "0.9", features = [
   "runtime-tokio",
   "postgres",
   "derive",

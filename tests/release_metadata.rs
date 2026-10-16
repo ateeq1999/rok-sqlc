@@ -54,27 +54,42 @@ fn package_ships_licenses_readme_and_changelog_but_no_fixtures() -> Result<()> {
     Ok(())
 }
 
+fn rust_version(manifest_dir: &Path) -> Result<String> {
+    let manifest: toml::Table = fs::read_to_string(manifest_dir.join("Cargo.toml"))?.parse()?;
+    manifest["package"]
+        .get("rust-version")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned)
+        .with_context(|| {
+            format!(
+                "{} must declare package.rust-version",
+                manifest_dir.display()
+            )
+        })
+}
+
+/// Two floors: the tool's own `rust-version`, and the higher one generated
+/// code needs (SQLx 0.9's), which the fixture crates declare. The Linux CI
+/// matrix tests both, plus stable.
 #[test]
-fn ci_tests_the_declared_minimum_rust_version() -> Result<()> {
-    let manifest: toml::Table = fs::read_to_string(root().join("Cargo.toml"))?.parse()?;
-    let msrv = manifest["package"]["rust-version"]
-        .as_str()
-        .context("Cargo.toml must declare package.rust-version")?;
+fn ci_tests_both_declared_minimum_rust_versions() -> Result<()> {
+    let msrv = rust_version(&root())?;
+    let generated_floor = rust_version(&root().join("tests/fixture-app"))?;
+    ensure!(
+        rust_version(&root().join("tests/modules-app"))? == generated_floor,
+        "tests/modules-app must declare the same rust-version as tests/fixture-app ({generated_floor})"
+    );
+    ensure!(
+        generated_floor == "1.94",
+        "generated code targets SQLx 0.9, whose MSRV is 1.94; the fixture crates declare {generated_floor}"
+    );
     let workflow = fs::read_to_string(Path::new(&root()).join(".github/workflows/ci.yml"))?;
     ensure!(
-        workflow.contains(&format!("rust: [\"{msrv}\", stable]")),
-        "the Linux CI matrix must test rust-version {msrv} and stable"
+        workflow.contains(&format!(
+            "rust: [\"{msrv}\", \"{generated_floor}\", stable]"
+        )),
+        "the Linux CI matrix must test the tool's rust-version {msrv}, \
+         generated code's floor {generated_floor}, and stable"
     );
-    for fixture in ["tests/fixture-app", "tests/modules-app"] {
-        let manifest: toml::Table =
-            fs::read_to_string(root().join(fixture).join("Cargo.toml"))?.parse()?;
-        ensure!(
-            manifest["package"]
-                .get("rust-version")
-                .and_then(|v| v.as_str())
-                == Some(msrv),
-            "{fixture} must declare rust-version {msrv} so its lockfile stays buildable on the MSRV"
-        );
-    }
     Ok(())
 }
