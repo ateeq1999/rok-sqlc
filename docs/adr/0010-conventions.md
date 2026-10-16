@@ -21,6 +21,8 @@ version_column     = "row_version"
 
 **Managed columns** (the database maintains them with defaults and triggers, such as a `touch_row` trigger setting `updated_at` and bumping `row_version`) are left out of create inputs and update patches but stay in rows, so `RETURNING` shows the values the database chose. A managed column with neither a default nor an insert trigger can't be inserted: that is the schema's contract, and rok-sqlc does not second-guess it.
 
+**The soft-delete column** must be a nullable `TIMESTAMP` or `TIMESTAMPTZ`; any other type fails generation, naming the table and column. On a table that has it, `delete` becomes `UPDATE … SET <col> = now() WHERE <key> AND <col> IS NULL`, `restore` clears it, and `delete_permanently` is the real `DELETE`. All three report whether a row changed. Every generated read adds `<col> IS NULL`, except `search` and `search_after` when the filter's `include_deleted` is set. `update` adds it too, so a deleted row counts as missing. The column is left out of inputs and patches, so only `delete` and `restore` change it. A partial unique index whose condition is exactly `<col> IS NULL` becomes a unique key with a `get_by_<cols>` lookup, which finds the live row. Such an index is still **not** accepted as an `ON CONFLICT (cols)` target in query files. PostgreSQL infers a partial index only from a target that repeats its `WHERE` condition, and the query parser cannot read that form.
+
 ## How the generator sees conventions
 
 The configuration is applied **once, to the schema model**, by `generator::conventions::apply`, right after typed ids are resolved and before any renderer runs. It records what each column or table *is*; renderers ask the model, never the configuration:

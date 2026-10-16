@@ -93,8 +93,18 @@ against earlier development snapshots.
   (`rok_sqlc::Conventions` in the library), off by default, with a `rok`
   preset for the Rok ERP. Managed columns (`managed_columns`, such as
   `updated_at` and `row_version`) are left out of create inputs and update
-  patches and kept in rows. The tenant, soft-delete, and version keys are
-  validated but not applied yet. See ADR 0010.
+  patches and kept in rows. The tenant and version keys are validated but
+  not applied yet. See ADR 0010.
+- Soft delete (`soft_delete_column`, `deleted_at` in the `rok` preset). On a
+  table with that column, which must be a nullable `TIMESTAMP` or
+  `TIMESTAMPTZ` (otherwise generation fails), `delete` sets it to `now()` on a
+  live row and reports whether a row changed. `restore` clears it, and
+  `delete_permanently` removes the row. Every generated read skips
+  soft-deleted rows. The search filter gains `include_deleted: bool`, and
+  `update` on a deleted row returns `None`. The column is left out of create
+  inputs and update patches. A partial unique index whose condition is
+  exactly `<column> IS NULL` now gets a `get_by_<cols>` lookup. Query files
+  are not rewritten.
 - `-k/--check` reports drift without writing and exits 1 when generated
   files are missing, changed, or stale. Successful runs remove stale
   generated files.

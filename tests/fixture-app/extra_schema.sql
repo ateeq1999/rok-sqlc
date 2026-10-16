@@ -158,3 +158,14 @@ CREATE TABLE currency_rates (
     rate NUMERIC(12, 6) NOT NULL,
     PRIMARY KEY (currency_code, day)
 );
+
+-- Soft delete: tests/fixture_compile.rs generates the fixture with
+-- `soft_delete_column = "deleted_at"`. The code index is unique among live
+-- rows only, so it is a unique key and gets `get_by_code`.
+CREATE TABLE soft_notes (
+    id BIGSERIAL PRIMARY KEY,
+    code TEXT NOT NULL,
+    body TEXT NOT NULL,
+    deleted_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX soft_notes_code_unique_index ON soft_notes (code) WHERE deleted_at IS NULL;

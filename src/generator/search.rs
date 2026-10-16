@@ -146,19 +146,31 @@ pub fn render_filter(table: &Table) -> Option<String> {
         output.push_str(&super::use_paths(&paths));
         output.push('\n');
     }
-    push_doc(
-        &mut output,
-        0,
-        &[
-            &format!("Conditions for `search` over `{}`.", table.display_name()),
-            "",
-            "Every condition in every field must hold (they are combined with `AND`);",
-            "an empty filter matches every row. A nullable column's `*_is_null` field",
-            "selects rows where it is (`Some(true)`) or is not (`Some(false)`) `NULL`.",
-        ],
-    );
+    let title = format!("Conditions for `search` over `{}`.", table.display_name());
+    let mut doc = vec![
+        title.as_str(),
+        "",
+        "Every condition in every field must hold (they are combined with `AND`);",
+        "an empty filter matches every row. A nullable column's `*_is_null` field",
+        "selects rows where it is (`Some(true)`) or is not (`Some(false)`) `NULL`.",
+    ];
+    let live = super::sql::live_condition(table);
+    if live.is_some() {
+        doc.extend([
+            "Soft-deleted rows match only when `include_deleted` is set; an empty filter",
+            "matches every live row.",
+        ]);
+    }
+    push_doc(&mut output, 0, &doc);
     output.push_str("#[derive(Debug, Clone, Default, PartialEq)]\n");
     let mut fields = Vec::new();
+    if live.is_some() {
+        fields.push("/// Whether soft-deleted rows match too.".to_owned());
+        fields.push(format!(
+            "pub {}: bool,",
+            super::conventions::INCLUDE_DELETED
+        ));
+    }
     for column in &table.columns {
         let name = doc_name(&column.sql_name);
         if let Some(kind) = column.filter_kind() {
@@ -187,6 +199,13 @@ pub fn render_filter(table: &Table) -> Option<String> {
         "    pub(crate) fn push_where(self, query: &mut sqlx::QueryBuilder<sqlx::Postgres>) {\n",
     );
     output.push_str("        query.push(\" WHERE TRUE\");\n");
+    if let Some(live) = &live {
+        output.push_str(&format!(
+            "        if !self.{} {{\n            query.push({});\n        }}\n",
+            super::conventions::INCLUDE_DELETED,
+            str_literal(&format!(" AND {live}"))
+        ));
+    }
     for column in &table.columns {
         let name = str_literal(&ident(&column.sql_name));
         if column.filter_kind().is_some() {

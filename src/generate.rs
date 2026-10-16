@@ -103,6 +103,8 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
         bail!("all tables are unsupported; see warnings above");
     }
 
+    generator::conventions::check(&selected, &config.conventions).map_err(anyhow::Error::msg)?;
+
     let query_inputs = query_inputs(&config.queries)?;
     if !query_inputs.is_empty() && selected.iter().any(|table| table.module_name == "queries") {
         bail!(

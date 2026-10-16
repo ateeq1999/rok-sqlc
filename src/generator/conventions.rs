@@ -2,12 +2,15 @@
 //! tables being generated before any renderer runs.
 //!
 //! A convention is recorded on the schema model, so renderers ask a column
-//! or table what it is (`Column::is_managed`) instead of each taking the
-//! configuration. Only the tables generated in a run are annotated; query
-//! files never see conventions.
+//! or table what it is (`Column::is_managed`, `Table::soft_delete_column`)
+//! instead of each taking the configuration. Only the tables generated in a
+//! run are annotated; query files never see conventions.
 
 use crate::Conventions;
-use crate::schema::Table;
+use crate::schema::{Column, Table};
+
+/// The search filter's switch for soft-deleted rows.
+pub const INCLUDE_DELETED: &str = "include_deleted";
 
 /// Marks, in each of `tables`, the columns `conventions` names.
 pub fn apply(tables: &mut [Table], conventions: &Conventions) {
@@ -15,5 +18,60 @@ pub fn apply(tables: &mut [Table], conventions: &Conventions) {
         for column in &mut table.columns {
             column.is_managed = conventions.managed_columns.contains(&column.sql_name);
         }
+        table.soft_delete_column = conventions
+            .soft_delete_column
+            .as_ref()
+            .filter(|name| table.columns.iter().any(|column| column.sql_name == **name))
+            .cloned();
     }
+}
+
+/// Checks that each of `tables` can follow `conventions`: a soft-delete
+/// column must be a nullable `TIMESTAMP` or `TIMESTAMPTZ`, and no column may
+/// collide with the `include_deleted` switch it adds to the search filter.
+/// Returns the first problem, naming the table and column.
+pub fn check(tables: &[Table], conventions: &Conventions) -> Result<(), String> {
+    let Some(name) = conventions.soft_delete_column.as_deref() else {
+        return Ok(());
+    };
+    for table in tables {
+        let Some(column) = table.columns.iter().find(|column| column.sql_name == name) else {
+            continue;
+        };
+        let subject = format!(
+            "soft-delete column `{}` of `{}`",
+            column.sql_name,
+            table.display_name()
+        );
+        if !is_timestamp(column) {
+            return Err(format!(
+                "{subject} must be a nullable TIMESTAMP or TIMESTAMPTZ, but its type maps to `{}`",
+                column.sqlx_type
+            ));
+        }
+        if !column.nullable {
+            return Err(format!(
+                "{subject} must be a nullable TIMESTAMP or TIMESTAMPTZ, but it is NOT NULL"
+            ));
+        }
+        let collision = table
+            .columns
+            .iter()
+            .find(|other| other.rust_name == INCLUDE_DELETED);
+        if let Some(other) = collision {
+            return Err(format!(
+                "column `{}` of `{}` collides with the search filter's `{INCLUDE_DELETED}` switch, which the {subject} adds",
+                other.sql_name,
+                table.display_name()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn is_timestamp(column: &Column) -> bool {
+    matches!(
+        column.sqlx_type.as_str(),
+        "chrono::NaiveDateTime" | "chrono::DateTime<chrono::Utc>"
+    )
 }
