@@ -9,7 +9,7 @@
 
 use crate::schema::{Column, Table};
 
-use super::sql::{column_clause, ident, key_predicate, str_literal, table_ref};
+use super::sql::{column_clause, ident, key_predicate, live_condition, str_literal, table_ref};
 use super::{
     HEADER, StaticQuery, keys, push_and_chain, push_build_and_fetch, push_doc, push_fn_head,
     push_let_call, types_import, use_list,
@@ -213,15 +213,15 @@ fn render_update(output: &mut String, table: &Table, key_columns: &[&Column], co
     params.push(format!("input: Update{}", table.struct_name));
 
     output.push('\n');
-    push_doc(
-        output,
-        0,
-        &[
-            "Applies a partial update and returns the updated row, or `None` if no row has",
-            "the given primary key. An empty patch issues no `UPDATE` and returns the",
-            "current row.",
-        ],
-    );
+    let mut doc = vec![
+        "Applies a partial update and returns the updated row, or `None` if no row has",
+        "the given primary key. An empty patch issues no `UPDATE` and returns the",
+        "current row.",
+    ];
+    if table.soft_delete_column.is_some() {
+        doc.push("A soft-deleted row is left unchanged and counts as missing.");
+    }
+    push_doc(output, 0, &doc);
     push_fn_head(
         output,
         "update",
@@ -299,18 +299,18 @@ fn render_versioned_update(
         "Applies a partial update if the row's `{}` is still `{VERSION_PARAM}`.",
         version.rust_name
     );
-    push_doc(
-        output,
-        0,
-        &[
-            &first,
-            "",
-            "Returns the updated row, `NotFound` if no row has the given primary key, or",
-            "`VersionConflict` if the row is at another version, in which case nothing",
-            "changes. An empty patch issues no `UPDATE`: it returns the current row,",
-            "unchanged, when the row is at the expected version.",
-        ],
-    );
+    let mut doc = vec![
+        first.as_str(),
+        "",
+        "Returns the updated row, `NotFound` if no row has the given primary key, or",
+        "`VersionConflict` if the row is at another version, in which case nothing",
+        "changes. An empty patch issues no `UPDATE`: it returns the current row,",
+        "unchanged, when the row is at the expected version.",
+    ];
+    if table.soft_delete_column.is_some() {
+        doc.push("A soft-deleted row is left unchanged and counts as missing.");
+    }
+    push_doc(output, 0, &doc);
     push_fn_head(
         output,
         "update",
@@ -419,7 +419,8 @@ fn push_assignments(output: &mut String, columns: &[&Column]) {
     }
 }
 
-/// ` WHERE k1 = $n AND k2 = $m`, binding the key.
+/// ` WHERE k1 = $n AND k2 = $m`, binding the key, then ` AND <col> IS NULL`
+/// on a table with a soft-delete column, so a deleted row counts as missing.
 fn push_key_condition(output: &mut String, table: &Table, key_columns: &[&Column]) {
     for (index, (column, bind)) in key_columns.iter().zip(keys::key_binds(table)).enumerate() {
         let connective = if index == 0 { " WHERE" } else { " AND" };
@@ -428,6 +429,9 @@ fn push_key_condition(output: &mut String, table: &Table, key_columns: &[&Column
             &format!("{connective} {} = ", ident(&column.sql_name)),
         );
         output.push_str(&format!("    query.push_bind({bind});\n"));
+    }
+    if let Some(live) = live_condition(table) {
+        push_query_push(output, &format!(" AND {live}"));
     }
 }
 
@@ -449,24 +453,89 @@ fn push_query_push(output: &mut String, text: &str) {
 }
 
 fn render_delete(output: &mut String, table: &Table, key_columns: &[&Column]) {
-    output.push('\n');
-    push_doc(
+    let Some(column) = table.soft_delete_column.as_deref() else {
+        render_key_statement(
+            output,
+            table,
+            "delete",
+            &["Deletes the row with the given primary key and returns whether one existed."],
+            vec![
+                format!("DELETE FROM {}", table_ref(table)),
+                format!("WHERE {}", key_predicate(key_columns, 1)),
+            ],
+        );
+        return;
+    };
+    let column = ident(column);
+    let soft = |value: &str, condition: &str| {
+        vec![
+            format!("UPDATE {}", table_ref(table)),
+            format!("SET {column} = {value}"),
+            format!(
+                "WHERE {} AND {column} {condition}",
+                key_predicate(key_columns, 1)
+            ),
+        ]
+    };
+    render_key_statement(
         output,
-        0,
-        &["Deletes the row with the given primary key and returns whether one existed."],
+        table,
+        "delete",
+        &[
+            &format!("Soft-deletes the row with the given primary key by setting `{column}` to"),
+            "the current time, and returns whether a row changed: `false` when there is no",
+            "such row or it is already deleted.",
+        ],
+        soft("now()", "IS NULL"),
     );
+    render_key_statement(
+        output,
+        table,
+        "restore",
+        &[
+            &format!(
+                "Restores the soft-deleted row with the given primary key by clearing `{column}`,"
+            ),
+            "and returns whether a row changed: `false` when there is no such row or it is",
+            "not deleted.",
+        ],
+        soft("NULL", "IS NOT NULL"),
+    );
+    render_key_statement(
+        output,
+        table,
+        "delete_permanently",
+        &[
+            "Removes the row with the given primary key from the table, deleted or not, and",
+            "returns whether one existed.",
+        ],
+        vec![
+            format!("DELETE FROM {}", table_ref(table)),
+            format!("WHERE {}", key_predicate(key_columns, 1)),
+        ],
+    );
+}
+
+/// A function taking the primary key that runs `sql` and returns whether it
+/// affected a row.
+fn render_key_statement(
+    output: &mut String,
+    table: &Table,
+    name: &str,
+    doc: &[&str],
+    sql: Vec<String>,
+) {
+    output.push('\n');
+    push_doc(output, 0, doc);
     push_fn_head(
         output,
-        "delete",
+        name,
         &[keys::key_param(table)],
         "Result<bool, sqlx::Error>",
     );
     StaticQuery {
         call: "sqlx::query",
-        sql: vec![
-            format!("DELETE FROM {}", table_ref(table)),
-            format!("WHERE {}", key_predicate(key_columns, 1)),
-        ],
+        sql,
         binds: keys::key_binds(table),
         execute: "execute(executor)",
     }

@@ -850,6 +850,7 @@ fn build_table(
         foreign_keys,
         unique_keys,
         version_column: None,
+        soft_delete_column: None,
     })
 }
 

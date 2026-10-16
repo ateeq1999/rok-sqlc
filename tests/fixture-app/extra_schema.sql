@@ -148,11 +148,13 @@ CREATE TRIGGER touch_row BEFORE UPDATE ON touched_notes
 -- Version column: tests/fixture_compile.rs generates the fixture with
 -- `version_column = "revision"`, so `update` takes the expected revision and
 -- returns an `UpdateOutcome`. A `touch_row`-style trigger advances it.
+-- With `deleted_at` as the soft-delete column, a deleted row counts as missing.
 CREATE TABLE versioned_documents (
     id BIGSERIAL PRIMARY KEY,
     title TEXT NOT NULL,
     note TEXT,
-    revision BIGINT NOT NULL DEFAULT 1
+    revision BIGINT NOT NULL DEFAULT 1,
+    deleted_at TIMESTAMPTZ
 );
 
 CREATE FUNCTION bump_revision() RETURNS trigger
@@ -165,3 +167,14 @@ $$;
 
 CREATE TRIGGER bump_revision BEFORE UPDATE ON versioned_documents
     FOR EACH ROW EXECUTE FUNCTION bump_revision();
+
+-- Soft delete: tests/fixture_compile.rs generates the fixture with
+-- `soft_delete_column = "deleted_at"`. The code index is unique among live
+-- rows only, so it is a unique key and gets `get_by_code`.
+CREATE TABLE soft_notes (
+    id BIGSERIAL PRIMARY KEY,
+    code TEXT NOT NULL,
+    body TEXT NOT NULL,
+    deleted_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX soft_notes_code_unique_index ON soft_notes (code) WHERE deleted_at IS NULL;

@@ -161,7 +161,8 @@ fn rok_preset_manages_updated_at_and_row_version() -> Result<()> {
     let models = models(&dir, "documents")?;
     assert_eq!(
         struct_fields(&models, "UpdateDocument"),
-        ["title", "deleted_at", "removed_at"]
+        // `deleted_at` is the preset's soft-delete column.
+        ["title", "removed_at"]
     );
     Ok(())
 }
@@ -170,8 +171,9 @@ fn rok_preset_manages_updated_at_and_row_version() -> Result<()> {
 /// column always is, whatever `managed_columns` says.
 #[test]
 fn explicit_keys_override_the_preset() -> Result<()> {
-    let (dir, config) =
-        project("[conventions]\npreset = \"rok\"\nmanaged_columns = [\"removed_at\"]\n")?;
+    let (dir, config) = project(
+        "[conventions]\npreset = \"rok\"\nmanaged_columns = [\"removed_at\"]\nsoft_delete_column = \"\"\n",
+    )?;
 
     generate(&config)?;
 
@@ -287,6 +289,29 @@ fn version_column_is_managed_and_versions_only_the_tables_that_have_it() -> Resu
 }
 
 #[test]
+fn a_soft_delete_column_that_is_not_a_nullable_timestamp_fails_generation() -> Result<()> {
+    for (column, problem) in [
+        ("title", "`title` of `documents`"),
+        ("row_version", "`row_version` of `documents`"),
+    ] {
+        let (dir, config) = project(&format!(
+            "[conventions]\nsoft_delete_column = \"{column}\"\n"
+        ))?;
+
+        let message = format!("{:#}", generate(&config).unwrap_err());
+
+        assert!(message.contains("soft-delete column"), "{message}");
+        assert!(message.contains(problem), "{message}");
+        assert!(
+            message.contains("nullable TIMESTAMP or TIMESTAMPTZ"),
+            "{message}"
+        );
+        assert!(!dir.path().join("out").exists());
+    }
+    Ok(())
+}
+
+#[test]
 fn an_empty_version_column_turns_the_preset_convention_off() -> Result<()> {
     let (dir, config) =
         project("[conventions]\npreset = \"rok\"\nversion_column = \"\"\nmanaged_columns = []\n")?;
@@ -299,5 +324,36 @@ fn an_empty_version_column_turns_the_preset_convention_off() -> Result<()> {
         "{documents}"
     );
     assert!(!documents.contains("UpdateOutcome"), "{documents}");
+    Ok(())
+}
+
+#[test]
+fn a_not_null_timestamp_soft_delete_column_fails_generation() -> Result<()> {
+    let (dir, config) = project("[conventions]\nsoft_delete_column = \"updated_at\"\n")?;
+
+    let message = format!("{:#}", generate(&config).unwrap_err());
+
+    assert!(message.contains("`updated_at` of `documents`"), "{message}");
+    assert!(message.contains("NOT NULL"), "{message}");
+    assert!(!dir.path().join("out").exists());
+    Ok(())
+}
+
+#[test]
+fn the_soft_delete_column_is_left_out_of_inputs_and_patches_but_kept_in_rows() -> Result<()> {
+    let (dir, config) = project("[conventions]\nsoft_delete_column = \"deleted_at\"\n")?;
+
+    generate(&config)?;
+
+    let models = models(&dir, "documents")?;
+    assert!(struct_fields(&models, "Document").contains(&"deleted_at".to_owned()));
+    assert_eq!(
+        struct_fields(&models, "NewDocument"),
+        ["id", "title", "updated_at", "row_version", "removed_at"]
+    );
+    assert_eq!(
+        struct_fields(&models, "UpdateDocument"),
+        ["title", "updated_at", "row_version", "removed_at"]
+    );
     Ok(())
 }

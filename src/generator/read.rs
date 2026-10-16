@@ -1,7 +1,7 @@
 use crate::schema::{Column, Table};
 
 use super::search::SearchApi;
-use super::sql::{column_clause, key_order, key_predicate, table_ref};
+use super::sql::{column_clause, key_order, live_condition, live_key_predicate, table_ref};
 use super::{
     HEADER, StaticQuery, keys, param_name, push_build_and_fetch, push_doc, push_fn_head,
     types_import, use_list, use_paths,
@@ -103,7 +103,7 @@ struct Lookup<'a> {
 fn unique_lookups(table: &Table) -> Vec<Lookup<'_>> {
     let skip_primary_key = usize::from(!table.primary_key.is_empty());
     table
-        .unique_key_columns(None)
+        .unique_key_columns(table.soft_delete_column.as_deref())
         .into_iter()
         .skip(skip_primary_key)
         .filter_map(|key| {
@@ -122,6 +122,31 @@ fn unique_lookups(table: &Table) -> Vec<Lookup<'_>> {
         .collect()
 }
 
+/// A read's doc comment, noting on a soft-delete table that deleted rows
+/// are left out.
+fn push_read_doc(output: &mut String, table: &Table, lines: &[&str]) {
+    push_doc_with_note(output, table, lines, "Soft-deleted rows are left out.");
+}
+
+/// A search's doc comment, noting on a soft-delete table how to include
+/// deleted rows.
+fn push_search_doc(output: &mut String, table: &Table, lines: &[&str]) {
+    push_doc_with_note(
+        output,
+        table,
+        lines,
+        "Soft-deleted rows are left out unless `filter.include_deleted` is set.",
+    );
+}
+
+fn push_doc_with_note(output: &mut String, table: &Table, lines: &[&str], note: &str) {
+    let mut lines = lines.to_vec();
+    if table.soft_delete_column.is_some() {
+        lines.push(note);
+    }
+    push_doc(output, 0, &lines);
+}
+
 /// A lookup parameter's type: text is borrowed as `&str`; anything else
 /// (typed ids included) is taken by value.
 fn lookup_param_type(column: &Column) -> &str {
@@ -135,7 +160,10 @@ fn lookup_param_type(column: &Column) -> &str {
 fn render_unique_lookup(output: &mut String, table: &Table, lookup: &Lookup<'_>) {
     let mut sql = column_clause("SELECT", table);
     sql.push(format!("FROM {}", table_ref(table)));
-    sql.push(format!("WHERE {}", key_predicate(&lookup.columns, 1)));
+    sql.push(format!(
+        "WHERE {}",
+        live_key_predicate(table, &lookup.columns, 1)
+    ));
 
     let described: Vec<String> = lookup
         .columns
@@ -143,9 +171,9 @@ fn render_unique_lookup(output: &mut String, table: &Table, lookup: &Lookup<'_>)
         .map(|column| format!("`{}`", column.sql_name))
         .collect();
     output.push('\n');
-    push_doc(
+    push_read_doc(
         output,
-        0,
+        table,
         &[&format!(
             "Fetches the row with the given {}, or `None` if there is none.",
             described.join(" and ")
@@ -200,9 +228,9 @@ fn render_search_after(output: &mut String, table: &Table) {
     } else {
         "row's key to fetch the next page."
     };
-    push_doc(
+    push_search_doc(
         output,
-        0,
+        table,
         &[
             "Keyset pagination in primary-key order: up to `limit` rows matching `filter`",
             "whose key comes after `after` (from the start when `None`). Pass the last",
@@ -263,9 +291,9 @@ fn render_search(output: &mut String, table: &Table) {
     } else {
         "Rows that tie on the sort key are ordered by primary key, so pages are stable."
     };
-    push_doc(
+    push_search_doc(
         output,
-        0,
+        table,
         &[
             "Fetches one page of rows matching `filter`, ordered by `sort`.",
             tie_break,
@@ -303,12 +331,12 @@ fn render_get_by_id(output: &mut String, table: &Table) {
     let keys = table.primary_key_columns();
     let mut sql = column_clause("SELECT", table);
     sql.push(format!("FROM {}", table_ref(table)));
-    sql.push(format!("WHERE {}", key_predicate(&keys, 1)));
+    sql.push(format!("WHERE {}", live_key_predicate(table, &keys, 1)));
 
     output.push('\n');
-    push_doc(
+    push_read_doc(
         output,
-        0,
+        table,
         &["Fetches the row with the given primary key, or `None` if there is none."],
     );
     push_fn_head(
@@ -333,14 +361,14 @@ fn render_exists_by_id(output: &mut String, table: &Table) {
         "SELECT EXISTS (".to_owned(),
         "    SELECT 1".to_owned(),
         format!("    FROM {}", table_ref(table)),
-        format!("    WHERE {}", key_predicate(&keys, 1)),
+        format!("    WHERE {}", live_key_predicate(table, &keys, 1)),
         ")".to_owned(),
     ];
 
     output.push('\n');
-    push_doc(
+    push_read_doc(
         output,
-        0,
+        table,
         &["Returns whether a row with the given primary key exists."],
     );
     push_fn_head(
@@ -363,6 +391,7 @@ fn render_list(output: &mut String, table: &Table) {
     let keys = table.primary_key_columns();
     let mut sql = column_clause("SELECT", table);
     sql.push(format!("FROM {}", table_ref(table)));
+    sql.extend(live_condition(table).map(|live| format!("WHERE {live}")));
     let doc = if keys.is_empty() {
         "Fetches every row, in no particular order."
     } else {
@@ -371,7 +400,7 @@ fn render_list(output: &mut String, table: &Table) {
     };
 
     output.push('\n');
-    push_doc(output, 0, &[doc]);
+    push_read_doc(output, table, &[doc]);
     push_fn_head(
         output,
         "list",
@@ -392,14 +421,15 @@ fn render_list_page(output: &mut String, table: &Table) {
     let keys = table.primary_key_columns();
     let mut sql = column_clause("SELECT", table);
     sql.push(format!("FROM {}", table_ref(table)));
+    sql.extend(live_condition(table).map(|live| format!("WHERE {live}")));
     sql.push(format!("ORDER BY {}", key_order(&keys)));
     sql.push("LIMIT $1".to_owned());
     sql.push("OFFSET $2".to_owned());
 
     output.push('\n');
-    push_doc(
+    push_read_doc(
         output,
-        0,
+        table,
         &[
             "Fetches at most `limit` rows after skipping `offset`, ordered by primary key so",
             "consecutive pages neither repeat nor skip rows. Both values must be non-negative.",
@@ -423,11 +453,14 @@ fn render_list_page(output: &mut String, table: &Table) {
 
 fn render_count(output: &mut String, table: &Table) {
     output.push('\n');
-    push_doc(output, 0, &["Counts every row."]);
+    push_read_doc(output, table, &["Counts every row."]);
     push_fn_head(output, "count", &[], "Result<i64, sqlx::Error>");
     StaticQuery {
         call: "sqlx::query_scalar::<_, i64>",
-        sql: vec![format!("SELECT COUNT(*) FROM {}", table_ref(table))],
+        sql: vec![match live_condition(table) {
+            Some(live) => format!("SELECT COUNT(*) FROM {} WHERE {live}", table_ref(table)),
+            None => format!("SELECT COUNT(*) FROM {}", table_ref(table)),
+        }],
         binds: Vec::new(),
         execute: "fetch_one(executor)",
     }

@@ -56,6 +56,25 @@ pub fn key_predicate(keys: &[&Column], first: usize) -> String {
         .join(" AND ")
 }
 
+/// `<soft-delete column> IS NULL`, the condition selecting live rows, or
+/// `None` when the table has no soft-delete column.
+pub fn live_condition(table: &Table) -> Option<String> {
+    table
+        .soft_delete_column
+        .as_deref()
+        .map(|column| format!("{} IS NULL", ident(column)))
+}
+
+/// `key_predicate`, followed by `AND <soft-delete column> IS NULL` when the
+/// table has one, so only a live row matches.
+pub fn live_key_predicate(table: &Table, keys: &[&Column], first: usize) -> String {
+    let predicate = key_predicate(keys, first);
+    match live_condition(table) {
+        Some(live) => format!("{predicate} AND {live}"),
+        None => predicate,
+    }
+}
+
 /// `a, b` over the given key columns, for `ORDER BY`.
 pub fn key_order(keys: &[&Column]) -> String {
     keys.iter()
