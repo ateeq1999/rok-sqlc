@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # fmt, clippy, and the full test suite on the minimum supported Rust
+  # version and stable. The PostgreSQL service makes the fixture-app
+  # integration suite (tests/fixture_compile.rs) and the module fixture
+  # smoke run (tests/module_fixtures.rs) execute instead of skipping. The
+  # module fixtures create databases, so the role needs CREATEDB; the
+  # service's `postgres` superuser has it.
+  linux:
+    name: Linux (Rust ${{ matrix.rust }}, PostgreSQL)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: ["1.88", stable]
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ROK_SQLC_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.rust }}
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test (including PostgreSQL and module fixture suites)
+        run: cargo test --locked
+
+  # Build and test without PostgreSQL: the database-backed tests print
+  # "skipping" and pass when ROK_SQLC_TEST_DATABASE_URL is unset.
+  cross-platform:
+    name: ${{ matrix.os }} (Rust stable)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          # The fixture tests run rustfmt --check on the generated code.
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --all-targets --locked
+      - name: Test
+        run: cargo test --locked
