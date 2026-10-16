@@ -51,6 +51,12 @@ pub fn infer(tables: &mut [Table], changes: &Changes) -> Result<(), String> {
     let renamed = apply_changes(tables, changes, false)?;
     for table in tables.iter() {
         check_names(table, &renamed)?;
+        super::search::check_filter_fields(table, tables).map_err(|message| {
+            format!(
+                "{message}; rename the relationship in {}",
+                location(&table.module_name, None)
+            )
+        })?;
     }
     Ok(())
 }

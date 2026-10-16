@@ -107,6 +107,57 @@ CREATE TABLE profiles (
     Ok(())
 }
 
+#[test]
+fn a_relationship_named_like_a_filter_field_fails_generation() -> Result<()> {
+    // `category_id` makes a belongs-to named `category`, and the search
+    // filter already has a `category` field for the text column.
+    let (dir, result) = generate(
+        "CREATE TABLE categories (id BIGINT PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE products (
+    id BIGINT PRIMARY KEY,
+    category TEXT,
+    category_id BIGINT NOT NULL REFERENCES categories (id)
+);
+",
+        "",
+    );
+
+    let message = format!("{:#}", result.unwrap_err());
+    assert!(
+        message.contains(
+            "the `category` relationship of `products` collides with the search filter's `category` field for column `category`"
+        ),
+        "{message}"
+    );
+    assert!(!dir.path().join("out").exists());
+    Ok(())
+}
+
+#[test]
+fn relationship_filters_skip_tenant_tables_from_untenanted_ones() -> Result<()> {
+    let (dir, result) = generate(
+        "CREATE TABLE users (id BIGINT PRIMARY KEY, email TEXT NOT NULL);
+CREATE TABLE notes (
+    id BIGINT PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    author_id BIGINT NOT NULL REFERENCES users (id)
+);
+",
+        "[conventions]\ntenant_column = \"tenant_id\"\n",
+    );
+    result?;
+    let notes = fs::read_to_string(dir.path().join("out/notes/filter.rs"))?;
+    assert!(
+        notes.contains("pub author: Option<Box<UserFilter>>,"),
+        "{notes}"
+    );
+    // A `users` search has no tenant to scope `notes` by, so it gets no
+    // `notes` filter.
+    let users = fs::read_to_string(dir.path().join("out/users/filter.rs"))?;
+    assert!(!users.contains("pub notes:"), "{users}");
+    Ok(())
+}
+
 /// `invoices` references `users` twice, so both sides have two relationships.
 const INVOICES_SCHEMA: &str = "CREATE TABLE users (id BIGINT PRIMARY KEY, email TEXT NOT NULL);
 CREATE TABLE invoices (
@@ -364,5 +415,57 @@ fn joined_reads_follow_renamed_and_opted_out_relationships() -> Result<()> {
         "{invoices}"
     );
     assert!(!invoices.contains("WithApprovedByUser"), "{invoices}");
+    Ok(())
+}
+
+#[test]
+fn relationship_filters_follow_renames_and_opt_outs() -> Result<()> {
+    let (dir, result) = generate(
+        INVOICES_SCHEMA,
+        "[relationships.invoices]\ncreated_by_user = \"author\"\napproved_by_user = false\n[relationships.users]\ninvoices_by_created_by_user = \"authored_invoices\"\n",
+    );
+    result?;
+    let invoices = fs::read_to_string(dir.path().join("out/invoices/filter.rs"))?;
+    assert!(
+        invoices.contains("pub author: Option<Box<UserFilter>>,"),
+        "{invoices}"
+    );
+    assert!(!invoices.contains("pub created_by_user:"), "{invoices}");
+    assert!(!invoices.contains("pub approved_by_user:"), "{invoices}");
+    let users = fs::read_to_string(dir.path().join("out/users/filter.rs"))?;
+    assert!(
+        users.contains("pub authored_invoices: Option<Box<InvoiceFilter>>,"),
+        "{users}"
+    );
+    assert!(!users.contains("pub invoices_by_"), "{users}");
+    Ok(())
+}
+
+#[test]
+fn renaming_a_relationship_resolves_a_filter_field_collision() -> Result<()> {
+    let schema = "CREATE TABLE categories (id BIGINT PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE products (
+    id BIGINT PRIMARY KEY,
+    category TEXT,
+    category_id BIGINT NOT NULL REFERENCES categories (id)
+);
+";
+    let (_dir, result) = generate(schema, "");
+    let message = format!("{:#}", result.unwrap_err());
+    assert!(
+        message.contains("rename the relationship in `relationships.products`"),
+        "{message}"
+    );
+
+    let (dir, result) = generate(
+        schema,
+        "[relationships.products]\ncategory = \"category_row\"\n",
+    );
+    result?;
+    let products = fs::read_to_string(dir.path().join("out/products/filter.rs"))?;
+    assert!(
+        products.contains("pub category_row: Option<Box<CategoryFilter>>,"),
+        "{products}"
+    );
     Ok(())
 }

@@ -9,8 +9,9 @@ use super::{
     push_fn_head, types_import, use_list, use_paths,
 };
 
-pub fn render(table: &Table) -> String {
+pub fn render(table: &Table, tables: &[Table]) -> String {
     let api = SearchApi::for_table(table);
+    let fallible = !super::search::filter_relationships(table, tables).is_empty();
     let mut output = format!("{HEADER}\n{}", search_imports(table, api));
     let mut models = vec![table.struct_name.clone()];
     models.extend(keys::key_items(table));
@@ -34,10 +35,10 @@ pub fn render(table: &Table) -> String {
     }
     render_count(&mut output, table);
     if api.search {
-        render_search(&mut output, table);
+        render_search(&mut output, table, fallible);
     }
     if api.search_after {
-        render_search_after(&mut output, table);
+        render_search_after(&mut output, table, fallible);
     }
 
     output
@@ -217,13 +218,17 @@ fn render_unique_lookup(output: &mut String, table: &Table, lookup: &Lookup<'_>)
 /// Starts a search body: the `QueryBuilder` over the explicit column list,
 /// then the filter's `WHERE` clause and, on a tenant table, the tenant
 /// condition.
-fn push_search_preamble(output: &mut String, table: &Table) {
+fn push_search_preamble(output: &mut String, table: &Table, fallible: bool) {
     let mut select = column_clause("SELECT", table);
     select.push(format!("FROM {}", table_ref(table)));
     output.push_str("    let mut query = sqlx::QueryBuilder::<sqlx::Postgres>::new(\n");
     output.push_str(&super::sql::raw_block(&select, 8));
     output.push_str(",\n    );\n");
-    output.push_str("    filter.push_where(&mut query);\n");
+    output.push_str(if fallible {
+        "    filter.push_where(&mut query)?;\n"
+    } else {
+        "    filter.push_where(&mut query);\n"
+    });
     if let Some(tenant) = table.tenant() {
         output.push_str(&format!(
             "    query.push({});\n    query.push_bind({});\n",
@@ -233,7 +238,7 @@ fn push_search_preamble(output: &mut String, table: &Table) {
     }
 }
 
-fn render_search_after(output: &mut String, table: &Table) {
+fn render_search_after(output: &mut String, table: &Table, fallible: bool) {
     let key_columns = table.key_columns();
     let name = &table.struct_name;
     let key_type = keys::key_param_type(table);
@@ -268,7 +273,7 @@ fn render_search_after(output: &mut String, table: &Table) {
         ),
         &format!("Result<Vec<{name}>, sqlx::Error>"),
     );
-    push_search_preamble(output, table);
+    push_search_preamble(output, table, fallible);
     output.push_str(&format!("    if let Some({key_pattern}) = after {{\n"));
     match key_columns.as_slice() {
         [key] => {
@@ -302,7 +307,7 @@ fn render_search_after(output: &mut String, table: &Table) {
     output.push_str("}\n");
 }
 
-fn render_search(output: &mut String, table: &Table) {
+fn render_search(output: &mut String, table: &Table, fallible: bool) {
     let keys = table.primary_key_columns();
     let name = &table.struct_name;
 
@@ -333,7 +338,7 @@ fn render_search(output: &mut String, table: &Table) {
         ),
         &format!("Result<Vec<{name}>, sqlx::Error>"),
     );
-    push_search_preamble(output, table);
+    push_search_preamble(output, table, fallible);
     output.push_str("    query.push(\" ORDER BY \");\n");
     output.push_str("    query.push(sort.key.column());\n");
     output.push_str("    query.push(sort.direction.sql());\n");
@@ -505,10 +510,14 @@ fn render_count(output: &mut String, table: &Table) {
 mod tests {
     use super::super::test_support::{column, table};
     use super::*;
+    /// Renders `table` as if generated on its own.
+    fn render_alone(table: &Table) -> String {
+        render(table, &[])
+    }
 
     #[test]
     fn renders_get_by_id_with_explicit_columns() {
-        let rendered = render(&table(
+        let rendered = render_alone(&table(
             vec![column("id", "i64"), column("email", "String")],
             &["id"],
         ));
@@ -522,7 +531,7 @@ mod tests {
 
     #[test]
     fn renders_exists_list_page_and_count() {
-        let rendered = render(&table(
+        let rendered = render_alone(&table(
             vec![column("id", "i64"), column("email", "String")],
             &["id"],
         ));
@@ -541,7 +550,7 @@ mod tests {
 
     #[test]
     fn composite_key_parameters_follow_key_order() {
-        let rendered = render(&table(
+        let rendered = render_alone(&table(
             vec![
                 column("order_id", "uuid::Uuid"),
                 column("product_id", "uuid::Uuid"),
@@ -564,13 +573,13 @@ mod tests {
             &["select"],
         );
         users.schema = Some("Auth".to_owned());
-        let rendered = render(&users);
+        let rendered = render_alone(&users);
         assert!(rendered.contains("            \"select\",\n            \"Email\"\n        FROM \"Auth\".users\n        WHERE \"select\" = $1\n"));
     }
 
     #[test]
     fn key_params_avoid_local_name_collisions() {
-        let rendered = render(&table(vec![column("limit", "i64")], &["limit"]));
+        let rendered = render_alone(&table(vec![column("limit", "i64")], &["limit"]));
         assert!(rendered.contains("get_by_id<'e, E>(executor: E, limit_key: i64)"));
         assert!(rendered.contains("WHERE \"limit\" = $1"));
         assert!(rendered.contains(".bind(limit_key)"));
@@ -578,7 +587,7 @@ mod tests {
 
     #[test]
     fn without_primary_key_only_unordered_list_and_count() {
-        let rendered = render(&table(vec![column("email", "String")], &[]));
+        let rendered = render_alone(&table(vec![column("email", "String")], &[]));
         assert!(!rendered.contains("pub async fn get_by_id"));
         assert!(!rendered.contains("pub async fn exists_by_id"));
         assert!(!rendered.contains("pub async fn list_page"));
@@ -607,7 +616,7 @@ mod tests {
             module: "users".to_owned(),
             name: "UserId".to_owned(),
         });
-        let rendered = render(&table(vec![code, column("email", "String")], &["code"]));
+        let rendered = render_alone(&table(vec![code, column("email", "String")], &["code"]));
         assert!(rendered.contains("get_by_id<'e, E>(executor: E, code: &UserId)"));
         assert!(rendered.contains("exists_by_id<'e, E>(executor: E, code: &UserId)"));
         assert!(
@@ -615,7 +624,7 @@ mod tests {
             "{rendered}"
         );
 
-        let rendered = render(&table(
+        let rendered = render_alone(&table(
             vec![column("order_id", "uuid::Uuid"), column("sku", "String")],
             &["order_id", "sku"],
         ));
@@ -629,7 +638,7 @@ mod tests {
 
     #[test]
     fn output_is_deterministic() {
-        let build = || render(&table(vec![column("id", "i64")], &["id"]));
+        let build = || render_alone(&table(vec![column("id", "i64")], &["id"]));
         assert_eq!(build(), build());
     }
 }

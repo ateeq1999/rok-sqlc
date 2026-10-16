@@ -74,6 +74,24 @@ As built:
 - The tables are aliased `t` (the row) and `r` (the related row), so a self-reference joins cleanly, and each column is selected as `t_<column>` / `r_<column>`. The struct implements `FromRow` by hand from those aliases; an optional related row is `None` when its joining column is `NULL`, which a joined row's never is.
 - The tenant parameter is the row's tenant column, or the related table's when only it has one; both sides compare their tenant column with `$1`.
 
+## Relationship filters (ticket 22)
+
+Each resource's search filter gains an optional field per relationship, named like it and holding the related resource's filter: `ProductFilter { category: Some(Box::new(CategoryFilter { name: vec![Text::Eq(…)], .. })), .. }`. Search does not join; each set field becomes a correlated subquery:
+
+```sql
+AND EXISTS (SELECT 1 FROM categories AS _r1 WHERE TRUE
+    AND _r1.id = products.category_id
+    [AND _r1.tenant_id = products.tenant_id] [AND deleted_at IS NULL]
+    <the category filter's conditions, bare, resolving to _r1>)
+```
+
+- **`EXISTS`, never a join**, so a matching row comes back once however many related rows match. For a to-many relationship the field means "has at least one related row matching"; for a to-one, "its related row exists and matches". An **empty related filter** only requires a related row: a `NULL` foreign key, a soft-deleted parent, or an other-tenant row has none.
+- The subquery's table is aliased by depth (`_r1`, `_r2`, …) and the outermost row is referenced by its table name, so self-references (`parent`, `children`) work. The searched table's own conditions stay bare.
+- **Soft delete and tenancy follow the related table**, as for loaders. Soft-deleted related rows never match (`include_deleted` applies only to the searched table). A related tenant table is correlated on the tenant column with the enclosing row, which is itself bound to the tenant parameter at the root; a resource without a tenant column gets no field into a tenant table, since there is no tenant to scope it by.
+- **Depth**: the filter types are recursive (`Box`), so nesting is limited at runtime to `db::search::MAX_RELATIONSHIP_DEPTH` (4) relationship hops; deeper filters make `search` fail with `sqlx::Error::InvalidArgument` instead of silently dropping conditions.
+- A field exists only when the related resource has a filter that can nest (it has relationships of its own, as every target has the inverse). Filters of tables with relationships get a `push_conditions` function that other filters call.
+- A relationship named like one of the filter's fields (a column's condition field, its `*_is_null` field, or `include_deleted`) **fails generation**, naming both; renaming it (ticket 24) resolves the clash.
+
 ## Considered Options
 
 - **One query per row (lazy loading).** Rejected: the N+1 pattern this feature exists to remove.

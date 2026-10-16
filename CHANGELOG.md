@@ -149,6 +149,20 @@ against earlier development snapshots.
   shared column names decode unambiguously; the related table's tenant and
   soft-delete conditions sit in the join's `ON` clause, so a deleted or
   other-tenant parent reads as `None` instead of hiding the child.
+- Relationship filters (ADR 0014): a resource's `{Struct}Filter` gains an
+  `Option<Box<{Related}Filter>>` field per relationship
+  (`ProductFilter { category: Some(Box::new(CategoryFilter { name, .. })), .. }`),
+  rendered as a correlated `EXISTS` subquery so rows never repeat; for a
+  to-many relationship it means "at least one related row matches". An
+  empty related filter requires a related row (a `NULL` foreign key has
+  none). Soft-deleted related rows never match, and a related tenant
+  table's rows must share the searched row's tenant; an untenanted
+  resource gets no filter field into a tenant table. Filters nest up to
+  `db::search::MAX_RELATIONSHIP_DEPTH` (4) deep, and `search` fails with
+  `sqlx::Error::InvalidArgument` beyond it. A relationship named like one of
+  the filter's column fields fails generation, naming both; renaming it
+  in `[relationships]` resolves the clash, and filters use renamed names
+  and skip opted-out relationships.
 - A `[relationships]` section (config file, JSON payload, or
   `Config::relationships` with `rok_sqlc::RelationshipChange`) renames or
   opts out inferred relationships, by table and inferred name:
