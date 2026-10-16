@@ -17,9 +17,24 @@ Each such foreign key gives two relationships:
 - A child with **several foreign keys to the same parent** names each inverse `{child}_by_{belongs-to}` (`invoices_by_created_by_user`, `invoices_by_approved_by_user`), so names are predictable from the columns.
 - A **self-reference** through `parent_id` gives `parent` and `children` (`child` when unique). Any other self-reference uses the `_by_` form (`categories_by_parent_category`), since a bare `categories` on `categories` would say nothing.
 
-Two relationships of one table with the same name **fail generation**, naming both (`relationships of \`users\` collide: \`profile\` names both the belongs-to … and the has-one …`). Renaming and opting out in configuration (ticket 24) is how such a schema generates; until then the diagnostic says which foreign keys clash.
+Two relationships of one table with the same name **fail generation**, naming both (`relationships of \`users\` collide: \`profile\` names both the belongs-to … and the has-one …`). Renaming and opting out in configuration is how such a schema generates; the diagnostic says which foreign keys clash and points at `relationships.<table>`.
 
-Many-to-many through join tables, renaming, and opt-out build on this model (tickets 23 and 24); declared has-many-through and polymorphic relationships remain ADR 0002's declared lane.
+## Renaming and opting out
+
+The `[relationships]` section (ADR 0011; `Config::relationships` in the library) is ADR 0002's declared lane limited to two edits of an inferred relationship, named by table (SQL, schema-qualified, or module name) and its **inferred** name:
+
+```toml
+[relationships.invoices]
+created_by_user = "author"     # rename: load_author
+approved_by_user = false       # opt out
+```
+
+- A **rename** changes only the name; it must be a snake_case Rust identifier. Everything generated from the relationship (loader, joined read, relationship filter) takes the new name, because renderers read the list. Each side is renamed on its own: renaming `invoices.created_by_user` leaves the inverse `users.invoices_by_created_by_user` as it is.
+- An **opt-out** removes the relationship and its other side (the inverse of a belongs-to, the belongs-to of an inverse): half a foreign key's pair is never what a schema means. Renaming a side that another entry opts out is an error.
+- `true` is an error, not a no-op.
+- Entries are **checked against the whole schema**, inferred the same way, not just the tables a run generates: a `--resource` run accepts the configuration of a full run, and an entry for a table or relationship outside the run is skipped. An entry naming a table or relationship that does not exist fails, listing the table's relationships; a rename onto a name the table already uses fails the collision check, naming the entry (`` `relationships.invoices.created_by_user` ``).
+
+Many-to-many through join tables builds on this model (ticket 23); declared has-many-through and polymorphic relationships remain ADR 0002's declared lane.
 
 ## The model
 

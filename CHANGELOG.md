@@ -149,6 +149,15 @@ against earlier development snapshots.
   shared column names decode unambiguously; the related table's tenant and
   soft-delete conditions sit in the join's `ON` clause, so a deleted or
   other-tenant parent reads as `None` instead of hiding the child.
+- A `[relationships]` section (config file, JSON payload, or
+  `Config::relationships` with `rok_sqlc::RelationshipChange`) renames or
+  opts out inferred relationships, by table and inferred name:
+  `[relationships.invoices]` with `created_by_user = "author"` generates
+  `load_author`, and `approved_by_user = false` generates nothing for that
+  foreign key on either side. Entries are checked against the whole schema,
+  so `--resource` runs accept the same configuration; an entry naming an
+  unknown table or relationship, an invalid name, or a rename that collides
+  fails, naming the entry (`relationships.invoices.created_by_user`).
 - `-k/--check` reports drift without writing and exits 1 when generated
   files are missing, changed, or stale. Successful runs remove stale
   generated files.
