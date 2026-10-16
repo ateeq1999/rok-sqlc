@@ -40,6 +40,9 @@ fn generate_fixture() -> Result<Vec<PathBuf>> {
     // Only `touched_notes` has these columns; every other table generates
     // as if no convention were configured.
     config.conventions.managed_columns = vec!["updated_at".into(), "row_version".into()];
+    // Rows, ids, keys, enums, inputs, and patches derive serde, which the
+    // PostgreSQL tests round-trip through JSON.
+    config.derive = vec![rok_sqlc::Derive::Serde];
 
     let report = rok_sqlc::generate(&config)?;
     Ok(report.written.into_iter().chain(report.unchanged).collect())

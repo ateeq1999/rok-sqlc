@@ -12,7 +12,7 @@
 
 use crate::schema::{Column, ForeignKey, Table, TypedId};
 
-use super::{param_name, param_type, push_doc};
+use super::{param_name, param_type, push_doc, push_serde_derive};
 
 /// Copies `tables` with every column's typed id filled in.
 pub fn resolve(tables: &[Table]) -> Vec<Table> {
@@ -169,20 +169,21 @@ pub fn id_imports<'a>(
 }
 
 /// Renders the table's typed id or key struct (before the row struct).
-pub fn render_key_type(output: &mut String, table: &Table) {
+pub fn render_key_type(output: &mut String, table: &Table, serde: bool) {
     let keys = table.primary_key_columns();
     match keys.as_slice() {
         [] => {}
         [key] => {
             if let Some(id) = &key.typed_id {
-                render_typed_id(output, table, key, &id.name);
+                render_typed_id(output, table, key, &id.name, serde);
             }
         }
-        _ => render_key_struct(output, table, &keys),
+        _ => render_key_struct(output, table, &keys, serde),
     }
 }
 
-fn render_typed_id(output: &mut String, table: &Table, key: &Column, name: &str) {
+/// With `serde`, a typed id serializes as its inner value.
+fn render_typed_id(output: &mut String, table: &Table, key: &Column, name: &str, serde: bool) {
     let inner = &key.sqlx_type;
     push_doc(
         output,
@@ -199,7 +200,11 @@ fn render_typed_id(output: &mut String, table: &Table, key: &Column, name: &str)
     output.push_str(&format!(
         "#[derive(Debug, Clone, {copy}PartialEq, Eq, PartialOrd, Ord, Hash, sqlx::Type)]\n"
     ));
+    push_serde_derive(output, serde);
     output.push_str("#[sqlx(transparent)]\n");
+    if serde {
+        output.push_str("#[serde(transparent)]\n");
+    }
     output.push_str(&format!("pub struct {name}(pub {inner});\n\n"));
     output.push_str(&format!(
         "impl From<{inner}> for {name} {{\n    fn from(value: {inner}) -> Self {{\n        Self(value)\n    }}\n}}\n\n"
@@ -212,7 +217,7 @@ fn render_typed_id(output: &mut String, table: &Table, key: &Column, name: &str)
     ));
 }
 
-fn render_key_struct(output: &mut String, table: &Table, keys: &[&Column]) {
+fn render_key_struct(output: &mut String, table: &Table, keys: &[&Column], serde: bool) {
     push_doc(
         output,
         0,
@@ -232,6 +237,7 @@ fn render_key_struct(output: &mut String, table: &Table, keys: &[&Column]) {
         "Debug, Clone, PartialEq".to_owned()
     };
     output.push_str(&format!("#[derive({derives})]\n"));
+    push_serde_derive(output, serde);
     output.push_str(&format!("pub struct {} {{\n", key_struct_name(table)));
     for key in keys {
         push_doc(

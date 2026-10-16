@@ -67,6 +67,7 @@ async fn generated_crud_against_postgres() {
     unique_key_lookups_find_one_row_or_none(&pool).await;
     managed_columns_are_left_to_the_database(&pool).await;
     text_keys_are_borrowed(&pool).await;
+    rows_round_trip_through_json(&pool).await;
 }
 
 /// A category's typed id goes straight into a product's foreign key field
@@ -1520,4 +1521,30 @@ async fn text_keys_are_borrowed(pool: &PgPool) {
     assert_eq!(fetched, Some(rate));
     assert!(db::currency_rates::write::delete(pool, &key).await.unwrap());
     assert!(db::currencies::write::delete(pool, &eur).await.unwrap());
+}
+
+/// The fixture generates with `derive = ["serde"]`: rows read from the
+/// database serialize to JSON and back unchanged. Typed ids serialize as
+/// their inner value and enum variants as their database label.
+async fn rows_round_trip_through_json(pool: &PgPool) {
+    use db::products::models::Product;
+    use db::tickets::models::Ticket;
+
+    let products = db::products::read::list(pool).await.unwrap();
+    assert!(!products.is_empty(), "earlier scenarios left products");
+    for product in &products {
+        let json = serde_json::to_string(product).unwrap();
+        assert_eq!(&serde_json::from_str::<Product>(&json).unwrap(), product);
+    }
+    let value = serde_json::to_value(&products[0]).unwrap();
+    assert_eq!(value["id"], serde_json::json!(products[0].id.0));
+
+    let tickets = db::tickets::read::list(pool).await.unwrap();
+    let very_high = tickets
+        .iter()
+        .find(|ticket| ticket.priority == db::types::TicketPriority::VeryHigh)
+        .expect("earlier scenarios left a very high ticket");
+    let json = serde_json::to_value(very_high).unwrap();
+    assert_eq!(json["priority"], "Very High");
+    assert_eq!(&serde_json::from_value::<Ticket>(json).unwrap(), very_high);
 }

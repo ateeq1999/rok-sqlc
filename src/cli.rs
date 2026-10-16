@@ -8,7 +8,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use crate::config_file::{self, FileConfig};
-use crate::{Config, Report};
+use crate::{Config, Derive, Report};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -70,6 +70,12 @@ enum Command {
         /// `-` for stdin; paths resolve against the current directory
         #[arg(short, long, value_name = "JSON|@FILE|-", allow_hyphen_values = true)]
         json: Option<String>,
+
+        /// Also derive this for the generated types: `serde` adds
+        /// `Serialize`/`Deserialize`; repeatable [default: `derive` from
+        /// rok-sqlc.toml]
+        #[arg(short, long, value_name = "NAME", value_parser = ["serde"])]
+        derive: Vec<String>,
     },
 }
 
@@ -108,6 +114,7 @@ where
             lenient,
             config,
             json,
+            derive,
         } => {
             let payload = match json {
                 Some(arg) => config_file::load_json(&arg)?,
@@ -126,6 +133,8 @@ where
                 output,
                 resource,
                 conventions: Default::default(),
+                derive: (!derive.is_empty())
+                    .then(|| derive.iter().map(|name| derive_named(name)).collect()),
             };
             // Flags override the JSON payload, which overrides the file,
             // which overrides the defaults. `--schema` and `--queries` (each
@@ -146,8 +155,17 @@ where
                 force,
                 lenient,
                 conventions: merged.conventions.resolve(),
+                derive: merged.derive.unwrap_or_default(),
             })
         }
+    }
+}
+
+/// The derive a `--derive` value names; clap has already checked the name.
+fn derive_named(name: &str) -> Derive {
+    match name {
+        "serde" => Derive::Serde,
+        other => unreachable!("clap rejects `--derive {other}`"),
     }
 }
 

@@ -10,29 +10,39 @@
 use crate::schema::EnumType;
 
 use super::sql::{ident, str_literal};
-use super::{HEADER, MAX_WIDTH, doc_name, push_doc};
+use super::{HEADER, MAX_WIDTH, doc_name, push_doc, push_serde_derive};
 
-pub fn render(enums: &[EnumType]) -> String {
+/// With `serde`, every enum also serializes each variant as its exact
+/// database value.
+pub fn render(enums: &[EnumType], serde: bool) -> String {
     let mut output = format!(
         "{HEADER}\n//! Enum types and value-list columns from the schema; each variant keeps its\n//! exact database value.\n"
     );
     for enum_type in enums {
         output.push('\n');
         match &enum_type.column {
-            None => render_enum_type(&mut output, enum_type),
-            Some(column) => render_value_list(&mut output, enum_type, column),
+            None => render_enum_type(&mut output, enum_type, serde),
+            Some(column) => render_value_list(&mut output, enum_type, column, serde),
         }
     }
     output
 }
 
-fn render_enum_type(output: &mut String, enum_type: &EnumType) {
+/// `#[serde(rename = "label")]` for a variant when `serde` is on.
+fn push_serde_rename(output: &mut String, label: &str, serde: bool) {
+    if serde {
+        output.push_str(&format!("    #[serde(rename = {})]\n", str_literal(label)));
+    }
+}
+
+fn render_enum_type(output: &mut String, enum_type: &EnumType, serde: bool) {
     push_doc(
         output,
         0,
         &[&format!("The `{}` enum type.", enum_type.display_name())],
     );
     output.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, sqlx::Type)]\n");
+    push_serde_derive(output, serde);
     output.push_str(&format!(
         "#[sqlx(type_name = {})]\n",
         str_literal(&type_name(enum_type))
@@ -40,6 +50,7 @@ fn render_enum_type(output: &mut String, enum_type: &EnumType) {
     output.push_str(&format!("pub enum {} {{\n", enum_type.rust_name));
     for variant in &enum_type.variants {
         push_doc(output, 4, &[&doc_name(&variant.label)]);
+        push_serde_rename(output, &variant.label, serde);
         output.push_str(&format!(
             "    #[sqlx(rename = {})]\n    {},\n",
             str_literal(&variant.label),
@@ -52,7 +63,7 @@ fn render_enum_type(output: &mut String, enum_type: &EnumType) {
 /// A text enum: variants, `as_str`, `FromStr`, and SQLx impls that delegate
 /// to `str`, so it binds and decodes wherever text does (also in arrays, as
 /// set filters bind them).
-fn render_value_list(output: &mut String, enum_type: &EnumType, column: &str) {
+fn render_value_list(output: &mut String, enum_type: &EnumType, column: &str, serde: bool) {
     let name = &enum_type.rust_name;
     push_doc(
         output,
@@ -60,9 +71,11 @@ fn render_value_list(output: &mut String, enum_type: &EnumType, column: &str) {
         &[&format!("The values of the `{column}` column.")],
     );
     output.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\n");
+    push_serde_derive(output, serde);
     output.push_str(&format!("pub enum {name} {{\n"));
     for variant in &enum_type.variants {
         push_doc(output, 4, &[&doc_name(&variant.label)]);
+        push_serde_rename(output, &variant.label, serde);
         output.push_str(&format!("    {},\n", variant.rust_name));
     }
     output.push_str("}\n\n");

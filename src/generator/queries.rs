@@ -8,7 +8,8 @@
 use crate::queries::{AnalyzedQuery, Param, ResultShape, ReturnMode};
 
 use super::{
-    HEADER, QueryModule, StaticQuery, doc_name, push_doc, push_fn_head, sql, types_import,
+    HEADER, QueryModule, StaticQuery, doc_name, push_doc, push_fn_head, push_serde_derive, sql,
+    types_import,
 };
 
 /// Queries with more parameters than this take a `{Name}Params` struct
@@ -16,13 +17,13 @@ use super::{
 const MAX_POSITIONAL_PARAMS: usize = 3;
 
 /// Renders `db/queries.rs`, a direct child of `db`.
-pub fn render(queries: &[AnalyzedQuery]) -> String {
-    render_at(queries, "super")
+pub fn render(queries: &[AnalyzedQuery], serde: bool) -> String {
+    render_at(queries, "super", serde)
 }
 
 /// Renders `db/queries/<stem>.rs`, one level below `db/queries.rs`.
-pub fn render_nested(queries: &[AnalyzedQuery]) -> String {
-    render_at(queries, "super::super")
+pub fn render_nested(queries: &[AnalyzedQuery], serde: bool) -> String {
+    render_at(queries, "super::super", serde)
 }
 
 /// Renders `db/queries/mod.rs`, declaring one module per query file.
@@ -40,7 +41,7 @@ pub fn render_mod(modules: &[QueryModule]) -> String {
 /// `db_path` is the path from the rendered file to the `db` module; row
 /// structs of generated resources and the `types` module are reached
 /// through it.
-fn render_at(queries: &[AnalyzedQuery], db_path: &str) -> String {
+fn render_at(queries: &[AnalyzedQuery], db_path: &str, serde: bool) -> String {
     let mut output =
         format!("{HEADER}\n//! Functions for the annotated queries in the query file.\n");
     let types = types_import(db_path, mentioned_types(queries).iter().map(String::as_str));
@@ -48,12 +49,12 @@ fn render_at(queries: &[AnalyzedQuery], db_path: &str) -> String {
         output.push_str(&format!("\n{types}"));
     }
     for query in queries {
-        render_query(&mut output, query, db_path);
+        render_query(&mut output, query, db_path, serde);
     }
     output
 }
 
-fn render_query(output: &mut String, query: &AnalyzedQuery, db_path: &str) {
+fn render_query(output: &mut String, query: &AnalyzedQuery, db_path: &str, serde: bool) {
     if let ResultShape::Row(columns) = &query.result {
         output.push('\n');
         push_doc(
@@ -62,6 +63,7 @@ fn render_query(output: &mut String, query: &AnalyzedQuery, db_path: &str) {
             &[&format!("A row returned by `{}`.", query.fn_name)],
         );
         output.push_str("#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]\n");
+        push_serde_derive(output, serde);
         output.push_str(&format!("pub struct {}Row {{\n", query.name));
         for column in columns {
             push_doc(
@@ -88,6 +90,7 @@ fn render_query(output: &mut String, query: &AnalyzedQuery, db_path: &str) {
         output.push('\n');
         push_doc(output, 0, &[&format!("Parameters of `{}`.", query.fn_name)]);
         output.push_str("#[derive(Debug, Clone, PartialEq)]\n");
+        push_serde_derive(output, serde);
         output.push_str(&format!("pub struct {}Params {{\n", query.name));
         for param in &query.params {
             push_doc(output, 4, &[&format!("Bound to `${}`.", param.index)]);
@@ -232,6 +235,10 @@ mod tests {
     use super::*;
     use crate::queries::OutputColumn;
 
+    fn render(queries: &[AnalyzedQuery]) -> String {
+        super::render(queries, false)
+    }
+
     fn query(mode: ReturnMode, params: Vec<Param>, result: ResultShape) -> AnalyzedQuery {
         AnalyzedQuery {
             name: "ListThings".to_owned(),
@@ -303,6 +310,24 @@ mod tests {
             .collect();
         let rendered = render(&[query(ReturnMode::Exec, params, ResultShape::None)]);
         assert!(rendered.contains("    pub p1: String,\n"));
+    }
+
+    #[test]
+    fn serde_derives_query_rows_and_params_on_request() {
+        let row = ResultShape::Row(vec![OutputColumn {
+            sql_name: "id".to_owned(),
+            rust_name: "id".to_owned(),
+            rust_type: "i64".to_owned(),
+        }]);
+        let params: Vec<Param> = (1..=4)
+            .map(|index| param(index, &format!("p{index}"), "i32"))
+            .collect();
+        let queries = [query(ReturnMode::Many, params, row)];
+        assert!(!render(&queries).contains("serde"));
+        let rendered = super::render(&queries, true);
+        let serde = "serde::Serialize, serde::Deserialize)]\n";
+        assert!(rendered.contains(&format!("{serde}pub struct ListThingsRow {{")));
+        assert!(rendered.contains(&format!("{serde}pub struct ListThingsParams {{")));
     }
 
     #[test]

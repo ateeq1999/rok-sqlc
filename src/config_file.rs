@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-use crate::Conventions;
+use crate::{Conventions, Derive};
 
 /// The file name looked for during discovery.
 pub(crate) const FILE_NAME: &str = "rok-sqlc.toml";
@@ -29,6 +29,9 @@ pub(crate) struct FileConfig {
     pub(crate) output: Option<PathBuf>,
     pub(crate) resource: Option<String>,
     pub(crate) conventions: ConventionKeys,
+    /// `None` leaves `derive` to the sources below; a list (even an empty
+    /// one) replaces theirs.
+    pub(crate) derive: Option<Vec<Derive>>,
 }
 
 impl FileConfig {
@@ -44,6 +47,7 @@ impl FileConfig {
             output: self.output.or(lower.output),
             resource: self.resource.or(lower.resource),
             conventions: self.conventions.over(lower.conventions),
+            derive: self.derive.or(lower.derive),
         }
     }
 }
@@ -59,6 +63,7 @@ struct RawFile {
     resource: Option<String>,
     #[serde(default)]
     conventions: ConventionKeys,
+    derive: Option<Vec<DeriveName>>,
 }
 
 impl RawFile {
@@ -78,6 +83,9 @@ impl RawFile {
             output: self.output.map(|p| base.join(p)),
             resource: self.resource,
             conventions: self.conventions,
+            derive: self
+                .derive
+                .map(|names| names.into_iter().map(DeriveName::derive).collect()),
         }
     }
 }
@@ -95,6 +103,22 @@ pub(crate) struct ConventionKeys {
     soft_delete_column: Option<String>,
     managed_columns: Option<Vec<String>>,
     version_column: Option<String>,
+}
+
+/// A `derive` entry. Deserializing an unknown name fails with the list of
+/// known ones.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum DeriveName {
+    Serde,
+}
+
+impl DeriveName {
+    fn derive(self) -> Derive {
+        match self {
+            DeriveName::Serde => Derive::Serde,
+        }
+    }
 }
 
 /// A named bundle of conventions. Deserializing an unknown name fails with

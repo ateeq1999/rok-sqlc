@@ -149,6 +149,7 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
         &parsed.schema.enums,
         queries_module,
         &config.conventions,
+        &config.derive,
         output_dir,
     );
 
