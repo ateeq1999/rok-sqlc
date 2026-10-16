@@ -48,6 +48,10 @@ against earlier development snapshots.
   and writes (`create`, `update`, `delete`) for every table in PostgreSQL
   DDL, with `@generated` overwrite protection and a schema snapshot.
 - Composite primary keys, array columns, `TIME`, and `NUMERIC`.
+- PostgreSQL enum types (`CREATE TYPE ... AS ENUM`, `ALTER TYPE ... ADD/RENAME
+  VALUE`) become Rust enums in a generated `db::types` module, used by
+  rows, inputs, filters, sort keys, and query files. `types` is a reserved
+  module name.
 - Typed search: per-table `Filter` and `SortKey` types, `search`, and keyset
   pagination with `search_after`.
 - Annotated query files (`-- name: X :one|:maybe_one|:many|:exec|:execrows`)
