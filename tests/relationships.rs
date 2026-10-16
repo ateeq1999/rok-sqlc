@@ -106,3 +106,39 @@ CREATE TABLE profiles (
     assert!(!dir.path().join("out").exists());
     Ok(())
 }
+
+#[test]
+fn only_to_one_relationships_of_a_keyed_table_get_a_joined_read() -> Result<()> {
+    let (dir, result) = generate(
+        "CREATE TABLE posts (id BIGINT PRIMARY KEY, title TEXT NOT NULL);
+CREATE TABLE comments (id BIGINT PRIMARY KEY, post_id BIGINT NOT NULL REFERENCES posts (id));
+CREATE TABLE post_views (post_id BIGINT NOT NULL REFERENCES posts (id));
+",
+        "",
+    );
+    result?;
+    let comments = loaders(dir.path(), "comments").expect("comments has relationships");
+    assert!(
+        comments.contains(
+            "pub async fn get_with_post<'e, E>(\n    executor: E,\n    id: CommentId,\n)"
+        ),
+        "{comments}"
+    );
+    assert!(
+        comments.contains("pub struct CommentWithPost {"),
+        "{comments}"
+    );
+    let posts = loaders(dir.path(), "posts").expect("posts has relationships");
+    assert!(posts.contains("pub async fn load_comments<"), "{posts}");
+    assert!(
+        !posts.contains("get_with_"),
+        "a to-many is not joined:\n{posts}"
+    );
+    let views = loaders(dir.path(), "post_views").expect("post_views has relationships");
+    assert!(views.contains("pub async fn load_post<"), "{views}");
+    assert!(
+        !views.contains("get_with_"),
+        "no primary key to read a row by:\n{views}"
+    );
+    Ok(())
+}

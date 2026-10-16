@@ -1,4 +1,5 @@
 pub mod conventions;
+mod joins;
 pub mod keys;
 pub mod models;
 pub mod queries;

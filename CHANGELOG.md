@@ -139,6 +139,16 @@ against earlier development snapshots.
   a list per key (empty when nothing relates) for to-many. Loaders on a
   tenant table take the tenant and skip soft-deleted rows. Two relationships
   of a table with the same name fail generation, naming both.
+- Joined reads for to-one relationships (ADR 0014): a table with a primary
+  key gets `get_with_<name>` in `relationships.rs` for each belongs-to and
+  has-one, reading the row and its related row in one query into a
+  `{Row}With{Relationship}` struct (`ProductWithCategory`). The related row
+  is an `Option` unless a NOT NULL foreign key guarantees it (a has-one, a
+  nullable foreign key, or a related table with a tenant or soft-delete
+  column makes it optional). Columns are selected under per-side aliases, so
+  shared column names decode unambiguously; the related table's tenant and
+  soft-delete conditions sit in the join's `ON` clause, so a deleted or
+  other-tenant parent reads as `None` instead of hiding the child.
 - `-k/--check` reports drift without writing and exits 1 when generated
   files are missing, changed, or stale. Successful runs remove stale
   generated files.

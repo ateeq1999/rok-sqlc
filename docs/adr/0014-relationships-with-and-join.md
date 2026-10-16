@@ -52,6 +52,13 @@ Loaders return maps rather than attaching related rows to the caller's structs: 
 
 A to-one relationship also gets a single-query joined read, `get_with_<name>`, returning a struct holding both rows (the related row optional when the foreign key is nullable). Columns are aliased per side, since both tables commonly have `id` and `name`. The related table's tenant and soft-delete conditions go in the `JOIN … ON` clause, not `WHERE`, so a deleted parent yields `None` for the related row instead of hiding the child. Only to-one relationships are joined: a to-many join multiplies rows, and loaders already cover it in one more query.
 
+As built:
+
+- `get_with_<name>` sits in `relationships.rs` next to the loaders, with its `{Row}With{Relationship}` struct (`ProductWithCategory { product, category }`; the row's field is `row` when the relationship shares its name). It takes the table's key parameters, like `get_by_id`, so a table without a primary key gets none.
+- The related row is an `Option` unless the join cannot miss: a belongs-to through a NOT NULL foreign key into a table with neither a tenant nor a soft-delete column is a plain row read with an inner `JOIN`; every other case (a has-one, a nullable foreign key, a related table that hides rows) is a `LEFT JOIN` and an `Option`. Requiring an `Option` where the foreign key guarantees the row would make every caller handle a case that cannot occur.
+- The tables are aliased `t` (the row) and `r` (the related row), so a self-reference joins cleanly, and each column is selected as `t_<column>` / `r_<column>`. The struct implements `FromRow` by hand from those aliases; an optional related row is `None` when its joining column is `NULL`, which a joined row's never is.
+- The tenant parameter is the row's tenant column, or the related table's when only it has one; both sides compare their tenant column with `$1`.
+
 ## Considered Options
 
 - **One query per row (lazy loading).** Rejected: the N+1 pattern this feature exists to remove.

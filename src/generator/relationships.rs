@@ -15,6 +15,7 @@ use heck::ToSnakeCase;
 use crate::parser::naming::rust_identifier;
 use crate::schema::{Column, Relationship, RelationshipKind, Table};
 
+use super::joins::{self, Join};
 use super::sql::{column_clause, ident, key_order, live_condition, table_ref};
 use super::{HEADER, StaticQuery, doc_name, keys, push_doc, push_fn_head, types_import, use_list};
 
@@ -229,13 +230,24 @@ pub fn render(table: &Table, tables: &[Table]) -> Option<String> {
         .map(|relationship| Loader::new(table, tables, relationship))
         .collect();
 
+    let joins = joins::joins(table, tables);
+
     let mut output = format!(
-        "{HEADER}\n//! Loaders for the relationships of the `{}` table: each loads one\n//! relationship for many rows in a single query.\n\nuse std::collections::HashMap;\n\n",
-        table.display_name()
+        "{HEADER}\n//! Loaders for the relationships of the `{}` table: each loads one\n//! relationship for many rows in a single query.{}\n\n{}use std::collections::HashMap;\n\n",
+        table.display_name(),
+        if joins.is_empty() {
+            ""
+        } else {
+            "\n//!\n//! Each to-one relationship also has a joined read, `get_with_<relationship>`,\n//! fetching one row together with its related row in a single query."
+        },
+        joins::sqlx_imports(&joins)
     );
-    output.push_str(&imports(table, &loaders));
+    output.push_str(&imports(table, &loaders, &joins));
     for loader in &loaders {
         loader.render(&mut output);
+    }
+    for join in &joins {
+        join.render(&mut output);
     }
     Some(output)
 }
@@ -487,7 +499,7 @@ fn from_call(rust_type: &str) -> String {
 
 /// The `use` lines for the row types, typed ids, and enums the loaders name,
 /// one line per module, sorted the way rustfmt sorts them.
-fn imports(table: &Table, loaders: &[Loader<'_>]) -> String {
+fn imports(table: &Table, loaders: &[Loader<'_>], joins: &[Join<'_>]) -> String {
     let mut by_module: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut add = |module: &str, name: &str| {
         let path = if module == table.module_name {
@@ -508,6 +520,15 @@ fn imports(table: &Table, loaders: &[Loader<'_>]) -> String {
             }
             value_types.push(column.value_type().to_owned());
         }
+    }
+    for column in joins::param_columns(joins) {
+        if let Some(id) = &column.typed_id {
+            add(&id.module, &id.name);
+        }
+        value_types.push(column.value_type().to_owned());
+    }
+    if let Some(key) = joins::key_struct(table, joins) {
+        add(&table.module_name, &key);
     }
     let mut lines: Vec<(Vec<(bool, String)>, String)> = by_module
         .into_iter()
