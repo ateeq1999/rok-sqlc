@@ -1,9 +1,10 @@
-use crate::schema::Table;
+use crate::schema::{Column, Table};
 
 use super::search::SearchApi;
 use super::sql::{column_clause, key_order, key_predicate, table_ref};
 use super::{
-    HEADER, StaticQuery, keys, push_build_and_fetch, push_doc, push_fn_head, types_import, use_list,
+    HEADER, StaticQuery, keys, param_name, push_build_and_fetch, push_doc, push_fn_head,
+    types_import, use_list, use_paths,
 };
 
 pub fn render(table: &Table) -> String {
@@ -21,6 +22,9 @@ pub fn render(table: &Table) -> String {
     } else {
         render_get_by_id(&mut output, table);
         render_exists_by_id(&mut output, table);
+    }
+    for lookup in unique_lookups(table) {
+        render_unique_lookup(&mut output, table, &lookup);
     }
     render_list(&mut output, table);
     if !table.primary_key.is_empty() {
@@ -58,23 +62,118 @@ fn search_imports(table: &Table, api: SearchApi) -> String {
         [single] => single.clone(),
         _ => format!("{{{}}}", items.join(", ")),
     };
-    let mut imports = String::new();
+    let mut paths = Vec::new();
     if !shared.is_empty() {
         let shared = shared.into_iter().map(str::to_owned).collect();
-        imports.push_str(&format!("use super::super::search::{};\n", braced(shared)));
+        paths.push(format!("super::super::search::{}", braced(shared)));
     }
     // Key parameters and the keyset cursor use the key's type: an enum key
-    // column's type, never a key struct's fields.
+    // column's type, never a key struct's fields. Unique-key lookups take
+    // each key column's value type.
+    let lookups = unique_lookups(table);
+    let lookup_columns = || {
+        lookups
+            .iter()
+            .flat_map(|lookup| lookup.columns.iter().copied())
+    };
+    let mut value_types: Vec<String> = lookup_columns()
+        .map(|column| column.value_type().to_owned())
+        .collect();
     if !table.primary_key.is_empty() {
-        imports.push_str(&types_import(
-            "super::super",
-            [keys::key_type(table).as_str()],
-        ));
+        value_types.push(keys::key_type(table));
     }
+    if !types_import("super::super", value_types.iter().map(String::as_str)).is_empty() {
+        paths.push("super::super::types".to_owned());
+    }
+    paths.extend(keys::id_imports(table, lookup_columns(), true));
     if !local.is_empty() {
-        imports.push_str(&format!("use super::filter::{};\n", braced(local)));
+        paths.push(format!("super::filter::{}", braced(local)));
     }
-    imports
+    use_paths(&paths)
+}
+
+/// A `get_by_<cols>` lookup over one unique key other than the primary key.
+struct Lookup<'a> {
+    fn_name: String,
+    columns: Vec<&'a Column>,
+}
+
+/// The table's unique-key lookups, in declaration order. No column is the
+/// soft-delete column yet, so a partial unique index never gets a lookup.
+fn unique_lookups(table: &Table) -> Vec<Lookup<'_>> {
+    let skip_primary_key = usize::from(!table.primary_key.is_empty());
+    table
+        .unique_key_columns(None)
+        .into_iter()
+        .skip(skip_primary_key)
+        .filter_map(|key| {
+            let columns: Vec<&Column> = key
+                .iter()
+                .map(|name| table.columns.iter().find(|column| column.sql_name == *name))
+                .collect::<Option<_>>()?;
+            let names: Vec<&str> = columns
+                .iter()
+                .map(|column| column.rust_name.trim_end_matches('_'))
+                .collect();
+            let fn_name = format!("get_by_{}", names.join("_and_"));
+            // `get_by_id` already names the primary-key lookup.
+            (skip_primary_key == 0 || fn_name != "get_by_id").then_some(Lookup { fn_name, columns })
+        })
+        .collect()
+}
+
+/// A lookup parameter's type: text is borrowed as `&str`; anything else
+/// (typed ids included) is taken by value.
+fn lookup_param_type(column: &Column) -> &str {
+    if column.typed_id.is_none() && column.sqlx_type == "String" {
+        "&str"
+    } else {
+        column.value_type()
+    }
+}
+
+fn render_unique_lookup(output: &mut String, table: &Table, lookup: &Lookup<'_>) {
+    let mut sql = column_clause("SELECT", table);
+    sql.push(format!("FROM {}", table_ref(table)));
+    sql.push(format!("WHERE {}", key_predicate(&lookup.columns, 1)));
+
+    let described: Vec<String> = lookup
+        .columns
+        .iter()
+        .map(|column| format!("`{}`", column.sql_name))
+        .collect();
+    output.push('\n');
+    push_doc(
+        output,
+        0,
+        &[&format!(
+            "Fetches the row with the given {}, or `None` if there is none.",
+            described.join(" and ")
+        )],
+    );
+    let params: Vec<String> = lookup
+        .columns
+        .iter()
+        .map(|column| format!("{}: {}", param_name(column), lookup_param_type(column)))
+        .collect();
+    push_fn_head(
+        output,
+        &lookup.fn_name,
+        &params,
+        &format!("Result<Option<{}>, sqlx::Error>", table.struct_name),
+    );
+    StaticQuery {
+        call: &format!("sqlx::query_as::<_, {}>", table.struct_name),
+        sql,
+        binds: lookup
+            .columns
+            .iter()
+            .map(|column| param_name(column))
+            .collect(),
+        execute: "fetch_optional(executor)",
+    }
+    .push(output, 4, "", "");
+    output.push_str("}\n");
 }
 
 /// Starts a search body: the `QueryBuilder` over the explicit column list,

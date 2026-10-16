@@ -16,3 +16,6 @@ ALTER TYPE app.ticket_state ADD VALUE 'Archived' AFTER 'CLOSED';
 -- A value-list column added by a later migration.
 ALTER TABLE refunds ADD COLUMN reason TEXT;
 ALTER TABLE refunds ADD CONSTRAINT refunds_reason_known CHECK (reason IN ('damaged', 'late'));
+
+-- A unique key added by a later migration: `products` gains `get_by_sku`.
+ALTER TABLE products ADD CONSTRAINT products_sku_key UNIQUE (sku);

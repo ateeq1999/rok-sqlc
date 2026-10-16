@@ -14,10 +14,10 @@ use std::rc::Rc;
 
 use heck::ToSnakeCase;
 use sqlparser::ast::{
-    AssignmentTarget, BinaryOperator, Cte, Expr, FromTable, FunctionArg, FunctionArgExpr,
-    FunctionArguments, Ident, JoinConstraint, JoinOperator, LimitClause, ObjectName,
-    ObjectNamePart, OnConflictAction, OnInsert, Query, Select, SelectItem, SetExpr, Statement,
-    TableFactor, TableObject, TableWithJoins, Value, visit_expressions,
+    AssignmentTarget, BinaryOperator, ConflictTarget, Cte, Expr, FromTable, FunctionArg,
+    FunctionArgExpr, FunctionArguments, Ident, JoinConstraint, JoinOperator, LimitClause,
+    ObjectName, ObjectNamePart, OnConflictAction, OnInsert, Query, Select, SelectItem, SetExpr,
+    Statement, TableFactor, TableObject, TableWithJoins, Value, visit_expressions,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -108,6 +108,39 @@ pub fn analyze_queries(
         }
     }
     (analyzed, failures)
+}
+
+/// Checks that an `ON CONFLICT (cols)` target is one of the table's unique
+/// keys (in any column order), so an upsert cannot fail at runtime for want
+/// of a matching constraint. A partial index never matches: PostgreSQL infers
+/// it only from a target with the index's `WHERE` condition, which query
+/// files cannot express.
+fn check_conflict_target(table: &Table, target: &[Ident]) -> Result<(), String> {
+    let target: Vec<String> = target.iter().map(ident_name).collect();
+    let keys = table.unique_key_columns(None);
+    let matches = |key: &Vec<String>| {
+        key.len() == target.len() && target.iter().all(|column| key.contains(column))
+    };
+    if keys.iter().any(matches) {
+        return Ok(());
+    }
+    let available = if keys.is_empty() {
+        format!("`{}` has no unique keys", table.display_name())
+    } else {
+        let listed: Vec<String> = keys
+            .iter()
+            .map(|key| format!("({})", key.join(", ")))
+            .collect();
+        format!(
+            "unique keys of `{}`: {}",
+            table.display_name(),
+            listed.join(", ")
+        )
+    };
+    Err(format!(
+        "ON CONFLICT ({}) matches no unique key; {available}",
+        target.join(", ")
+    ))
 }
 
 struct Context<'a> {
@@ -273,6 +306,11 @@ impl<'a, 'c> Analysis<'a, 'c> {
                 }
 
                 if let Some(OnInsert::OnConflict(on_conflict)) = &insert.on
+                    && let Some(ConflictTarget::Columns(target)) = &on_conflict.conflict_target
+                {
+                    check_conflict_target(table, target)?;
+                }
+                if let Some(OnInsert::OnConflict(on_conflict)) = &insert.on
                     && let OnConflictAction::DoUpdate(update) = &on_conflict.action
                 {
                     self.push_scope("excluded".to_owned(), TableRef::Schema(table), false);
@@ -435,6 +473,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
                 is_generated: false,
                 value_list: None,
                 typed_id: None,
+                is_managed: false,
             });
         }
         self.ctes.push(Rc::new(Table {

@@ -1,6 +1,6 @@
 # Library API and stability: one stable door
 
-The crate's only stable library API is `rok_sqlc::generate(&Config) -> Result<Report>` and the types it takes and returns: `Config`, `Report` (with `RefusedFile`, `TableFailure`, `QueryFailure`), and `Error` (with `Error::report()`). It does exactly what `rok-sqlc generate` does, because the CLI is a thin layer over it: the CLI parses flags into a `Config`, calls `generate`, and prints the `Report`. A `build.rs` therefore gets the same files and the same failures as the command line.
+The crate's only stable library API is `rok_sqlc::generate(&Config) -> Result<Report>` and the types it takes and returns: `Config` (with `Conventions`, ADR 0010), `Report` (with `RefusedFile`, `TableFailure`, `QueryFailure`), and `Error` (with `Error::report()`). It does exactly what `rok-sqlc generate` does, because the CLI is a thin layer over it: the CLI parses flags into a `Config`, calls `generate`, and prints the `Report`. A `build.rs` therefore gets the same files and the same failures as the command line.
 
 ```rust
 // build.rs
@@ -14,7 +14,7 @@ rok_sqlc::generate(&config)?;
 
 **Everything else is hidden.** Internal modules are crate-private, or `#[doc(hidden)]` where the `rok-sqlc` binary or the crate's own tests need them (`cli`, `parser`, `queries`). Hidden items carry no stability promise and may change in any release.
 
-**Growth without breakage.** `Config`, `Report`, and the failure types are `#[non_exhaustive]`: new options and report details (for example source `path:line`) arrive in minor releases. Callers build a `Config` from `Config::default()` and assign fields.
+**Growth without breakage.** `Config`, `Conventions`, `Report`, and the failure types are `#[non_exhaustive]`: new options and report details (for example source `path:line`) arrive in minor releases. Callers build a `Config` from `Config::default()` and assign fields.
 
 **What counts as breaking.** Changing the meaning of a `Config` field or the shape of `generate` is breaking. So is any change to the *generated* API (renamed functions, changed signatures, different types): regenerating after an upgrade must not break the user's code in a minor release. Generated code targets SQLx 0.9 only (0.9.0 and later 0.9.x), so it needs Rust 1.94, SQLx 0.9's minimum supported Rust version. Moving generated code to another SQLx version is a breaking change. The tool itself has a lower floor: its minimum supported Rust version is 1.88, because it does not depend on SQLx. Raising either floor is a minor-release change announced in the changelog.
 

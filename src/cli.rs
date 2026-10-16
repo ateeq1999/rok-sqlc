@@ -125,6 +125,7 @@ where
                 queries,
                 output,
                 resource,
+                conventions: Default::default(),
             };
             // Flags override the JSON payload, which overrides the file,
             // which overrides the defaults. `--schema` and `--queries` (each
@@ -144,6 +145,7 @@ where
                 check,
                 force,
                 lenient,
+                conventions: merged.conventions.resolve(),
             })
         }
     }

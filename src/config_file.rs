@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+use crate::Conventions;
+
 /// The file name looked for during discovery.
 pub(crate) const FILE_NAME: &str = "rok-sqlc.toml";
 
@@ -26,6 +28,7 @@ pub(crate) struct FileConfig {
     pub(crate) queries: Vec<PathBuf>,
     pub(crate) output: Option<PathBuf>,
     pub(crate) resource: Option<String>,
+    pub(crate) conventions: ConventionKeys,
 }
 
 impl FileConfig {
@@ -40,6 +43,7 @@ impl FileConfig {
             queries: list(self.queries, lower.queries),
             output: self.output.or(lower.output),
             resource: self.resource.or(lower.resource),
+            conventions: self.conventions.over(lower.conventions),
         }
     }
 }
@@ -53,6 +57,8 @@ struct RawFile {
     queries: Option<OneOrMany>,
     output: Option<PathBuf>,
     resource: Option<String>,
+    #[serde(default)]
+    conventions: ConventionKeys,
 }
 
 impl RawFile {
@@ -71,7 +77,70 @@ impl RawFile {
             queries: resolve(self.queries),
             output: self.output.map(|p| base.join(p)),
             resource: self.resource,
+            conventions: self.conventions,
         }
+    }
+}
+
+/// The `[conventions]` keys one source sets. Keys merge one by one across
+/// sources (flags have none); [`ConventionKeys::resolve`] then expands the
+/// preset and lets every explicit key override it.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ConventionKeys {
+    preset: Option<Preset>,
+    tenant_column: Option<String>,
+    tenant_setting: Option<String>,
+    user_setting: Option<String>,
+    soft_delete_column: Option<String>,
+    managed_columns: Option<Vec<String>>,
+    version_column: Option<String>,
+}
+
+/// A named bundle of conventions. Deserializing an unknown name fails with
+/// the list of known ones.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Preset {
+    Rok,
+}
+
+impl ConventionKeys {
+    /// Layers `self` over `lower`, key by key.
+    fn over(self, lower: ConventionKeys) -> ConventionKeys {
+        ConventionKeys {
+            preset: self.preset.or(lower.preset),
+            tenant_column: self.tenant_column.or(lower.tenant_column),
+            tenant_setting: self.tenant_setting.or(lower.tenant_setting),
+            user_setting: self.user_setting.or(lower.user_setting),
+            soft_delete_column: self.soft_delete_column.or(lower.soft_delete_column),
+            managed_columns: self.managed_columns.or(lower.managed_columns),
+            version_column: self.version_column.or(lower.version_column),
+        }
+    }
+
+    /// The conventions these keys describe: the preset's values (none
+    /// without a preset), each overridden by the explicit key when set. An
+    /// empty string turns a preset's single-column convention off.
+    pub(crate) fn resolve(self) -> Conventions {
+        let mut conventions = match self.preset {
+            Some(Preset::Rok) => Conventions::rok(),
+            None => Conventions::default(),
+        };
+        let set = |slot: &mut Option<String>, key: Option<String>| {
+            if let Some(value) = key {
+                *slot = Some(value).filter(|value| !value.is_empty());
+            }
+        };
+        set(&mut conventions.tenant_column, self.tenant_column);
+        set(&mut conventions.tenant_setting, self.tenant_setting);
+        set(&mut conventions.user_setting, self.user_setting);
+        set(&mut conventions.soft_delete_column, self.soft_delete_column);
+        set(&mut conventions.version_column, self.version_column);
+        if let Some(managed) = self.managed_columns {
+            conventions.managed_columns = managed;
+        }
+        conventions
     }
 }
 
@@ -132,4 +201,46 @@ pub(crate) fn load_json(arg: &str) -> Result<FileConfig> {
     let raw: RawFile =
         serde_json::from_str(&text).with_context(|| format!("invalid JSON payload {source}"))?;
     Ok(raw.resolve(Path::new("")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn conventions(toml: &str) -> Conventions {
+        let raw: RawFile = toml::from_str(toml).expect("valid config");
+        raw.resolve(Path::new("")).conventions.resolve()
+    }
+
+    #[test]
+    fn rok_preset_with_a_soft_delete_override_uses_the_override() {
+        let resolved =
+            conventions("[conventions]\npreset = \"rok\"\nsoft_delete_column = \"removed_at\"\n");
+
+        assert_eq!(resolved.soft_delete_column.as_deref(), Some("removed_at"));
+        assert_eq!(resolved.tenant_column.as_deref(), Some("organization_id"));
+        assert_eq!(
+            resolved.tenant_setting.as_deref(),
+            Some("app.organization_id")
+        );
+        assert_eq!(resolved.user_setting.as_deref(), Some("app.user_id"));
+        assert_eq!(resolved.managed_columns, ["updated_at", "row_version"]);
+        assert_eq!(resolved.version_column.as_deref(), Some("row_version"));
+    }
+
+    #[test]
+    fn an_empty_name_turns_a_preset_convention_off() {
+        let resolved = conventions("[conventions]\npreset = \"rok\"\nversion_column = \"\"\n");
+
+        assert_eq!(resolved.version_column, None);
+        assert_eq!(resolved.soft_delete_column.as_deref(), Some("deleted_at"));
+    }
+
+    #[test]
+    fn no_conventions_section_means_every_convention_is_off() {
+        assert_eq!(conventions(""), Conventions::default());
+        assert_eq!(conventions("[conventions]\n"), Conventions::default());
+        assert_eq!(Conventions::default().managed_columns, Vec::<String>::new());
+        assert_eq!(Conventions::default().tenant_column, None);
+    }
 }

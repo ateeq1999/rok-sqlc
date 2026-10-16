@@ -1786,3 +1786,112 @@ fn malformed_json_says_where_it_broke_and_nothing_is_written() -> Result<()> {
     assert!(!dir.path().join("gen").exists());
     Ok(())
 }
+
+// --- unique keys -------------------------------------------------------------
+
+const UNIQUE_KEYS_SCHEMA: &str = "CREATE TABLE products (\n\
+     id UUID PRIMARY KEY,\n\
+     sku TEXT NOT NULL UNIQUE,\n\
+     name TEXT NOT NULL,\n\
+     organization_id UUID NOT NULL,\n\
+     code TEXT NOT NULL,\n\
+     barcode TEXT,\n\
+     UNIQUE (organization_id, code)\n\
+     );\n\
+     CREATE UNIQUE INDEX products_lower_name ON products (lower(name));\n\
+     CREATE UNIQUE INDEX products_barcode_set ON products (barcode) WHERE barcode <> '';\n";
+
+#[test]
+fn on_conflict_target_must_match_a_unique_key() -> Result<()> {
+    let dir = TempDir::new()?;
+    let schema = dir.path().join("schema.sql");
+    let queries = dir.path().join("queries.sql");
+    fs::write(&schema, UNIQUE_KEYS_SCHEMA)?;
+    fs::write(
+        &queries,
+        "-- name: UpsertBySku :exec\n\
+         INSERT INTO products (id, sku, name, organization_id, code) VALUES ($1, $2, $3, $4, $5)\n\
+         ON CONFLICT (sku) DO UPDATE SET name = EXCLUDED.name;\n\
+         \n\
+         -- name: UpsertByCode :exec\n\
+         INSERT INTO products (id, sku, name, organization_id, code) VALUES ($1, $2, $3, $4, $5)\n\
+         ON CONFLICT (code, organization_id) DO NOTHING;\n\
+         \n\
+         -- name: UpsertByName :exec\n\
+         INSERT INTO products (id, sku, name, organization_id, code) VALUES ($1, $2, $3, $4, $5)\n\
+         ON CONFLICT (name) DO UPDATE SET sku = EXCLUDED.sku;\n\
+         \n\
+         -- name: UpsertByBarcode :exec\n\
+         INSERT INTO products (id, sku, name, organization_id, code, barcode) VALUES ($1, $2, $3, $4, $5, $6)\n\
+         ON CONFLICT (barcode) DO NOTHING;\n",
+    )?;
+    let out = output_dir(&dir);
+
+    let output = run_binary(&[
+        "generate",
+        "--schema",
+        schema.to_str().unwrap(),
+        "--queries",
+        queries.to_str().unwrap(),
+        "--output",
+        out.to_str().unwrap(),
+    ]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let path = queries.display().to_string();
+    let keys = "unique keys of `products`: (id), (sku), (organization_id, code)";
+    assert!(
+        stderr.contains(&format!(
+            "{path}:9: query `UpsertByName`: ON CONFLICT (name) matches no unique key; {keys}"
+        )),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "{path}:13: query `UpsertByBarcode`: ON CONFLICT (barcode) matches no unique key; {keys}"
+        )),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("UpsertBySku"), "{stderr}");
+    assert!(!stderr.contains("UpsertByCode"), "{stderr}");
+    assert!(stderr.contains("2 unsupported queries"), "{stderr}");
+    Ok(())
+}
+
+#[test]
+fn unique_keys_get_lookups_but_expression_and_partial_indexes_do_not() -> Result<()> {
+    let dir = TempDir::new()?;
+    let schema = dir.path().join("schema.sql");
+    fs::write(&schema, UNIQUE_KEYS_SCHEMA)?;
+    let out = output_dir(&dir);
+    run(&[
+        "generate",
+        "--schema",
+        schema.to_str().unwrap(),
+        "--output",
+        out.to_str().unwrap(),
+    ])?;
+
+    let read = fs::read_to_string(out.join("products/read.rs"))?;
+    assert!(
+        read.contains(
+            "pub async fn get_by_sku<'e, E>(executor: E, sku: &str) -> Result<Option<Product>, sqlx::Error>"
+        ),
+        "{read}"
+    );
+    assert!(read.contains("        WHERE sku = $1\n"), "{read}");
+    assert!(
+        read.contains(
+            "pub async fn get_by_organization_id_and_code<'e, E>(\n    executor: E,\n    organization_id: uuid::Uuid,\n    code: &str,\n) -> Result<Option<Product>, sqlx::Error>"
+        ),
+        "{read}"
+    );
+    assert!(
+        read.contains("        WHERE organization_id = $1 AND code = $2\n"),
+        "{read}"
+    );
+    assert!(read.contains("    .bind(organization_id)\n    .bind(code)\n"));
+    assert!(!read.contains("get_by_name"), "expression index: {read}");
+    assert!(!read.contains("get_by_barcode"), "partial index: {read}");
+    Ok(())
+}

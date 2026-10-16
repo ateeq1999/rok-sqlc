@@ -64,6 +64,8 @@ async fn generated_crud_against_postgres() {
     value_list_columns_round_trip(&pool).await;
     typed_ids_flow_from_rows_to_foreign_keys(&pool).await;
     foreign_keys_resolve_to_the_table_in_their_schema(&pool).await;
+    unique_key_lookups_find_one_row_or_none(&pool).await;
+    managed_columns_are_left_to_the_database(&pool).await;
 }
 
 /// A category's typed id goes straight into a product's foreign key field
@@ -1332,4 +1334,120 @@ async fn value_list_columns_round_trip(pool: &PgPool) {
     .unwrap();
     assert_eq!(refund.status, RefundStatus::Requested);
     assert_eq!(refund.reason, Some(RefundReason::Late));
+}
+
+/// Every unique key other than the primary key gets a `get_by_<cols>`
+/// lookup: `products.sku` (made unique by alter_schema.sql) and the
+/// composite `(organization_id, code)` of `app.branches`.
+async fn unique_key_lookups_find_one_row_or_none(pool: &PgPool) {
+    use db::branches::models::NewBranch;
+    use db::categories::models::NewCategory;
+    use db::products::models::{NewProduct, ProductId};
+
+    let category = db::categories::write::create(
+        pool,
+        NewCategory {
+            name: "unique".to_owned(),
+            description: None,
+        },
+    )
+    .await
+    .unwrap();
+    for (n, sku) in [(8_001, "U-1"), (8_002, "U-2")] {
+        db::products::write::create(
+            pool,
+            NewProduct {
+                id: ProductId::from(uuid::Uuid::from_u128(n)),
+                sku: sku.to_owned(),
+                name: format!("Unique {sku}"),
+                category_id: category.id,
+                supplier_id: None,
+                price_cents: None,
+                stock_on_hand: None,
+                reorder_level: None,
+                weight_kg: None,
+                discontinued: None,
+                released_on: None,
+                created_at: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+    let by_sku = db::products::read::get_by_sku(pool, "U-2").await.unwrap();
+    assert_eq!(
+        by_sku.map(|row| row.id),
+        Some(ProductId::from(uuid::Uuid::from_u128(8_002)))
+    );
+    assert_eq!(db::products::read::get_by_sku(pool, "U-3").await.unwrap(), None);
+
+    let acme = uuid::Uuid::from_u128(1);
+    let globex = uuid::Uuid::from_u128(2);
+    for (organization_id, code, name) in [
+        (acme, "HQ", "Acme head office"),
+        (globex, "HQ", "Globex head office"),
+        (acme, "WEST", "Acme west"),
+    ] {
+        db::branches::write::create(
+            pool,
+            NewBranch {
+                organization_id,
+                code: code.to_owned(),
+                name: name.to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+    }
+    let globex_hq = db::branches::read::get_by_organization_id_and_code(pool, globex, "HQ")
+        .await
+        .unwrap();
+    assert_eq!(globex_hq.map(|row| row.name), Some("Globex head office".to_owned()));
+    let acme_west = db::branches::read::get_by_organization_id_and_code(pool, acme, "WEST")
+        .await
+        .unwrap();
+    assert_eq!(acme_west.map(|row| row.name), Some("Acme west".to_owned()));
+    let globex_west = db::branches::read::get_by_organization_id_and_code(pool, globex, "WEST")
+        .await
+        .unwrap();
+    assert_eq!(globex_west, None);
+}
+
+/// `touched_notes` is generated with `updated_at` and `row_version` managed:
+/// neither appears in `NewTouchedNote` or `UpdateTouchedNote` (the struct
+/// literals below name every field), and the rows carry the values the
+/// default and the `touch_row` trigger give them.
+async fn managed_columns_are_left_to_the_database(pool: &PgPool) {
+    use db::touched_notes::models::{NewTouchedNote, UpdateTouchedNote};
+    use db::touched_notes::{read, write};
+
+    let created = write::create(
+        pool,
+        NewTouchedNote {
+            body: "first".to_owned(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(created.row_version, 1, "the column default applies");
+
+    let updated = write::update(
+        pool,
+        created.id,
+        UpdateTouchedNote {
+            body: Some("second".to_owned()),
+        },
+    )
+    .await
+    .unwrap()
+    .expect("row exists");
+    assert_eq!(updated.body, "second");
+    assert_eq!(updated.row_version, 2, "the trigger advanced the version");
+    assert!(
+        updated.updated_at > created.updated_at,
+        "the trigger touched updated_at"
+    );
+
+    let stored = read::get_by_id(pool, created.id).await.unwrap();
+    assert_eq!(stored, Some(updated));
 }

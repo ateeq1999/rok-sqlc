@@ -1,3 +1,4 @@
+pub mod conventions;
 pub mod keys;
 pub mod models;
 pub mod queries;
@@ -9,6 +10,7 @@ pub mod write;
 
 use std::path::{Path, PathBuf};
 
+use crate::Conventions;
 use crate::queries::AnalyzedQuery;
 use crate::schema::{Column, EnumType, Table, mentions_generated_type};
 
@@ -49,7 +51,14 @@ impl QueriesModule<'_> {
 
 #[cfg(test)]
 fn plan_files(schema_sql: &str, tables: &[Table], output: &Path) -> Vec<(PathBuf, String)> {
-    plan_files_with_queries(schema_sql, tables, &[], QueriesModule::None, output)
+    plan_files_with_queries(
+        schema_sql,
+        tables,
+        &[],
+        QueriesModule::None,
+        &Conventions::default(),
+        output,
+    )
 }
 
 pub fn plan_files_with_queries(
@@ -57,10 +66,12 @@ pub fn plan_files_with_queries(
     tables: &[Table],
     enums: &[EnumType],
     queries: QueriesModule<'_>,
+    conventions: &Conventions,
     output: &Path,
 ) -> Vec<(PathBuf, String)> {
     let mut files = Vec::new();
-    let resolved = keys::resolve(tables);
+    let mut resolved = keys::resolve(tables);
+    conventions::apply(&mut resolved, conventions);
     let tables = resolved.as_slice();
 
     for table in tables {
@@ -469,6 +480,7 @@ pub(crate) mod test_support {
             is_generated: false,
             value_list: None,
             typed_id: None,
+            is_managed: false,
         }
     }
 

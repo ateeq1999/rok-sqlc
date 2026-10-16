@@ -87,6 +87,31 @@ impl Table {
         }
     }
 
+    /// The table's unique keys as column lists: the primary key first, then
+    /// each unique constraint or index that [counts](UniqueKey::counts), in
+    /// declaration order. A key over the same columns as an earlier one (in
+    /// any order) is left out.
+    pub fn unique_key_columns(&self, soft_delete_column: Option<&str>) -> Vec<Vec<String>> {
+        let mut keys: Vec<Vec<String>> = Vec::new();
+        if !self.primary_key.is_empty() {
+            keys.push(self.primary_key.clone());
+        }
+        let declared = self
+            .unique_keys
+            .iter()
+            .filter(|key| key.counts(soft_delete_column));
+        for key in declared {
+            let same = |other: &Vec<String>| {
+                other.len() == key.columns.len()
+                    && key.columns.iter().all(|column| other.contains(column))
+            };
+            if !keys.iter().any(same) {
+                keys.push(key.columns.clone());
+            }
+        }
+        keys
+    }
+
     /// Primary key columns in key declaration order.
     pub fn primary_key_columns(&self) -> Vec<&Column> {
         self.primary_key
@@ -134,6 +159,10 @@ pub struct Column {
     /// table's id for a foreign key to it. The parser leaves it `None`; the
     /// generator fills it in for the tables it generates.
     pub typed_id: Option<TypedId>,
+    /// A managed column (ADR 0010): the database maintains it, so it is
+    /// never inserted or updated by generated code but stays in rows. The
+    /// parser leaves it `false`; the generator applies the conventions.
+    pub is_managed: bool,
 }
 
 /// A generated typed id: `name` is defined in `<module>/models.rs`.
@@ -192,9 +221,10 @@ impl Column {
         format!("{}_is_null", self.rust_name.trim_end_matches('_'))
     }
 
-    /// The caller may supply this column on insert.
+    /// The caller may supply this column on insert: it is neither generated
+    /// nor managed.
     pub fn is_insertable(&self) -> bool {
-        !self.is_generated
+        !self.is_generated && !self.is_managed
     }
 
     /// The caller may omit this column on insert so the database default applies.
@@ -202,10 +232,10 @@ impl Column {
         self.is_insertable() && self.has_default
     }
 
-    /// The caller may change this column on update: it is neither generated
-    /// nor part of the primary key.
+    /// The caller may change this column on update: it is neither generated,
+    /// managed, nor part of the primary key.
     pub fn is_updatable(&self) -> bool {
-        !self.is_generated && !self.is_primary_key
+        !self.is_generated && !self.is_managed && !self.is_primary_key
     }
 
     /// The Rust type of one non-null value: the typed id when the column has
@@ -263,7 +293,8 @@ pub struct ForeignKey {
 }
 
 /// Columns no two rows share, from a unique constraint or a unique index on
-/// plain columns. Input to unique-key lookups; nothing reads it yet.
+/// plain columns, as declared. Whether a partial index makes a unique key is
+/// decided by [`UniqueKey::counts`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UniqueKey {
     /// Key columns in declaration order.
@@ -280,5 +311,56 @@ impl UniqueKey {
             columns,
             predicate: None,
         }
+    }
+
+    /// Whether the declaration makes a unique key: a constraint or a full
+    /// index always does; a partial index only when its condition is exactly
+    /// `<soft_delete_column> IS NULL`, so the key holds across live rows.
+    pub fn counts(&self, soft_delete_column: Option<&str>) -> bool {
+        let Some(predicate) = &self.predicate else {
+            return true;
+        };
+        let Some(column) = soft_delete_column else {
+            return false;
+        };
+        let mut condition = predicate.trim();
+        while let Some(inner) = condition
+            .strip_prefix('(')
+            .and_then(|rest| rest.strip_suffix(')'))
+        {
+            condition = inner.trim();
+        }
+        let Some(subject) = condition
+            .strip_suffix("IS NULL")
+            .or_else(|| condition.strip_suffix("is null"))
+        else {
+            return false;
+        };
+        let subject = subject.trim();
+        subject == column || subject == format!("\"{}\"", column.replace('"', "\"\""))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UniqueKey;
+
+    fn partial(predicate: &str) -> UniqueKey {
+        UniqueKey {
+            columns: vec!["sku".to_owned()],
+            predicate: Some(predicate.to_owned()),
+        }
+    }
+
+    #[test]
+    fn a_partial_index_counts_only_on_exactly_the_soft_delete_condition() {
+        let soft_delete = Some("deleted_at");
+        assert!(UniqueKey::new(vec!["sku".to_owned()]).counts(None));
+        assert!(partial("deleted_at IS NULL").counts(soft_delete));
+        assert!(partial("(deleted_at IS NULL)").counts(soft_delete));
+        assert!(!partial("deleted_at IS NULL").counts(None));
+        assert!(!partial("archived_at IS NULL").counts(soft_delete));
+        assert!(!partial("deleted_at IS NOT NULL").counts(soft_delete));
+        assert!(!partial("deleted_at IS NULL AND sku <> ''").counts(soft_delete));
     }
 }

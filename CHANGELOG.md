@@ -64,14 +64,29 @@ against earlier development snapshots.
   as text and keep each exact value.
 - Typed search: per-table `Filter` and `SortKey` types, `search`, and keyset
   pagination with `search_after`.
+- Unique-key lookups: every unique constraint (inline, table-level, or added
+  by `ALTER TABLE`) and unique index on plain columns gets
+  `read::get_by_<col>[_and_<col>...]`, returning `Option<Row>`. Text key
+  columns are taken as `&str`, other columns by value (typed ids included).
+  Expression indexes and partial indexes get no lookup.
 - Annotated query files (`-- name: X :one|:maybe_one|:many|:exec|:execrows`)
   generate typed query functions, including `WITH` (CTE) queries.
+- A query file's `ON CONFLICT (cols)` target must be a unique key of the
+  table (the primary key, a unique constraint, or a full unique index, in
+  any column order); otherwise generation fails with a `path:line`
+  diagnostic listing the table's unique keys.
 - `--schema` accepts files or migration directories and can be repeated;
   `ALTER TABLE` statements in later migrations change earlier tables.
   Diagnostics print `path:line:`.
 - `--queries` accepts files or directories and can be repeated.
 - `rok-sqlc.toml` discovery (or `-c/--config`) and a `-j/--json`
   configuration payload, layered as flags > payload > file > defaults.
+- A `[conventions]` section in `rok-sqlc.toml` and the JSON payload
+  (`rok_sqlc::Conventions` in the library), off by default, with a `rok`
+  preset for the Rok ERP. Managed columns (`managed_columns`, such as
+  `updated_at` and `row_version`) are left out of create inputs and update
+  patches and kept in rows. The tenant, soft-delete, and version keys are
+  validated but not applied yet. See ADR 0010.
 - `-k/--check` reports drift without writing and exits 1 when generated
   files are missing, changed, or stale. Successful runs remove stale
   generated files.
