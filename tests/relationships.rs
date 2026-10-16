@@ -107,6 +107,205 @@ CREATE TABLE profiles (
     Ok(())
 }
 
+/// `invoices` references `users` twice, so both sides have two relationships.
+const INVOICES_SCHEMA: &str = "CREATE TABLE users (id BIGINT PRIMARY KEY, email TEXT NOT NULL);
+CREATE TABLE invoices (
+    id BIGINT PRIMARY KEY,
+    created_by_user_id BIGINT NOT NULL REFERENCES users (id),
+    approved_by_user_id BIGINT REFERENCES users (id)
+);
+";
+
+#[test]
+fn a_renamed_relationship_generates_under_its_new_name() -> Result<()> {
+    let (dir, result) = generate(
+        INVOICES_SCHEMA,
+        "[relationships.invoices]\ncreated_by_user = \"author\"\n[relationships.users]\ninvoices_by_created_by_user = \"authored_invoices\"\n",
+    );
+    result?;
+    let invoices = loaders(dir.path(), "invoices").expect("invoices has relationships");
+    assert!(invoices.contains("pub async fn load_author<"), "{invoices}");
+    assert!(!invoices.contains("load_created_by_user"), "{invoices}");
+    assert!(
+        invoices.contains("pub async fn load_approved_by_user<"),
+        "{invoices}"
+    );
+    let users = loaders(dir.path(), "users").expect("users has relationships");
+    assert!(
+        users.contains("pub async fn load_authored_invoices<"),
+        "{users}"
+    );
+    assert!(
+        !users.contains("load_invoices_by_created_by_user"),
+        "{users}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_opted_out_relationship_generates_nothing_on_either_side() -> Result<()> {
+    // Opted out from the belongs-to side: its inverse on `users` goes too.
+    let (dir, result) = generate(
+        INVOICES_SCHEMA,
+        "[relationships.invoices]\napproved_by_user = false\n",
+    );
+    result?;
+    let invoices = loaders(dir.path(), "invoices").expect("invoices keeps one");
+    assert!(!invoices.contains("load_approved_by_user"), "{invoices}");
+    assert!(
+        invoices.contains("pub async fn load_created_by_user<"),
+        "{invoices}"
+    );
+    let users = loaders(dir.path(), "users").expect("users keeps one");
+    assert!(
+        !users.contains("load_invoices_by_approved_by_user"),
+        "{users}"
+    );
+    assert!(
+        users.contains("pub async fn load_invoices_by_created_by_user<"),
+        "{users}"
+    );
+
+    // Opted out from the inverse side, through the JSON payload: the
+    // belongs-to goes too, and a table left without relationships gets no
+    // `relationships.rs` and no `relationships` module.
+    let config = dir.path().join("rok-sqlc.toml");
+    run(&[
+        "g",
+        "-c",
+        config.to_str().unwrap(),
+        "-j",
+        r#"{"relationships":{"users":{"invoices_by_created_by_user":false}}}"#,
+    ])?;
+    assert_eq!(loaders(dir.path(), "invoices"), None);
+    assert_eq!(loaders(dir.path(), "users"), None);
+    let mod_rs = fs::read_to_string(dir.path().join("out/invoices/mod.rs"))?;
+    assert!(!mod_rs.contains("relationships"), "{mod_rs}");
+    Ok(())
+}
+
+fn failure(schema: &str, extra_toml: &str) -> String {
+    let (dir, result) = generate(schema, extra_toml);
+    let message = format!("{:#}", result.expect_err("generation fails"));
+    assert!(!dir.path().join("out").exists(), "{message}");
+    message
+}
+
+#[test]
+fn unknown_relationships_fail_naming_the_config_entry() {
+    let message = failure(
+        INVOICES_SCHEMA,
+        "[relationships.invoices]\ncreated_by = \"author\"\n",
+    );
+    assert!(
+        message.contains("`relationships.invoices.created_by` in the configuration names no relationship of `invoices`"),
+        "{message}"
+    );
+    assert!(
+        message.contains("`created_by_user`, `approved_by_user`"),
+        "{message}"
+    );
+
+    let message = failure(
+        INVOICES_SCHEMA,
+        "[relationships.invoice]\ncreated_by_user = false\n",
+    );
+    assert!(
+        message
+            .contains("`relationships.invoice` in the configuration names no table of the schema"),
+        "{message}"
+    );
+
+    let message = failure(
+        INVOICES_SCHEMA,
+        "[relationships.invoices]\ncreated_by_user = true\n",
+    );
+    assert!(message.contains("`true` changes nothing"), "{message}");
+    assert!(message.contains("rok-sqlc.toml"), "{message}");
+}
+
+#[test]
+fn colliding_or_invalid_renames_fail_naming_the_config_entry() {
+    let message = failure(
+        INVOICES_SCHEMA,
+        "[relationships.invoices]\ncreated_by_user = \"approved_by_user\"\n",
+    );
+    assert!(
+        message.contains("relationships of `invoices` collide: `approved_by_user`"),
+        "{message}"
+    );
+    assert!(
+        message.contains("`relationships.invoices.created_by_user` in the configuration"),
+        "{message}"
+    );
+
+    let message = failure(
+        INVOICES_SCHEMA,
+        "[relationships.invoices]\ncreated_by_user = \"Author\"\n",
+    );
+    assert!(
+        message.contains("`relationships.invoices.created_by_user` in the configuration renames the relationship to `Author`, which is not a snake_case Rust identifier"),
+        "{message}"
+    );
+
+    let message = failure(
+        INVOICES_SCHEMA,
+        "[relationships.invoices]\ncreated_by_user = false\n[relationships.users]\ninvoices_by_created_by_user = \"authored\"\n",
+    );
+    assert!(
+        message.contains("`relationships.users.invoices_by_created_by_user` in the configuration renames a relationship that `relationships.invoices.created_by_user` opts out"),
+        "{message}"
+    );
+}
+
+#[test]
+fn configuration_resolves_an_inferred_collision() -> Result<()> {
+    let schema =
+        "CREATE TABLE users (id BIGINT PRIMARY KEY, profile_id BIGINT REFERENCES profiles (id));
+CREATE TABLE profiles (
+    id BIGINT PRIMARY KEY,
+    user_id BIGINT NOT NULL UNIQUE REFERENCES users (id)
+);
+";
+    let message = failure(schema, "");
+    assert!(
+        message.contains("rename one of them, or opt one out, in `relationships.users`"),
+        "{message}"
+    );
+
+    let (dir, result) = generate(schema, "[relationships.users]\nprofile = \"own_profile\"\n");
+    result?;
+    let users = loaders(dir.path(), "users").expect("users has relationships");
+    assert!(users.contains("pub async fn load_own_profile<"), "{users}");
+    assert!(users.contains("pub async fn load_profile<"), "{users}");
+    Ok(())
+}
+
+#[test]
+fn a_resource_run_accepts_entries_for_tables_it_does_not_generate() -> Result<()> {
+    let (dir, result) = generate(
+        INVOICES_SCHEMA,
+        "[relationships.invoices]\ncreated_by_user = \"author\"\n",
+    );
+    result?;
+    fs::remove_dir_all(dir.path().join("out"))?;
+    let config = dir.path().join("rok-sqlc.toml");
+    run(&["g", "-c", config.to_str().unwrap(), "-r", "users"])?;
+    assert_eq!(loaders(dir.path(), "users"), None);
+
+    let config_text = fs::read_to_string(&config)?.replace("created_by_user =", "created_by =");
+    fs::write(&config, config_text)?;
+    let message = format!(
+        "{:#}",
+        run(&["g", "-c", config.to_str().unwrap(), "-r", "users"]).unwrap_err()
+    );
+    assert!(
+        message.contains("`relationships.invoices.created_by`"),
+        "{message}"
+    );
+    Ok(())
+}
+
 fn writes(dir: &Path, module: &str) -> String {
     fs::read_to_string(dir.join("out").join(module).join("write.rs")).unwrap()
 }
@@ -169,5 +368,58 @@ fn two_foreign_keys_without_a_unique_pair_are_not_a_join_table() -> Result<()> {
     assert!(!roles.contains("pub async fn load_users<"), "{roles}");
     let user_roles = writes(dir.path(), "user_roles");
     assert!(!user_roles.contains("pub async fn attach<"), "{user_roles}");
+    Ok(())
+}
+
+#[test]
+fn opting_out_one_side_of_a_many_to_many_removes_both() -> Result<()> {
+    let tenant = "[conventions]\ntenant_column = \"organization_id\"\n";
+    let (dir, result) = generate(
+        ACCESS_SCHEMA,
+        &format!("{tenant}[relationships.roles]\npermissions = false\n"),
+    );
+    result?;
+    let roles = loaders(dir.path(), "roles").expect("roles keeps its has-many");
+    assert!(!roles.contains("load_permissions"), "{roles}");
+    assert!(
+        roles.contains("pub async fn load_role_permissions<"),
+        "{roles}"
+    );
+    let permissions = loaders(dir.path(), "permissions").expect("its has-many stays");
+    assert!(
+        !permissions.contains("load_roles"),
+        "no `roles` either: {permissions}"
+    );
+    // The join table's own foreign keys stay, and with them its writes.
+    let join = writes(dir.path(), "role_permissions");
+    assert!(join.contains("pub async fn sync<"), "{join}");
+
+    let (renamed, result) = generate(
+        ACCESS_SCHEMA,
+        &format!("{tenant}[relationships.permissions]\nroles = \"granted_roles\"\n"),
+    );
+    result?;
+    let permissions = loaders(renamed.path(), "permissions").expect("renamed");
+    assert!(
+        permissions.contains("pub async fn load_granted_roles<"),
+        "{permissions}"
+    );
+    Ok(())
+}
+
+#[test]
+fn opting_out_a_join_tables_foreign_key_ends_the_many_to_many() -> Result<()> {
+    let (dir, result) = generate(
+        ACCESS_SCHEMA,
+        "[conventions]\ntenant_column = \"organization_id\"\n[relationships.role_permissions]\nrole = false\n",
+    );
+    result?;
+    let roles = loaders(dir.path(), "roles").expect("roles keeps user_roles");
+    assert!(!roles.contains("load_permissions"), "{roles}");
+    assert!(!roles.contains("load_role_permissions"), "{roles}");
+    let permissions = loaders(dir.path(), "permissions").expect("its has-many stays");
+    assert!(!permissions.contains("load_roles"), "{permissions}");
+    let join = writes(dir.path(), "role_permissions");
+    assert!(!join.contains("pub async fn attach<"), "{join}");
     Ok(())
 }

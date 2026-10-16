@@ -153,7 +153,18 @@ against earlier development snapshots.
   `attach`/`sync` restore the soft-deleted row instead of inserting another.
   `attach` and `sync` are left out when another column needs a value. A
   table with two foreign keys but no unique pair (like `user_roles`) is not a
-  join table.
+  join table. Opting out one side of a many-to-many removes the other;
+  opting out a join table's foreign key removes the pair through it and
+  its join writes.
+- A `[relationships]` section (config file, JSON payload, or
+  `Config::relationships` with `rok_sqlc::RelationshipChange`) renames or
+  opts out inferred relationships, by table and inferred name:
+  `[relationships.invoices]` with `created_by_user = "author"` generates
+  `load_author`, and `approved_by_user = false` generates nothing for that
+  foreign key on either side. Entries are checked against the whole schema,
+  so `--resource` runs accept the same configuration; an entry naming an
+  unknown table or relationship, an invalid name, or a rename that collides
+  fails, naming the entry (`relationships.invoices.created_by_user`).
 - `-k/--check` reports drift without writing and exits 1 when generated
   files are missing, changed, or stale. Successful runs remove stale
   generated files.

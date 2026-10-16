@@ -280,6 +280,17 @@ CREATE TABLE org_units (
     name TEXT NOT NULL
 );
 
+-- Relationship configuration (ticket 24): tests/fixture_compile.rs renames
+-- `expense_claims.created_by_user` to `author` (and its inverse on `users` to
+-- `authored_expense_claims`) and opts out `approved_by_user`, so neither side
+-- of that foreign key gets a loader.
+CREATE TABLE expense_claims (
+    id BIGSERIAL PRIMARY KEY,
+    created_by_user_id BIGINT NOT NULL REFERENCES users (id),
+    approved_by_user_id BIGINT REFERENCES users (id),
+    amount_cents BIGINT NOT NULL
+);
+
 -- Many-to-many (ticket 23). `role_permissions` is a join table: its two
 -- foreign keys and the tenant form a unique key, so `roles` and `permissions`
 -- relate many-to-many through it. It carries a payload column (`granted_at`)

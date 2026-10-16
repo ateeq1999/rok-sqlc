@@ -78,6 +78,7 @@ async fn generated_crud_against_postgres() {
     several_foreign_keys_to_one_table_get_distinct_names(&pool).await;
     unique_foreign_key_loads_one_row(&pool).await;
     self_reference_loads_parent_and_children(&pool).await;
+    renamed_relationships_load_under_their_new_names(&pool).await;
     many_to_many_attach_detach_and_sync(&pool).await;
     soft_delete_join_rows_are_restored_not_duplicated(&pool).await;
     plain_join_table_deletes_detached_pairs(&pool).await;
@@ -2395,6 +2396,57 @@ async fn self_reference_loads_parent_and_children(pool: &PgPool) {
     assert_eq!(children[&left.id], vec![leaf.clone()]);
     assert_eq!(children[&right.id], Vec::new());
     assert_eq!(children[&leaf.id], Vec::new());
+}
+
+/// `tests/fixture_compile.rs` renames `expense_claims.created_by_user` to
+/// `author` and its inverse on `users` to `authored_expense_claims`, and opts
+/// out `expense_claims.approved_by_user`, which removes both of its sides:
+/// the renamed loaders work like inferred ones, and no `load_approved_by_user`
+/// or `load_expense_claims_by_approved_by_user` exists to call.
+async fn renamed_relationships_load_under_their_new_names(pool: &PgPool) {
+    use db::expense_claims::models::NewExpenseClaim;
+    use db::expense_claims::relationships::load_author;
+    use db::users::models::NewUser;
+    use db::users::relationships::load_authored_expense_claims;
+
+    let user = async |email: &str| {
+        db::users::write::create(
+            pool,
+            NewUser {
+                email: email.to_owned(),
+            },
+        )
+        .await
+        .unwrap()
+    };
+    let author = user("author@example.com").await;
+    let approver = user("approver@example.com").await;
+    let claim = async |amount_cents| {
+        db::expense_claims::write::create(
+            pool,
+            NewExpenseClaim {
+                created_by_user_id: author.id,
+                approved_by_user_id: Some(approver.id),
+                amount_cents,
+            },
+        )
+        .await
+        .unwrap()
+    };
+    let first = claim(100).await;
+    let second = claim(200).await;
+
+    let authors = load_author(pool, &[first.clone(), second.clone()])
+        .await
+        .unwrap();
+    assert_eq!(authors.len(), 1);
+    assert_eq!(authors[&author.id], author);
+
+    let authored = load_authored_expense_claims(pool, &[author.clone(), approver.clone()])
+        .await
+        .unwrap();
+    assert_eq!(authored[&author.id], vec![first, second]);
+    assert_eq!(authored[&approver.id], Vec::new());
 }
 
 /// Two tenants, two roles in the first, and three permissions shared by all,
