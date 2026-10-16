@@ -55,7 +55,9 @@ const EXPECTED: &[Expected] = &[
         fixture: "legacy_modules/hr",
         tables: &[(
             "employees",
-            "column `employment_type`: type `EMPLOYMENT_TYPE` is not supported yet",
+            // `employment_type` now maps to `types::EmploymentType`; `INTERVAL`
+            // is still unsupported.
+            "column `tenure`: type `INTERVAL` is not supported yet",
         )],
         queries: &[(
             "ListEmployeesByDepartment",

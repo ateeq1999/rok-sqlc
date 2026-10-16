@@ -1,9 +1,16 @@
 use crate::schema::{Column, Table};
 
-use super::{HEADER, insert_field_type, push_and_chain, push_doc, update_field_type};
+use super::{HEADER, insert_field_type, push_and_chain, push_doc, types_import, update_field_type};
 
 pub fn render(table: &Table) -> String {
     let mut output = format!("{HEADER}\n");
+    let types = types_import(
+        "super::super",
+        table.columns.iter().map(|column| column.rust_type.as_str()),
+    );
+    if !types.is_empty() {
+        output.push_str(&format!("{types}\n"));
+    }
     render_row(&mut output, table);
 
     let insert_columns = table.insert_columns();
