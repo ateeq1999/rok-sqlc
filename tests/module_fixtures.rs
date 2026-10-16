@@ -208,9 +208,15 @@ fn generate_all() -> Result<Vec<Outcome>> {
         groups.entry(group).or_default().push(module);
     }
     let mut root = harness_header();
+    root.push_str("//! The generated code of every module fixture.\n\n");
     for (group, modules) in &groups {
         root.push_str(&format!("pub mod {group};\n"));
         let mut text = harness_header();
+        text.push_str(&format!("//! The `{group}` fixtures.\n\n"));
+        // Each fixture's `db` module is named after the fixture, so a table
+        // named like its fixture (`customers::customers`) nests a module in
+        // its namesake; a consuming crate's `db` module never does.
+        text.push_str("#![allow(clippy::module_inception)]\n\n");
         for module in modules {
             text.push_str(&format!("pub mod {module};\n"));
         }
@@ -285,7 +291,9 @@ fn render_smoke(outcomes: &[Outcome]) -> Result<String> {
 
     let mut text = harness_header();
     text.push_str(
-        "//! Smoke checks for the generated reads of every migration-based module fixture.\n\n",
+        "//! Smoke checks for the generated reads of every migration-based module fixture.\n\n\
+         // Harness code, not generated code: it names each filter as `Default::default()`.\n\
+         #![allow(clippy::default_trait_access)]\n\n",
     );
     text.push_str(
         "/// Every migration-based fixture's up migrations as `(path, sql)`, in dependency order.\n",
@@ -334,10 +342,10 @@ fn render_smoke(outcomes: &[Outcome]) -> Result<String> {
                     // A tenant table's reads take the tenant right after the
                     // executor; the nil tenant owns no rows, which still runs
                     // every statement.
-                    let tenant = if takes_tenant(&source, function) {
-                        ", uuid::Uuid::nil().into()"
-                    } else {
-                        ""
+                    let tenant = match tenant_type(&source, function).as_deref() {
+                        None => "",
+                        Some("uuid::Uuid") => ", uuid::Uuid::nil()",
+                        Some(_) => ", uuid::Uuid::nil().into()",
                     };
                     let args = format!("pool{tenant}{args}");
                     writeln!(
@@ -359,16 +367,18 @@ fn render_smoke(outcomes: &[Outcome]) -> Result<String> {
     Ok(text)
 }
 
-/// Whether the generated `function` in `rust` takes the `rok` preset's tenant
-/// column as a parameter.
-fn takes_tenant(rust: &str, function: &str) -> bool {
+/// The type of the `rok` preset's tenant parameter of the generated `function`
+/// in `rust` (a raw id or a typed id), or `None` when it takes no tenant.
+fn tenant_type(rust: &str, function: &str) -> Option<String> {
     let tenant = rok_sqlc::Conventions::rok()
         .tenant_column
         .expect("the rok preset has a tenant column");
     rust.split(&format!("pub async fn {function}<"))
         .nth(1)
         .and_then(|rest| rest.split(") ->").next())
-        .is_some_and(|params| params.contains(&format!("{tenant}:")))
+        .and_then(|params| params.split(&format!("{tenant}: ")).nth(1))
+        .and_then(|rest| rest.split([',', '\n']).next())
+        .map(|tenant_type| tenant_type.trim().to_owned())
 }
 
 /// The up migrations of a fixture's `migrations/` directory, in the
@@ -532,14 +542,17 @@ fn module_fixtures_compile_without_warnings() -> Result<()> {
         "expected the 25-module migration corpus"
     );
 
-    // The fixture crate is `#![deny(warnings)]`; `--all-targets` also
-    // type-checks the PostgreSQL smoke test.
-    let status = cargo(&["check", "--quiet", "--all-targets"])
+    // The fixture crate denies warnings and `missing_docs` and turns on the
+    // selected pedantic lints (ADR 0013); `--all-targets` also type-checks
+    // the PostgreSQL smoke test.
+    let status = cargo(&["clippy", "--quiet", "--all-targets", "--", "-Dwarnings"])
         .status()
-        .context("failed to run cargo check in tests/modules-app")?;
+        .context(
+            "failed to run cargo clippy in tests/modules-app (install it with `rustup component add clippy`)",
+        )?;
     ensure!(
         status.success(),
-        "generated module fixtures failed cargo check"
+        "generated module fixtures failed the lint gate"
     );
     Ok(())
 }

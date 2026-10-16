@@ -1,10 +1,16 @@
 use crate::schema::{Column, Table, mentions_generated_type};
 
 use super::{
-    HEADER, insert_field_type, keys, push_and_chain, push_doc, update_field_type, use_paths,
+    HEADER, doc_name, insert_field_type, keys, push_and_chain, push_doc, push_serde_derive,
+    update_field_type, use_paths,
 };
 
-pub fn render(table: &Table) -> String {
+/// The doc line of a row, input, or patch field: the column it holds.
+fn column_doc(column: &Column) -> String {
+    format!("The {} column.", doc_name(&column.sql_name))
+}
+
+pub fn render(table: &Table, serde: bool) -> String {
     let mut output = format!("{HEADER}\n");
     let mut imports = keys::id_imports(table, &table.columns, true);
     if table
@@ -18,29 +24,31 @@ pub fn render(table: &Table) -> String {
         output.push_str(&use_paths(&imports));
         output.push('\n');
     }
-    keys::render_key_type(&mut output, table);
-    render_row(&mut output, table);
+    keys::render_key_type(&mut output, table, serde);
+    render_row(&mut output, table, serde);
     keys::render_row_key(&mut output, table);
 
     let insert_columns = table.insert_columns();
     if !insert_columns.is_empty() {
-        render_insert_input(&mut output, table, &insert_columns);
+        render_insert_input(&mut output, table, &insert_columns, serde);
     }
 
     let update_columns = table.update_columns();
     if !table.primary_key.is_empty() && !update_columns.is_empty() {
-        render_update_patch(&mut output, table, &update_columns);
+        render_update_patch(&mut output, table, &update_columns, serde);
     }
 
     output
 }
 
-fn render_row(output: &mut String, table: &Table) {
+fn render_row(output: &mut String, table: &Table, serde: bool) {
     let doc = format!("A row of the `{}` table.", table.display_name());
     push_doc(output, 0, &[&doc]);
     output.push_str("#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]\n");
+    push_serde_derive(output, serde);
     output.push_str(&format!("pub struct {} {{\n", table.struct_name));
     for column in &table.columns {
+        push_doc(output, 4, &[&column_doc(column)]);
         if column.rust_name != column.sql_name {
             output.push_str(&format!(
                 "    #[sqlx(rename = {})]\n",
@@ -56,7 +64,7 @@ fn render_row(output: &mut String, table: &Table) {
     output.push_str("}\n");
 }
 
-fn render_insert_input(output: &mut String, table: &Table, columns: &[&Column]) {
+fn render_insert_input(output: &mut String, table: &Table, columns: &[&Column], serde: bool) {
     output.push('\n');
     let has_defaults = columns.iter().any(|column| column.is_omittable_on_insert());
     let mut doc = vec!["Input for `create`: every column the caller may supply."];
@@ -79,14 +87,23 @@ fn render_insert_input(output: &mut String, table: &Table, columns: &[&Column]) 
     } else {
         output.push_str("#[derive(Debug, Clone, PartialEq)]\n");
     }
+    push_serde_derive(output, serde);
     output.push_str(&format!("pub struct New{} {{\n", table.struct_name));
     for column in columns {
+        let doc = column_doc(column);
         if column.is_omittable_on_insert() && column.nullable {
             push_doc(
                 output,
                 4,
-                &["`None` applies the column default; `Some(None)` inserts `NULL`."],
+                &[
+                    &doc,
+                    "`None` applies the column default; `Some(None)` inserts `NULL`.",
+                ],
             );
+        } else if column.is_omittable_on_insert() {
+            push_doc(output, 4, &[&doc, "`None` applies the column default."]);
+        } else {
+            push_doc(output, 4, &[&doc]);
         }
         output.push_str(&format!(
             "    pub {}: {},\n",
@@ -97,7 +114,7 @@ fn render_insert_input(output: &mut String, table: &Table, columns: &[&Column]) 
     output.push_str("}\n");
 }
 
-fn render_update_patch(output: &mut String, table: &Table, columns: &[&Column]) {
+fn render_update_patch(output: &mut String, table: &Table, columns: &[&Column], serde: bool) {
     output.push('\n');
     push_doc(
         output,
@@ -105,10 +122,21 @@ fn render_update_patch(output: &mut String, table: &Table, columns: &[&Column]) 
         &["Partial update for `update`: `None` leaves a column unchanged."],
     );
     output.push_str("#[derive(Debug, Clone, Default, PartialEq)]\n");
+    push_serde_derive(output, serde);
     output.push_str(&format!("pub struct Update{} {{\n", table.struct_name));
     for column in columns {
+        let doc = format!(
+            "The new value of the {} column.",
+            doc_name(&column.sql_name)
+        );
         if column.nullable {
-            push_doc(output, 4, &["`Some(None)` sets the column to `NULL`."]);
+            push_doc(
+                output,
+                4,
+                &[&doc, "`Some(None)` sets the column to `NULL`."],
+            );
+        } else {
+            push_doc(output, 4, &[&doc]);
         }
         output.push_str(&format!(
             "    pub {}: {},\n",
@@ -124,7 +152,7 @@ fn render_update_patch(output: &mut String, table: &Table, columns: &[&Column]) 
         4,
         &["Returns `true` when the patch changes no column."],
     );
-    output.push_str("    pub fn is_empty(&self) -> bool {\n");
+    output.push_str("    #[must_use]\n    pub fn is_empty(&self) -> bool {\n");
     let terms: Vec<String> = columns
         .iter()
         .map(|column| format!("self.{}.is_none()", column.rust_name))
@@ -138,12 +166,33 @@ mod tests {
     use super::super::test_support::{column, defaulted, generated, nullable, table};
     use super::*;
 
+    fn render(table: &Table) -> String {
+        super::render(table, false)
+    }
+
+    #[test]
+    fn serde_derives_rows_inputs_and_patches_on_request() {
+        let users = table(
+            vec![column("id", "i64"), column("email", "String")],
+            &["id"],
+        );
+        let serde = "serde::Serialize, serde::Deserialize)]\n";
+        assert!(!render(&users).contains("serde"));
+        let rendered = super::render(&users, true);
+        for item in ["User", "NewUser", "UpdateUser"] {
+            assert!(
+                rendered.contains(&format!("{serde}pub struct {item} {{")),
+                "{item}:\n{rendered}"
+            );
+        }
+    }
+
     #[test]
     fn renders_row_struct_with_from_row() {
         let rendered = render(&table(vec![column("email", "String")], &[]));
         assert!(rendered.starts_with("// @generated by rok-sqlc. Do not edit by hand.\n"));
         assert!(rendered.contains(
-            "/// A row of the `users` table.\n#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]\npub struct User {\n    pub email: String,\n}"
+            "/// A row of the `users` table.\n#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]\npub struct User {\n    /// The `email` column.\n    pub email: String,\n}"
         ));
     }
 

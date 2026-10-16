@@ -67,6 +67,8 @@ async fn generated_crud_against_postgres() {
     unique_key_lookups_find_one_row_or_none(&pool).await;
     managed_columns_are_left_to_the_database(&pool).await;
     versioned_updates_detect_concurrent_edits(&pool).await;
+    text_keys_are_borrowed(&pool).await;
+    rows_round_trip_through_json(&pool).await;
     soft_deleted_rows_are_hidden_restored_and_removed(&pool).await;
     tenant_rows_are_invisible_to_other_tenants(&pool).await;
     a_tenant_in_the_primary_key_is_passed_once(&pool).await;
@@ -558,7 +560,7 @@ async fn text_filters_escape_like_wildcards(pool: &PgPool, category: CategoryId)
 async fn annotated_queries(pool: &PgPool) {
     use db::queries::inventory::{self as queries, CreateProductsParams};
 
-    let category = queries::create_category(pool, "query-cat".to_owned(), None)
+    let category = queries::create_category(pool, "query-cat", None)
         .await
         .unwrap();
     assert_eq!(category.name, "query-cat");
@@ -596,14 +598,14 @@ async fn annotated_queries(pool: &PgPool) {
     .unwrap();
     assert_eq!(inserted, 2, "both VALUES rows bind to the right placeholders");
 
-    let hammer = queries::get_product_by_sku(pool, "Q-1".to_owned())
+    let hammer = queries::get_product_by_sku(pool, "Q-1")
         .await
         .unwrap()
         .expect("Q-1 exists");
     assert_eq!(hammer.id, uuid::Uuid::from_u128(101));
     assert_eq!(hammer.name, "Query hammer");
     assert_eq!(
-        queries::get_product_by_sku(pool, "missing".to_owned())
+        queries::get_product_by_sku(pool, "missing")
             .await
             .unwrap(),
         None
@@ -622,7 +624,7 @@ async fn annotated_queries(pool: &PgPool) {
 
     let joined = queries::list_products_with_category(
         pool,
-        vec!["Q-1".to_owned(), "Q-2".to_owned()],
+        &["Q-1".to_owned(), "Q-2".to_owned()],
     )
     .await
     .unwrap();
@@ -660,19 +662,19 @@ async fn annotated_queries(pool: &PgPool) {
         "the CTE placeholder filters before aggregation"
     );
 
-    let found = queries::search_products(pool, "%ANVIL%".to_owned())
+    let found = queries::search_products(pool, "%ANVIL%")
         .await
         .unwrap();
     assert_eq!(found, ["Q-2"]);
 
     assert_eq!(
-        queries::delete_product_by_sku(pool, "Q-2".to_owned())
+        queries::delete_product_by_sku(pool, "Q-2")
             .await
             .unwrap(),
         1
     );
     assert_eq!(
-        queries::delete_product_by_sku(pool, "Q-2".to_owned())
+        queries::delete_product_by_sku(pool, "Q-2")
             .await
             .unwrap(),
         0
@@ -684,26 +686,26 @@ async fn annotated_queries(pool: &PgPool) {
 async fn query_modules_per_file(pool: &PgPool) {
     use db::queries::{inventory, suppliers};
 
-    let globex = suppliers::create_supplier(pool, uuid::Uuid::from_u128(901), "Globex".to_owned())
+    let globex = suppliers::create_supplier(pool, uuid::Uuid::from_u128(901), "Globex")
         .await
         .unwrap();
     assert_eq!(globex.name, "Globex");
     assert!(globex.is_active, "the column default applies");
 
     assert_eq!(
-        suppliers::search_products(pool, "Acme".to_owned())
+        suppliers::search_products(pool, "Acme")
             .await
             .unwrap(),
         ["Q-1"]
     );
     assert!(
-        suppliers::search_products(pool, "Globex".to_owned())
+        suppliers::search_products(pool, "Globex")
             .await
             .unwrap()
             .is_empty()
     );
     assert_eq!(
-        inventory::search_products(pool, "%hammer%".to_owned())
+        inventory::search_products(pool, "%hammer%")
             .await
             .unwrap(),
         ["Q-1"]
@@ -1185,7 +1187,7 @@ async fn enums_keep_their_exact_labels(pool: &PgPool) {
     )
     .await
     .unwrap();
-    assert_eq!(very_high, [archived.clone()]);
+    assert_eq!(very_high, std::slice::from_ref(&archived));
 
     let not_archived = read::search(
         pool,
@@ -1306,7 +1308,7 @@ async fn value_list_columns_round_trip(pool: &PgPool) {
     )
     .await
     .unwrap();
-    assert_eq!(found, [delivered.clone()]);
+    assert_eq!(found, std::slice::from_ref(&delivered));
 
     let pending = shipments_with_status(pool, ShipmentStatus::Pending)
         .await
@@ -1608,6 +1610,101 @@ async fn versioned_updates_detect_concurrent_edits(pool: &PgPool) {
     assert_eq!(restored.title, "second editor", "the update changed nothing");
 }
 
+/// A text key's typed id is not `Copy`, so every generated function borrows
+/// it; a key struct with a text column is borrowed the same way.
+async fn text_keys_are_borrowed(pool: &PgPool) {
+    use db::currencies::models::{CurrencyId, NewCurrency, UpdateCurrency};
+    use db::currency_rates::models::{CurrencyRateKey, NewCurrencyRate};
+    use db::search::Limit;
+
+    let eur = CurrencyId::from("EUR".to_owned());
+    for code in ["CHF", "EUR"] {
+        db::currencies::write::create(
+            pool,
+            NewCurrency {
+                code: CurrencyId::from(code.to_owned()),
+                name: code.to_lowercase(),
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let found = db::currencies::read::get_by_id(pool, &eur).await.unwrap();
+    assert_eq!(found.map(|row| row.name), Some("eur".to_owned()));
+    assert!(db::currencies::read::exists_by_id(pool, &eur).await.unwrap());
+    let renamed = db::currencies::write::update(
+        pool,
+        &eur,
+        UpdateCurrency {
+            name: Some("Euro".to_owned()),
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(renamed.name, "Euro");
+
+    let first = db::currencies::read::search_after(pool, Default::default(), None, Limit::new(1))
+        .await
+        .unwrap();
+    assert_eq!(first[0].code, CurrencyId::from("CHF".to_owned()));
+    let next = db::currencies::read::search_after(
+        pool,
+        Default::default(),
+        Some(&first[0].code),
+        Limit::new(10),
+    )
+    .await
+    .unwrap();
+    assert_eq!(next.iter().map(|row| &row.code).collect::<Vec<_>>(), [&eur]);
+
+    let day = chrono::NaiveDate::from_ymd_opt(2026, 1, 2).unwrap();
+    let rate = db::currency_rates::write::create(
+        pool,
+        NewCurrencyRate {
+            currency_code: eur.clone(),
+            day,
+            rate: Decimal::new(1_085_000, 6),
+        },
+    )
+    .await
+    .unwrap();
+    let key: CurrencyRateKey = rate.key();
+    let fetched = db::currency_rates::read::get_by_id(pool, &key)
+        .await
+        .unwrap();
+    assert_eq!(fetched, Some(rate));
+    assert!(db::currency_rates::write::delete(pool, &key).await.unwrap());
+    assert!(db::currencies::write::delete(pool, &eur).await.unwrap());
+}
+
+/// The fixture generates with `derive = ["serde"]`: rows read from the
+/// database serialize to JSON and back unchanged. Typed ids serialize as
+/// their inner value and enum variants as their database label.
+async fn rows_round_trip_through_json(pool: &PgPool) {
+    use db::products::models::Product;
+    use db::tickets::models::Ticket;
+
+    let products = db::products::read::list(pool).await.unwrap();
+    assert!(!products.is_empty(), "earlier scenarios left products");
+    for product in &products {
+        let json = serde_json::to_string(product).unwrap();
+        assert_eq!(&serde_json::from_str::<Product>(&json).unwrap(), product);
+    }
+    let value = serde_json::to_value(&products[0]).unwrap();
+    assert_eq!(value["id"], serde_json::json!(products[0].id.0));
+
+    let tickets = db::tickets::read::list(pool).await.unwrap();
+    let very_high = tickets
+        .iter()
+        .find(|ticket| ticket.priority == db::types::TicketPriority::VeryHigh)
+        .expect("earlier scenarios left a very high ticket");
+    let json = serde_json::to_value(very_high).unwrap();
+    assert_eq!(json["priority"], "Very High");
+    assert_eq!(&serde_json::from_value::<Ticket>(json).unwrap(), very_high);
+}
+
 /// `soft_notes` is generated with `deleted_at` as its soft-delete column:
 /// `NewSoftNote` and `UpdateSoftNote` have no `deleted_at` (the struct
 /// literals below name every field), `delete` hides a row from every read,
@@ -1877,7 +1974,7 @@ async fn a_tenant_in_the_primary_key_is_passed_once(pool: &PgPool) {
         .unwrap();
     }
     let name = async |tenant| {
-        read::get_by_id(pool, tenant, "M1".to_owned())
+        read::get_by_id(pool, tenant, "M1")
             .await
             .unwrap()
             .map(|row| row.name)
@@ -1888,7 +1985,7 @@ async fn a_tenant_in_the_primary_key_is_passed_once(pool: &PgPool) {
     let renamed = write::update(
         pool,
         tenant_b,
-        "M1".to_owned(),
+        "M1",
         UpdateTenantMember {
             name: Some("Bea".to_owned()),
         },
@@ -1903,7 +2000,7 @@ async fn a_tenant_in_the_primary_key_is_passed_once(pool: &PgPool) {
         pool,
         tenant_a,
         TenantMemberFilter::default(),
-        Some("M0".to_owned()),
+        Some("M0"),
         Limit::new(10),
     )
     .await
@@ -1912,7 +2009,7 @@ async fn a_tenant_in_the_primary_key_is_passed_once(pool: &PgPool) {
     assert_eq!(page[0].tenant_id, tenant_a);
 
     assert!(
-        write::delete(pool, tenant_a, "M1".to_owned())
+        write::delete(pool, tenant_a, "M1")
             .await
             .unwrap()
     );

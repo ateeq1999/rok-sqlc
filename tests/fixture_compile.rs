@@ -41,14 +41,17 @@ fn generate_fixture() -> Result<Vec<PathBuf>> {
     // it in `extra_schema.sql`); every other table generates as if no
     // convention were configured.
     config.conventions.managed_columns = vec!["updated_at".into(), "row_version".into()];
-    // Only `versioned_documents` has this column, so only its `update`
-    // checks a version and returns an `UpdateOutcome`.
+    // Only `versioned_documents` and `tenant_notes` have this column, so only
+    // their `update` checks a version and returns an `UpdateOutcome`.
     config.conventions.version_column = Some("revision".into());
     config.conventions.soft_delete_column = Some("deleted_at".into());
     // Only the `tenant_*` and `rls_notes` tables have the tenant column.
     config.conventions.tenant_column = Some("tenant_id".into());
     config.conventions.tenant_setting = Some("app.tenant_id".into());
     config.conventions.user_setting = Some("app.user_id".into());
+    // Rows, ids, keys, enums, inputs, and patches derive serde, which the
+    // PostgreSQL tests round-trip through JSON.
+    config.derive = vec![rok_sqlc::Derive::Serde];
 
     let report = rok_sqlc::generate(&config)?;
     Ok(report.written.into_iter().chain(report.unchanged).collect())
@@ -64,7 +67,7 @@ fn cargo(app_dir: &Path, args: &[&str]) -> Command {
 }
 
 #[test]
-fn generated_code_compiles_without_warnings() -> Result<()> {
+fn generated_code_passes_the_lint_gate() -> Result<()> {
     let _guard = FIXTURE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -74,12 +77,18 @@ fn generated_code_compiles_without_warnings() -> Result<()> {
     }
     generate_fixture()?;
 
-    // The fixture crate is `#![deny(warnings)]`; `--all-targets` also
-    // type-checks the PostgreSQL integration tests.
-    let status = cargo(&app_dir(), &["check", "--quiet", "--all-targets"])
-        .status()
-        .context("failed to run cargo check in tests/fixture-app")?;
-    ensure!(status.success(), "generated code failed cargo check");
+    // The fixture crate denies warnings and `missing_docs` and turns on the
+    // selected pedantic lints (ADR 0013); `--all-targets` also type-checks
+    // the PostgreSQL integration tests.
+    let status = cargo(
+        &app_dir(),
+        &["clippy", "--quiet", "--all-targets", "--", "-Dwarnings"],
+    )
+    .status()
+    .context(
+        "failed to run cargo clippy in tests/fixture-app (install it with `rustup component add clippy`)",
+    )?;
+    ensure!(status.success(), "generated code failed the lint gate");
     Ok(())
 }
 

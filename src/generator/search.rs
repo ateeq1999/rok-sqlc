@@ -9,7 +9,7 @@
 use crate::schema::{Column, FilterKind, Table, mentions_generated_type};
 
 use super::sql::{ident, str_literal};
-use super::{HEADER, push_doc};
+use super::{HEADER, doc_name, push_doc};
 
 /// Which search functions a resource gets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,13 +165,16 @@ pub fn render_filter(table: &Table) -> Option<String> {
     output.push_str("#[derive(Debug, Clone, Default, PartialEq)]\n");
     let mut fields = Vec::new();
     if live.is_some() {
+        fields.push("/// Whether soft-deleted rows match too.".to_owned());
         fields.push(format!(
             "pub {}: bool,",
             super::conventions::INCLUDE_DELETED
         ));
     }
     for column in &table.columns {
+        let name = doc_name(&column.sql_name);
         if let Some(kind) = column.filter_kind() {
+            fields.push(format!("/// Conditions on the {name} column."));
             fields.push(format!(
                 "pub {}: Vec<{}>,",
                 column.rust_name,
@@ -179,6 +182,7 @@ pub fn render_filter(table: &Table) -> Option<String> {
             ));
         }
         if column.nullable {
+            fields.push(format!("/// Whether the {name} column is `NULL`."));
             fields.push(format!("pub {}: Option<bool>,", column.null_check_field()));
         }
     }
@@ -241,13 +245,18 @@ pub fn render_filter(table: &Table) -> Option<String> {
     let sortable = sortable(table);
     let variants: Vec<String> = sortable
         .iter()
-        .map(|column| format!("{},", column.sort_variant()))
+        .flat_map(|column| {
+            [
+                format!("/// Sorts by the {} column.", doc_name(&column.sql_name)),
+                format!("{},", column.sort_variant()),
+            ]
+        })
         .collect();
     push_block(&mut output, &format!("pub enum {sort_key}"), &variants, 0);
     output.push('\n');
     output.push_str(&format!("impl {sort_key} {{\n"));
     push_doc(&mut output, 4, &["The SQL column this key sorts by."]);
-    output.push_str("    pub fn column(self) -> &'static str {\n");
+    output.push_str("    #[must_use]\n    pub fn column(self) -> &'static str {\n");
     let arms: Vec<String> = sortable
         .iter()
         .map(|column| {
@@ -282,10 +291,13 @@ pub struct Limit(i64);
 
 impl Limit {
     /// Clamps `rows` to `1..=MAX_PAGE_SIZE`.
+    #[must_use]
     pub fn new(rows: i64) -> Self {
         Self(rows.clamp(1, MAX_PAGE_SIZE))
     }
 
+    /// The number of rows.
+    #[must_use]
     pub fn get(self) -> i64 {
         self.0
     }
@@ -300,6 +312,7 @@ pub struct Page {
 
 impl Page {
     /// Clamps `limit` to `1..=MAX_PAGE_SIZE` and `offset` to zero or more.
+    #[must_use]
     pub fn new(limit: i64, offset: i64) -> Self {
         Self {
             limit: Limit::new(limit),
@@ -308,19 +321,25 @@ impl Page {
     }
 
     /// The first page of `limit` rows.
+    #[must_use]
     pub fn first(limit: i64) -> Self {
         Self::new(limit, 0)
     }
 
     /// The page that follows this one.
+    #[must_use]
     pub fn next(self) -> Self {
         Self::new(self.limit(), self.offset.saturating_add(self.limit()))
     }
 
+    /// The most rows the page holds.
+    #[must_use]
     pub fn limit(self) -> i64 {
         self.limit.get()
     }
 
+    /// The number of rows skipped before the page.
+    #[must_use]
     pub fn offset(self) -> i64 {
         self.offset
     }
@@ -329,13 +348,16 @@ impl Page {
 /// Sort direction.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Direction {
+    /// Ascending: smallest first.
     #[default]
     Asc,
+    /// Descending: largest first.
     Desc,
 }
 
 impl Direction {
     /// The SQL keyword, with a leading space.
+    #[must_use]
     pub fn sql(self) -> &'static str {
         match self {
             Direction::Asc => " ASC",
@@ -347,11 +369,14 @@ impl Direction {
 /// Sorts by one allowlisted key; `search` breaks ties by primary key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sort<K> {
+    /// The column to sort by.
     pub key: K,
+    /// Ascending or descending.
     pub direction: Direction,
 }
 
 impl<K> Sort<K> {
+    /// Sorts by `key`, smallest first.
     pub fn asc(key: K) -> Self {
         Self {
             key,
@@ -359,6 +384,7 @@ impl<K> Sort<K> {
         }
     }
 
+    /// Sorts by `key`, largest first.
     pub fn desc(key: K) -> Self {
         Self {
             key,
@@ -370,15 +396,23 @@ impl<K> Sort<K> {
 /// A condition on a number, decimal, date, or time column.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ordered<T> {
+    /// Equal to the value.
     Eq(T),
+    /// Not equal to the value.
     Ne(T),
+    /// Less than the value.
     Lt(T),
+    /// Less than or equal to the value.
     Le(T),
+    /// Greater than the value.
     Gt(T),
+    /// Greater than or equal to the value.
     Ge(T),
-    /// Inclusive on both ends.
+    /// Between the two values, inclusive on both ends.
     Between(T, T),
+    /// Equal to one of the values.
     In(Vec<T>),
+    /// Equal to none of the values.
     NotIn(Vec<T>),
 }
 
@@ -412,9 +446,13 @@ impl<T> Ordered<T> {
 /// A condition on a boolean or UUID column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Equality<T> {
+    /// Equal to the value.
     Eq(T),
+    /// Not equal to the value.
     Ne(T),
+    /// Equal to one of the values.
     In(Vec<T>),
+    /// Equal to none of the values.
     NotIn(Vec<T>),
 }
 
@@ -459,12 +497,19 @@ pub fn push_null_check(column: &str, is_null: Option<bool>, query: &mut QueryBui
 /// argument literally: `%`, `_`, and `\` in it are escaped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Text {
+    /// Equal to the text.
     Eq(String),
+    /// Not equal to the text.
     Ne(String),
+    /// Equal to one of the texts.
     In(Vec<String>),
+    /// Equal to none of the texts.
     NotIn(Vec<String>),
+    /// Contains the text.
     Contains(String),
+    /// Starts with the text.
     StartsWith(String),
+    /// Ends with the text.
     EndsWith(String),
 }
 
@@ -492,7 +537,7 @@ impl Text {
     }
 }
 
-/// Escapes `LIKE` wildcards using PostgreSQL's default escape character.
+/// Escapes `LIKE` wildcards with the default escape character, `\`.
 fn escape_like(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for character in value.chars() {

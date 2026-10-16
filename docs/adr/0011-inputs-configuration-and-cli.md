@@ -15,11 +15,11 @@ resource = "products"         # rarely useful in a file, but allowed
 
 **The JSON payload has the file's shape.** `-j/--json` takes the same keys as `rok-sqlc.toml`, so scripts and editors can drive rok-sqlc without writing a file: `-j '{"schema":["migrations/"],"output":"src/db"}'` inline, `-j @path/to/config.json` from a file, or `-j -` from stdin. A payload read from `@path` still resolves its paths against the current directory, not the payload file: the payload is a stand-in for flags, and a tool generating it knows the directory it runs in. The payload layers over `rok-sqlc.toml` (discovered or named with `-c`); it does not turn discovery off. Malformed JSON is an error that names the source and the line and column.
 
-**Unknown keys are errors** naming the key and the source (the file, or the JSON payload), so a typo (`ouptut`) can't silently do nothing. Keys for features that have not landed (`derive`, `[relationships]`) are unknown until the ticket that implements them adds them: accepting and ignoring them would be the same silent no-op. Per-run switches (`--dry-run`, `--check`, `--force`, `--lenient`) are flags only. The `[conventions]` section (ADR 0010) merges key by key, like the top-level keys.
+**Unknown keys are errors** naming the key and the source (the file, or the JSON payload), so a typo (`ouptut`) can't silently do nothing. Keys for features that have not landed (`[relationships]`) are unknown until the ticket that implements them adds them: accepting and ignoring them would be the same silent no-op. Per-run switches (`--dry-run`, `--check`, `--force`, `--lenient`) are flags only. The `[conventions]` section (ADR 0010) merges key by key, like the top-level keys. `derive` (ADR 0013) is a list like `schema`: `-d/--derive`, which may be repeated, replaces the payload's or file's whole list.
 
 **Discovery is a CLI concern.** `rok_sqlc::generate(&Config)` never reads `rok-sqlc.toml` or the current directory's parents: a `build.rs` gets exactly the `Config` it built.
 
-**Every command and flag has a short alias** (`g`, `-s`, `-o`, `-r`, `-q`, `-j`, `-c`, `-k`, `-n`, `-f`, `-l`, `-h`, `-V`); new flags must take an unused letter, and the CLI tests enforce it. `--help` and `--version` print to stdout and exit 0.
+**Every command and flag has a short alias** (`g`, `-s`, `-o`, `-r`, `-q`, `-j`, `-c`, `-k`, `-n`, `-f`, `-l`, `-d`, `-h`, `-V`); new flags must take an unused letter, and the CLI tests enforce it. `--help` and `--version` print to stdout and exit 0.
 
 ## Considered Options
 

@@ -40,6 +40,13 @@ against earlier development snapshots.
   single `db/queries.rs`. A lone query file still generates `db/queries.rs`.
 - Text columns restricted by a value-list `CHECK` use a generated enum
   (`types::OrderStatus`) instead of `String`.
+- Text keys are borrowed: `get_by_id`, `exists_by_id`, `update`, `delete`,
+  and unique-key lookups take a text key as `&` its typed id
+  (`&CurrencyId`), a key struct with a text column as `&OrderItemKey`, and
+  `search_after` takes `Option<&…>` for such keys. `Copy` keys stay by value.
+- Query-file functions take text parameters as `&str` and array parameters
+  as slices (`&[T]`), also inside `Option`. Parameter structs (more than
+  three parameters) stay owned.
 
 ### Breaking changes to the library
 
@@ -67,7 +74,8 @@ against earlier development snapshots.
 - Unique-key lookups: every unique constraint (inline, table-level, or added
   by `ALTER TABLE`) and unique index on plain columns gets
   `read::get_by_<col>[_and_<col>...]`, returning `Option<Row>`. Text key
-  columns are taken as `&str`, other columns by value (typed ids included).
+  columns are borrowed (`&str`, or `&` a text typed id), other columns by
+  value.
   Expression indexes and partial indexes get no lookup.
 - Annotated query files (`-- name: X :one|:maybe_one|:many|:exec|:execrows`)
   generate typed query functions, including `WITH` (CTE) queries.
@@ -120,6 +128,15 @@ against earlier development snapshots.
 - `-k/--check` reports drift without writing and exits 1 when generated
   files are missing, changed, or stale. Successful runs remove stale
   generated files.
+- Every generated public item is documented, and generated code passes
+  `missing_docs` and `cargo clippy -- -D warnings` with a selected set of
+  pedantic lints; both fixture crates enforce the bar (ADR 0013).
+- `derive = ["serde"]` (config file, JSON payload, `-d/--derive serde`, or
+  `Config::derive` with `rok_sqlc::Derive::Serde`) adds
+  `serde::Serialize`/`Deserialize` to rows, typed ids (transparent), key
+  structs, enums (by database label), inputs, patches, and query rows and
+  parameters, and adds `serde` to the dependency hints. Without it,
+  generated code does not mention `serde`.
 - Short aliases for every command and flag; `--help` and `--version` exit 0.
 - Crate metadata, license files, this changelog, and CI on Linux (Rust 1.88,
   1.94, and stable, with PostgreSQL), macOS, and Windows.

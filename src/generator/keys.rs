@@ -12,7 +12,7 @@
 
 use crate::schema::{Column, ForeignKey, Table, TypedId};
 
-use super::{param_name, push_doc};
+use super::{param_name, param_type, push_doc, push_serde_derive};
 
 /// Copies `tables` with every column's typed id filled in.
 pub fn resolve(tables: &[Table]) -> Vec<Table> {
@@ -111,7 +111,7 @@ pub fn key_binding(table: &Table) -> String {
 pub fn key_params(table: &Table) -> Vec<String> {
     let mut params = tenant_params(table);
     if !table.key_columns().is_empty() {
-        params.push(format!("{}: {}", key_binding(table), key_type(table)));
+        params.push(key_param(table));
     }
     params
 }
@@ -132,7 +132,7 @@ pub fn key_args(table: &Table) -> Vec<String> {
 pub fn tenant_params(table: &Table) -> Vec<String> {
     table
         .tenant()
-        .map(|tenant| format!("{}: {}", param_name(tenant), tenant.value_type()))
+        .map(|tenant| format!("{}: {}", param_name(tenant), param_type(tenant)))
         .into_iter()
         .collect()
 }
@@ -150,13 +150,32 @@ pub fn tenant_bind(table: &Table) -> Option<String> {
     table.tenant().map(param_name)
 }
 
-/// The bind expressions of the key, one per key column in key order.
+/// The type of the key parameter: [`key_type`], borrowed when it is not
+/// `Copy` (a text key, or a key struct with a text column).
+pub fn key_param_type(table: &Table) -> String {
+    match table.key_columns().as_slice() {
+        [key] => param_type(key),
+        keys if keys.iter().all(|key| key.is_copy()) => key_struct_name(table),
+        _ => format!("&{}", key_struct_name(table)),
+    }
+}
+
+/// The key parameter of a generated function, e.g. `id: ProductId`.
+pub fn key_param(table: &Table) -> String {
+    format!("{}: {}", key_binding(table), key_param_type(table))
+}
+
+/// The bind expressions of the key, one per key column in key order. A
+/// borrowed key struct's fields that are not `Copy` are bound by reference.
 pub fn key_binds(table: &Table) -> Vec<String> {
     match table.key_columns().as_slice() {
         [key] => vec![param_name(key)],
         keys => keys
             .iter()
-            .map(|key| format!("key.{}", key.rust_name))
+            .map(|key| {
+                let borrow = if key.is_copy() { "" } else { "&" };
+                format!("{borrow}key.{}", key.rust_name)
+            })
             .collect(),
     }
 }
@@ -219,7 +238,7 @@ pub fn id_imports<'a>(
 }
 
 /// Renders the table's typed id or key struct (before the row struct).
-pub fn render_key_type(output: &mut String, table: &Table) {
+pub fn render_key_type(output: &mut String, table: &Table, serde: bool) {
     let keys = table.key_columns();
     match keys.as_slice() {
         [] => {}
@@ -229,14 +248,15 @@ pub fn render_key_type(output: &mut String, table: &Table) {
                 .as_ref()
                 .filter(|id| id.module == table.module_name)
             {
-                render_typed_id(output, table, key, &id.name);
+                render_typed_id(output, table, key, &id.name, serde);
             }
         }
-        _ => render_key_struct(output, table, &keys),
+        _ => render_key_struct(output, table, &keys, serde),
     }
 }
 
-fn render_typed_id(output: &mut String, table: &Table, key: &Column, name: &str) {
+/// With `serde`, a typed id serializes as its inner value.
+fn render_typed_id(output: &mut String, table: &Table, key: &Column, name: &str, serde: bool) {
     let inner = &key.sqlx_type;
     push_doc(
         output,
@@ -253,7 +273,11 @@ fn render_typed_id(output: &mut String, table: &Table, key: &Column, name: &str)
     output.push_str(&format!(
         "#[derive(Debug, Clone, {copy}PartialEq, Eq, PartialOrd, Ord, Hash, sqlx::Type)]\n"
     ));
+    push_serde_derive(output, serde);
     output.push_str("#[sqlx(transparent)]\n");
+    if serde {
+        output.push_str("#[serde(transparent)]\n");
+    }
     output.push_str(&format!("pub struct {name}(pub {inner});\n\n"));
     output.push_str(&format!(
         "impl From<{inner}> for {name} {{\n    fn from(value: {inner}) -> Self {{\n        Self(value)\n    }}\n}}\n\n"
@@ -266,7 +290,7 @@ fn render_typed_id(output: &mut String, table: &Table, key: &Column, name: &str)
     ));
 }
 
-fn render_key_struct(output: &mut String, table: &Table, keys: &[&Column]) {
+fn render_key_struct(output: &mut String, table: &Table, keys: &[&Column], serde: bool) {
     push_doc(
         output,
         0,
@@ -291,8 +315,14 @@ fn render_key_struct(output: &mut String, table: &Table, keys: &[&Column]) {
         "Debug, Clone, PartialEq".to_owned()
     };
     output.push_str(&format!("#[derive({derives})]\n"));
+    push_serde_derive(output, serde);
     output.push_str(&format!("pub struct {} {{\n", key_struct_name(table)));
     for key in keys {
+        push_doc(
+            output,
+            4,
+            &[&format!("The {} column.", super::doc_name(&key.sql_name))],
+        );
         output.push_str(&format!(
             "    pub {}: {},\n",
             key.rust_name,
@@ -313,7 +343,9 @@ pub fn render_row_key(output: &mut String, table: &Table) {
     let name = key_struct_name(table);
     output.push_str(&format!("\nimpl {} {{\n", table.struct_name));
     push_doc(output, 4, &["The row's primary key."]);
-    output.push_str(&format!("    pub fn key(&self) -> {name} {{\n"));
+    output.push_str(&format!(
+        "    #[must_use]\n    pub fn key(&self) -> {name} {{\n"
+    ));
     output.push_str(&format!("        {name} {{\n"));
     for key in keys {
         let clone = if key.is_copy() { "" } else { ".clone()" };

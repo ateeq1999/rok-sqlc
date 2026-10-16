@@ -232,3 +232,44 @@ fn report_failures_carry_their_source_path_and_line() -> Result<()> {
     assert_eq!(query.line, Some(4));
     Ok(())
 }
+
+/// Without `derive`, nothing generated mentions `serde`.
+#[test]
+fn generated_code_mentions_serde_only_when_derived() -> Result<()> {
+    let inputs = Inputs::new()?;
+    rok_sqlc::generate(&inputs.config("plain"))?;
+    for (path, text) in tree(&inputs.path("plain"))? {
+        assert!(!text.contains("serde"), "{} mentions serde", path.display());
+    }
+
+    let mut config = inputs.config("serde");
+    config.derive = vec![rok_sqlc::Derive::Serde];
+    rok_sqlc::generate(&config)?;
+    let models = fs::read_to_string(inputs.path("serde/users/models.rs"))?;
+    let serde = "serde::Serialize,";
+    // Each item's attributes (between its doc comment and the item) derive
+    // serde; a typed id serializes as its inner value.
+    let attributes = |item: &str| {
+        let before = models.split(&format!("pub struct {item}")).next().unwrap();
+        let doc_end = before.rfind("///").unwrap();
+        before[doc_end..].to_owned()
+    };
+    assert!(attributes("UserId(").contains(serde), "{models}");
+    assert!(
+        attributes("UserId(").contains("#[serde(transparent)]\n"),
+        "{models}"
+    );
+    for item in ["User ", "NewUser ", "UpdateUser "] {
+        assert!(attributes(item).contains(serde), "{item}:\n{models}");
+    }
+    let hints = fs::read_to_string(inputs.path("serde/mod.rs"))?;
+    assert!(
+        hints.contains("//   serde = { version = \"1\", features = [\"derive\"] }\n"),
+        "{hints}"
+    );
+    assert!(
+        hints.contains("//   uuid = { version = \"1\", features = [\"serde\"] }\n"),
+        "{hints}"
+    );
+    Ok(())
+}

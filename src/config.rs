@@ -47,6 +47,30 @@ pub struct Config {
     /// Opt-in conventions about what certain columns mean across tables.
     /// All off by default; [`Conventions::rok`] gives the Rok preset.
     pub conventions: Conventions,
+    /// Extra derives for the generated rows, typed ids, key structs, enums,
+    /// inputs, and patches (ADR 0013). Empty by default.
+    pub derive: Vec<Derive>,
+}
+
+/// An opt-in derive for generated types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Derive {
+    /// `serde::Serialize` and `serde::Deserialize`. Typed ids serialize as
+    /// their inner value and enum variants as their database label. The
+    /// consuming crate needs `serde` with its `derive` feature, and the
+    /// `serde` feature of `uuid`, `chrono`, and `rust_decimal` where the
+    /// generated code uses them; the generated `mod.rs` lists them.
+    Serde,
+}
+
+impl Derive {
+    /// The name the config file, the JSON payload, and `--derive` use.
+    pub fn name(self) -> &'static str {
+        match self {
+            Derive::Serde => "serde",
+        }
+    }
 }
 
 impl Default for Config {
@@ -61,6 +85,7 @@ impl Default for Config {
             force: false,
             lenient: false,
             conventions: Conventions::default(),
+            derive: Vec::new(),
         }
     }
 }
