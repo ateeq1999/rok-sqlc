@@ -135,6 +135,7 @@ where
                 conventions: Default::default(),
                 derive: (!derive.is_empty())
                     .then(|| derive.iter().map(|name| derive_named(name)).collect()),
+                relationships: Default::default(),
             };
             // Flags override the JSON payload, which overrides the file,
             // which overrides the defaults. `--schema` and `--queries` (each
@@ -156,6 +157,7 @@ where
                 lenient,
                 conventions: merged.conventions.resolve(),
                 derive: merged.derive.unwrap_or_default(),
+                relationships: merged.relationships,
             })
         }
     }

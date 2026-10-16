@@ -95,11 +95,13 @@ fn plan_files(schema_sql: &str, tables: &[Table], output: &Path) -> Vec<(PathBuf
         QueriesModule::None,
         &Conventions::default(),
         &[],
+        &relationships::Changes::new(),
         output,
     )
     .expect("the tables generate")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn plan_files_with_queries(
     schema_sql: &str,
     tables: &[Table],
@@ -107,13 +109,14 @@ pub fn plan_files_with_queries(
     queries: QueriesModule<'_>,
     conventions: &Conventions,
     derive: &[Derive],
+    relationship_changes: &relationships::Changes,
     output: &Path,
 ) -> Result<Vec<(PathBuf, String)>, String> {
     let serde = derive.contains(&Derive::Serde);
     let mut files = Vec::new();
     let mut resolved = keys::resolve(tables);
     conventions::apply(&mut resolved, conventions);
-    relationships::infer(&mut resolved)?;
+    relationships::infer(&mut resolved, relationship_changes)?;
     let tables = resolved.as_slice();
 
     for table in tables {

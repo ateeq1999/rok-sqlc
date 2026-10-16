@@ -282,3 +282,14 @@ CREATE TABLE org_units (
     parent_id BIGINT REFERENCES org_units (id),
     name TEXT NOT NULL
 );
+
+-- Relationship configuration (ticket 24): tests/fixture_compile.rs renames
+-- `expense_claims.created_by_user` to `author` (and its inverse on `users` to
+-- `authored_expense_claims`) and opts out `approved_by_user`, so neither side
+-- of that foreign key gets a loader.
+CREATE TABLE expense_claims (
+    id BIGSERIAL PRIMARY KEY,
+    created_by_user_id BIGINT NOT NULL REFERENCES users (id),
+    approved_by_user_id BIGINT REFERENCES users (id),
+    amount_cents BIGINT NOT NULL
+);

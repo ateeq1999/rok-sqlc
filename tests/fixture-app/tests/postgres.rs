@@ -82,6 +82,8 @@ async fn generated_crud_against_postgres() {
     has_many_filter_matches_each_parent_once(&pool).await;
     relationship_filters_skip_deleted_and_other_tenant_rows(&pool).await;
     self_reference_filters_and_nesting_depth(&pool).await;
+    renamed_relationships_load_under_their_new_names(&pool).await;
+    renamed_relationships_filter_under_their_new_names(&pool).await;
 }
 
 /// A category's typed id goes straight into a product's foreign key field
@@ -2756,4 +2758,112 @@ async fn self_reference_filters_and_nesting_depth(pool: &PgPool) {
         matches!(too_deep, Err(sqlx::Error::InvalidArgument(_))),
         "{too_deep:?}"
     );
+}
+
+/// `tests/fixture_compile.rs` renames `expense_claims.created_by_user` to
+/// `author` and its inverse on `users` to `authored_expense_claims`, and opts
+/// out `expense_claims.approved_by_user`, which removes both of its sides:
+/// the renamed loaders work like inferred ones, and no `load_approved_by_user`
+/// or `load_expense_claims_by_approved_by_user` exists to call.
+async fn renamed_relationships_load_under_their_new_names(pool: &PgPool) {
+    use db::expense_claims::models::NewExpenseClaim;
+    use db::expense_claims::relationships::load_author;
+    use db::users::models::NewUser;
+    use db::users::relationships::load_authored_expense_claims;
+
+    let user = async |email: &str| {
+        db::users::write::create(
+            pool,
+            NewUser {
+                email: email.to_owned(),
+            },
+        )
+        .await
+        .unwrap()
+    };
+    let author = user("author@example.com").await;
+    let approver = user("approver@example.com").await;
+    let claim = async |amount_cents| {
+        db::expense_claims::write::create(
+            pool,
+            NewExpenseClaim {
+                created_by_user_id: author.id,
+                approved_by_user_id: Some(approver.id),
+                amount_cents,
+            },
+        )
+        .await
+        .unwrap()
+    };
+    let first = claim(100).await;
+    let second = claim(200).await;
+
+    let authors = load_author(pool, &[first.clone(), second.clone()])
+        .await
+        .unwrap();
+    assert_eq!(authors.len(), 1);
+    assert_eq!(authors[&author.id], author);
+
+    let authored = load_authored_expense_claims(pool, &[author.clone(), approver.clone()])
+        .await
+        .unwrap();
+    assert_eq!(authored[&author.id], vec![first, second]);
+    assert_eq!(authored[&approver.id], Vec::new());
+}
+
+/// Relationship filters use the configured names: `author` and
+/// `authored_expense_claims` filter like inferred relationships, and the
+/// opted-out `approved_by_user` has no filter field (only its column's).
+async fn renamed_relationships_filter_under_their_new_names(pool: &PgPool) {
+    use db::expense_claims::filter::{ExpenseClaimFilter, ExpenseClaimSortKey};
+    use db::expense_claims::models::NewExpenseClaim;
+    use db::search::{Ordered, Page, Sort, Text};
+    use db::users::filter::{UserFilter, UserSortKey};
+
+    let writer = create_user(pool, "writer@claims.example").await;
+    let reviewer = create_user(pool, "reviewer@claims.example").await;
+    let claim = db::expense_claims::write::create(
+        pool,
+        NewExpenseClaim {
+            created_by_user_id: writer.id,
+            approved_by_user_id: Some(reviewer.id),
+            amount_cents: 22_500,
+        },
+    )
+    .await
+    .unwrap();
+
+    let claims = db::expense_claims::read::search(
+        pool,
+        ExpenseClaimFilter {
+            author: Some(Box::new(UserFilter {
+                email: vec![Text::Eq("writer@claims.example".to_owned())],
+                ..Default::default()
+            })),
+            // The opted-out relationship leaves only its column's conditions.
+            approved_by_user_id: vec![Ordered::Eq(reviewer.id)],
+            ..Default::default()
+        },
+        Sort::asc(ExpenseClaimSortKey::Id),
+        Page::first(10),
+    )
+    .await
+    .unwrap();
+    assert_eq!(claims, vec![claim]);
+
+    let authors = db::users::read::search(
+        pool,
+        UserFilter {
+            authored_expense_claims: Some(Box::new(ExpenseClaimFilter {
+                amount_cents: vec![Ordered::Eq(22_500)],
+                ..Default::default()
+            })),
+            ..Default::default()
+        },
+        Sort::asc(UserSortKey::Id),
+        Page::first(10),
+    )
+    .await
+    .unwrap();
+    assert_eq!(authors, vec![writer], "the reviewer only approved it");
 }

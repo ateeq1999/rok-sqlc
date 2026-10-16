@@ -150,7 +150,18 @@ against earlier development snapshots.
   resource gets no filter field into a tenant table. Filters nest up to
   `db::search::MAX_RELATIONSHIP_DEPTH` (4) deep, and `search` fails with
   `sqlx::Error::InvalidArgument` beyond it. A relationship named like one of
-  the filter's column fields fails generation, naming both.
+  the filter's column fields fails generation, naming both; renaming it
+  in `[relationships]` resolves the clash, and filters use renamed names
+  and skip opted-out relationships.
+- A `[relationships]` section (config file, JSON payload, or
+  `Config::relationships` with `rok_sqlc::RelationshipChange`) renames or
+  opts out inferred relationships, by table and inferred name:
+  `[relationships.invoices]` with `created_by_user = "author"` generates
+  `load_author`, and `approved_by_user = false` generates nothing for that
+  foreign key on either side. Entries are checked against the whole schema,
+  so `--resource` runs accept the same configuration; an entry naming an
+  unknown table or relationship, an invalid name, or a rename that collides
+  fails, naming the entry (`relationships.invoices.created_by_user`).
 - `-k/--check` reports drift without writing and exits 1 when generated
   files are missing, changed, or stale. Successful runs remove stale
   generated files.

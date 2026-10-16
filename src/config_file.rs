@@ -7,14 +7,17 @@
 //! file's directory; paths in a JSON payload resolve relative to the current
 //! directory, like flags. The library entry point reads neither (ADR 0011).
 
+use std::collections::BTreeMap;
+use std::fmt;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use serde::de::{self, Deserializer, Visitor};
 
-use crate::{Conventions, Derive};
+use crate::{Conventions, Derive, RelationshipChange};
 
 /// The file name looked for during discovery.
 pub(crate) const FILE_NAME: &str = "rok-sqlc.toml";
@@ -32,7 +35,12 @@ pub(crate) struct FileConfig {
     /// `None` leaves `derive` to the sources below; a list (even an empty
     /// one) replaces theirs.
     pub(crate) derive: Option<Vec<Derive>>,
+    pub(crate) relationships: RelationshipKeys,
 }
+
+/// The `[relationships]` entries one source sets, by table and then by
+/// inferred relationship name.
+pub(crate) type RelationshipKeys = BTreeMap<String, BTreeMap<String, RelationshipChange>>;
 
 impl FileConfig {
     /// Layers `self` over `lower`: each option `self` sets wins, the rest come
@@ -48,8 +56,18 @@ impl FileConfig {
             resource: self.resource.or(lower.resource),
             conventions: self.conventions.over(lower.conventions),
             derive: self.derive.or(lower.derive),
+            relationships: relationships_over(self.relationships, lower.relationships),
         }
     }
+}
+
+/// Layers `upper`'s `[relationships]` entries over `lower`'s, entry by
+/// entry: an entry `upper` sets for a relationship replaces `lower`'s.
+fn relationships_over(upper: RelationshipKeys, mut lower: RelationshipKeys) -> RelationshipKeys {
+    for (table, changes) in upper {
+        lower.entry(table).or_default().extend(changes);
+    }
+    lower
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,6 +82,44 @@ struct RawFile {
     #[serde(default)]
     conventions: ConventionKeys,
     derive: Option<Vec<DeriveName>>,
+    #[serde(default)]
+    relationships: BTreeMap<String, BTreeMap<String, ChangeValue>>,
+}
+
+/// A `[relationships]` value: a new name renames the relationship, `false`
+/// opts it out.
+#[derive(Debug)]
+struct ChangeValue(RelationshipChange);
+
+impl<'de> Deserialize<'de> for ChangeValue {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ChangeVisitor;
+
+        impl Visitor<'_> for ChangeVisitor {
+            type Value = ChangeValue;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter
+                    .write_str("a new relationship name, or `false` to opt the relationship out")
+            }
+
+            fn visit_str<E: de::Error>(self, name: &str) -> Result<ChangeValue, E> {
+                Ok(ChangeValue(RelationshipChange::Rename(name.to_owned())))
+            }
+
+            fn visit_bool<E: de::Error>(self, keep: bool) -> Result<ChangeValue, E> {
+                if keep {
+                    Err(E::custom(
+                        "`true` changes nothing: give a new relationship name, or `false` to opt the relationship out",
+                    ))
+                } else {
+                    Ok(ChangeValue(RelationshipChange::OptOut))
+                }
+            }
+        }
+
+        deserializer.deserialize_any(ChangeVisitor)
+    }
 }
 
 impl RawFile {
@@ -86,6 +142,17 @@ impl RawFile {
             derive: self
                 .derive
                 .map(|names| names.into_iter().map(DeriveName::derive).collect()),
+            relationships: self
+                .relationships
+                .into_iter()
+                .map(|(table, changes)| {
+                    let changes = changes
+                        .into_iter()
+                        .map(|(name, ChangeValue(change))| (name, change))
+                        .collect();
+                    (table, changes)
+                })
+                .collect(),
         }
     }
 }
