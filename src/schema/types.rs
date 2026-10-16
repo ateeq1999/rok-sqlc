@@ -87,6 +87,31 @@ impl Table {
         }
     }
 
+    /// The table's unique keys as column lists: the primary key first, then
+    /// each unique constraint or index that [counts](UniqueKey::counts), in
+    /// declaration order. A key over the same columns as an earlier one (in
+    /// any order) is left out.
+    pub fn unique_key_columns(&self, soft_delete_column: Option<&str>) -> Vec<Vec<String>> {
+        let mut keys: Vec<Vec<String>> = Vec::new();
+        if !self.primary_key.is_empty() {
+            keys.push(self.primary_key.clone());
+        }
+        let declared = self
+            .unique_keys
+            .iter()
+            .filter(|key| key.counts(soft_delete_column));
+        for key in declared {
+            let same = |other: &Vec<String>| {
+                other.len() == key.columns.len()
+                    && key.columns.iter().all(|column| other.contains(column))
+            };
+            if !keys.iter().any(same) {
+                keys.push(key.columns.clone());
+            }
+        }
+        keys
+    }
+
     /// Primary key columns in key declaration order.
     pub fn primary_key_columns(&self) -> Vec<&Column> {
         self.primary_key
@@ -268,7 +293,8 @@ pub struct ForeignKey {
 }
 
 /// Columns no two rows share, from a unique constraint or a unique index on
-/// plain columns. Input to unique-key lookups; nothing reads it yet.
+/// plain columns, as declared. Whether a partial index makes a unique key is
+/// decided by [`UniqueKey::counts`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UniqueKey {
     /// Key columns in declaration order.
@@ -285,5 +311,56 @@ impl UniqueKey {
             columns,
             predicate: None,
         }
+    }
+
+    /// Whether the declaration makes a unique key: a constraint or a full
+    /// index always does; a partial index only when its condition is exactly
+    /// `<soft_delete_column> IS NULL`, so the key holds across live rows.
+    pub fn counts(&self, soft_delete_column: Option<&str>) -> bool {
+        let Some(predicate) = &self.predicate else {
+            return true;
+        };
+        let Some(column) = soft_delete_column else {
+            return false;
+        };
+        let mut condition = predicate.trim();
+        while let Some(inner) = condition
+            .strip_prefix('(')
+            .and_then(|rest| rest.strip_suffix(')'))
+        {
+            condition = inner.trim();
+        }
+        let Some(subject) = condition
+            .strip_suffix("IS NULL")
+            .or_else(|| condition.strip_suffix("is null"))
+        else {
+            return false;
+        };
+        let subject = subject.trim();
+        subject == column || subject == format!("\"{}\"", column.replace('"', "\"\""))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UniqueKey;
+
+    fn partial(predicate: &str) -> UniqueKey {
+        UniqueKey {
+            columns: vec!["sku".to_owned()],
+            predicate: Some(predicate.to_owned()),
+        }
+    }
+
+    #[test]
+    fn a_partial_index_counts_only_on_exactly_the_soft_delete_condition() {
+        let soft_delete = Some("deleted_at");
+        assert!(UniqueKey::new(vec!["sku".to_owned()]).counts(None));
+        assert!(partial("deleted_at IS NULL").counts(soft_delete));
+        assert!(partial("(deleted_at IS NULL)").counts(soft_delete));
+        assert!(!partial("deleted_at IS NULL").counts(None));
+        assert!(!partial("archived_at IS NULL").counts(soft_delete));
+        assert!(!partial("deleted_at IS NOT NULL").counts(soft_delete));
+        assert!(!partial("deleted_at IS NULL AND sku <> ''").counts(soft_delete));
     }
 }
