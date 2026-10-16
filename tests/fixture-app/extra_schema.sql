@@ -93,3 +93,19 @@ CREATE TABLE priority_notes (
     priority ticket_priority PRIMARY KEY,
     note TEXT NOT NULL
 );
+
+-- Value-list columns: text columns a CHECK restricts to fixed values become
+-- enums named after table and column, encoded as text with each exact value.
+-- Both tables have a `status` column, and each gets its own enum.
+CREATE TABLE app.shipments (
+    id BIGSERIAL PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'In Transit', 'DELIVERED')),
+    carrier VARCHAR(20),
+    CONSTRAINT shipments_carrier_known CHECK (carrier IN ('dhl', 'ups'))
+);
+
+CREATE TABLE refunds (
+    id BIGSERIAL PRIMARY KEY,
+    status TEXT NOT NULL CHECK (status IN ('requested', 'paid'))
+);

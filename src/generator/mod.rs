@@ -443,6 +443,7 @@ pub(crate) mod test_support {
             is_primary_key: false,
             has_default: false,
             is_generated: false,
+            value_list: None,
             typed_id: None,
         }
     }

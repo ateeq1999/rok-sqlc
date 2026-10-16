@@ -61,6 +61,7 @@ async fn generated_crud_against_postgres() {
     search_filters_and_pages(&pool).await;
     altered_table_has_its_final_columns(&pool).await;
     enums_keep_their_exact_labels(&pool).await;
+    value_list_columns_round_trip(&pool).await;
     typed_ids_flow_from_rows_to_foreign_keys(&pool).await;
     foreign_keys_resolve_to_the_table_in_their_schema(&pool).await;
 }
@@ -1212,4 +1213,123 @@ async fn enums_keep_their_exact_labels(pool: &PgPool) {
     assert_eq!(found[0].id, i64::from(routine.id));
     assert_eq!(found[0].priority, TicketPriority::High);
     assert_eq!(found[0].state, None);
+}
+
+/// `app.shipments.status`, `app.shipments.carrier`, `refunds.status`, and
+/// `refunds.reason` (added by alter_schema.sql) are value-list columns: text
+/// columns restricted by `CHECK (col IN (...))`. Each becomes its own enum in
+/// `db::types`, encoded as text with each exact value.
+async fn value_list_columns_round_trip(pool: &PgPool) {
+    use db::queries::shipments::shipments_with_status;
+    use db::refunds::models::NewRefund;
+    use db::search::{Equality, Page, Sort};
+    use db::shipments::filter::{ShipmentFilter, ShipmentSortKey};
+    use db::shipments::models::{NewShipment, Shipment, UpdateShipment};
+    use db::shipments::{read, write};
+    use db::types::{RefundReason, RefundStatus, ShipmentCarrier, ShipmentStatus};
+
+    let defaulted = write::create(
+        pool,
+        NewShipment {
+            status: None,
+            carrier: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(defaulted.status, ShipmentStatus::Pending, "the default applies");
+    assert_eq!(defaulted.carrier, None);
+
+    let moving = write::create(
+        pool,
+        NewShipment {
+            status: Some(ShipmentStatus::InTransit),
+            carrier: Some(ShipmentCarrier::Dhl),
+        },
+    )
+    .await
+    .unwrap();
+    let stored = read::get_by_id(pool, moving.id).await.unwrap().unwrap();
+    assert_eq!(
+        stored,
+        Shipment {
+            id: moving.id,
+            status: ShipmentStatus::InTransit,
+            carrier: Some(ShipmentCarrier::Dhl),
+        }
+    );
+    let text: (String, Option<String>) =
+        sqlx::query_as("SELECT status, carrier FROM app.shipments WHERE id = $1")
+            .bind(moving.id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        text,
+        ("In Transit".to_owned(), Some("dhl".to_owned())),
+        "the database stores each variant's exact value"
+    );
+
+    let delivered = write::update(
+        pool,
+        moving.id,
+        UpdateShipment {
+            status: Some(ShipmentStatus::Delivered),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(delivered.status, ShipmentStatus::Delivered);
+    assert_eq!(ShipmentStatus::Delivered.as_str(), "DELIVERED");
+
+    let found = read::search(
+        pool,
+        ShipmentFilter {
+            status: vec![Equality::In(vec![
+                ShipmentStatus::Delivered,
+                ShipmentStatus::InTransit,
+            ])],
+            carrier: vec![Equality::Eq(ShipmentCarrier::Dhl)],
+            ..Default::default()
+        },
+        Sort::asc(ShipmentSortKey::Status),
+        Page::first(10),
+    )
+    .await
+    .unwrap();
+    assert_eq!(found, [delivered.clone()]);
+
+    let pending = shipments_with_status(pool, ShipmentStatus::Pending)
+        .await
+        .unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, defaulted.id);
+    assert_eq!(pending[0].status, ShipmentStatus::Pending);
+
+    // Only the listed values exist in Rust: text outside the list neither
+    // parses nor decodes.
+    assert!("delivered".parse::<ShipmentStatus>().is_err());
+    assert_eq!(
+        "In Transit".parse::<ShipmentStatus>(),
+        Ok(ShipmentStatus::InTransit)
+    );
+    let decoded = sqlx::query_scalar::<_, ShipmentStatus>("SELECT 'lost'::text")
+        .fetch_one(pool)
+        .await;
+    assert!(decoded.is_err(), "an unknown value does not decode");
+
+    // Same column name, different table: a distinct enum.
+    let refund = db::refunds::write::create(
+        pool,
+        NewRefund {
+            status: RefundStatus::Requested,
+            reason: Some(RefundReason::Late),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(refund.status, RefundStatus::Requested);
+    assert_eq!(refund.reason, Some(RefundReason::Late));
 }

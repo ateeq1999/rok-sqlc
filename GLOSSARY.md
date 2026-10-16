@@ -97,7 +97,7 @@ A PostgreSQL type declared by `CREATE TYPE … AS ENUM` (and extended by `ALTER 
 _Avoid_: enumeration, domain
 
 **Value-list column**:
-A text column restricted to a fixed list of values, treated like an enumerated type.
+A text column restricted to a fixed list of values by `CHECK (col IN ('a', 'b', ...))`, inline or as a table constraint. Generated as a Rust enum in the shared `types` module, named after its table and column (`products.product_type` gives `ProductProductType`), that encodes as text and keeps each exact value. Otherwise treated like an **Enum type**.
 _Avoid_: check enum, status string
 
 ## Writes

@@ -34,6 +34,8 @@ against earlier development snapshots.
 - With more than one query input (or a query directory), queries are
   generated as `db/queries/<stem>.rs`, one module per file, instead of a
   single `db/queries.rs`. A lone query file still generates `db/queries.rs`.
+- Text columns restricted by a value-list `CHECK` use a generated enum
+  (`types::OrderStatus`) instead of `String`.
 
 ### Breaking changes to the library
 
@@ -52,6 +54,10 @@ against earlier development snapshots.
   VALUE`) become Rust enums in a generated `db::types` module, used by
   rows, inputs, filters, sort keys, and query files. `types` is a reserved
   module name.
+- Value-list columns (text columns restricted by `CHECK (col IN ('a', ...))`,
+  inline, as a table constraint, or added by `ALTER TABLE`) become Rust enums
+  in `db::types`, named after table and column (`OrderStatus`), that encode
+  as text and keep each exact value.
 - Typed search: per-table `Filter` and `SortKey` types, `search`, and keyset
   pagination with `search_after`.
 - Annotated query files (`-- name: X :one|:maybe_one|:many|:exec|:execrows`)
