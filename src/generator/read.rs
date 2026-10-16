@@ -1,7 +1,9 @@
 use crate::schema::{Column, Table};
 
 use super::search::SearchApi;
-use super::sql::{column_clause, key_order, live_condition, live_key_predicate, table_ref};
+use super::sql::{
+    column_clause, ident, key_order, live_key_predicate, scope_condition, str_literal, table_ref,
+};
 use super::{
     HEADER, StaticQuery, keys, param_name, push_build_and_fetch, push_doc, push_fn_head,
     types_import, use_list, use_paths,
@@ -79,13 +81,18 @@ fn search_imports(table: &Table, api: SearchApi) -> String {
     let mut value_types: Vec<String> = lookup_columns()
         .map(|column| column.value_type().to_owned())
         .collect();
-    if !table.primary_key.is_empty() {
+    if !table.key_columns().is_empty() {
         value_types.push(keys::key_type(table));
     }
+    value_types.extend(table.tenant().map(|tenant| tenant.value_type().to_owned()));
     if !types_import("super::super", value_types.iter().map(String::as_str)).is_empty() {
         paths.push("super::super::types".to_owned());
     }
-    paths.extend(keys::id_imports(table, lookup_columns(), true));
+    paths.extend(keys::id_imports(
+        table,
+        lookup_columns().chain(keys::param_columns(table)),
+        true,
+    ));
     if !local.is_empty() {
         paths.push(format!("super::filter::{}", braced(local)));
     }
@@ -98,10 +105,14 @@ struct Lookup<'a> {
     columns: Vec<&'a Column>,
 }
 
-/// The table's unique-key lookups, in declaration order. No column is the
-/// soft-delete column yet, so a partial unique index never gets a lookup.
+/// The table's unique-key lookups, in declaration order. A partial unique
+/// index counts only when scoped to live rows by the soft-delete column. On
+/// a tenant table the tenant parameter supplies the tenant column, so it is
+/// left out of each key and of the lookup's name; a key left empty, or named
+/// like an earlier lookup, gets none.
 fn unique_lookups(table: &Table) -> Vec<Lookup<'_>> {
     let skip_primary_key = usize::from(!table.primary_key.is_empty());
+    let mut names: Vec<String> = Vec::new();
     table
         .unique_key_columns(table.soft_delete_column.as_deref())
         .into_iter()
@@ -110,14 +121,24 @@ fn unique_lookups(table: &Table) -> Vec<Lookup<'_>> {
             let columns: Vec<&Column> = key
                 .iter()
                 .map(|name| table.columns.iter().find(|column| column.sql_name == *name))
-                .collect::<Option<_>>()?;
-            let names: Vec<&str> = columns
+                .collect::<Option<Vec<_>>>()?
+                .into_iter()
+                .filter(|column| !table.is_tenant_column(column))
+                .collect();
+            if columns.is_empty() {
+                return None;
+            }
+            let column_names: Vec<&str> = columns
                 .iter()
                 .map(|column| column.rust_name.trim_end_matches('_'))
                 .collect();
-            let fn_name = format!("get_by_{}", names.join("_and_"));
+            let fn_name = format!("get_by_{}", column_names.join("_and_"));
             // `get_by_id` already names the primary-key lookup.
-            (skip_primary_key == 0 || fn_name != "get_by_id").then_some(Lookup { fn_name, columns })
+            if (skip_primary_key == 1 && fn_name == "get_by_id") || names.contains(&fn_name) {
+                return None;
+            }
+            names.push(fn_name.clone());
+            Some(Lookup { fn_name, columns })
         })
         .collect()
 }
@@ -162,7 +183,7 @@ fn render_unique_lookup(output: &mut String, table: &Table, lookup: &Lookup<'_>)
     sql.push(format!("FROM {}", table_ref(table)));
     sql.push(format!(
         "WHERE {}",
-        live_key_predicate(table, &lookup.columns, 1)
+        live_key_predicate(table, &lookup.columns)
     ));
 
     let described: Vec<String> = lookup
@@ -187,16 +208,15 @@ fn render_unique_lookup(output: &mut String, table: &Table, lookup: &Lookup<'_>)
     push_fn_head(
         output,
         &lookup.fn_name,
-        &params,
+        &keys::scoped_params(table, &params),
         &format!("Result<Option<{}>, sqlx::Error>", table.struct_name),
     );
     StaticQuery {
         call: &format!("sqlx::query_as::<_, {}>", table.struct_name),
         sql,
-        binds: lookup
-            .columns
-            .iter()
-            .map(|column| param_name(column))
+        binds: keys::tenant_bind(table)
+            .into_iter()
+            .chain(lookup.columns.iter().map(|column| param_name(column)))
             .collect(),
         execute: "fetch_optional(executor)",
     }
@@ -205,7 +225,8 @@ fn render_unique_lookup(output: &mut String, table: &Table, lookup: &Lookup<'_>)
 }
 
 /// Starts a search body: the `QueryBuilder` over the explicit column list,
-/// then the filter's `WHERE` clause.
+/// then the filter's `WHERE` clause and, on a tenant table, the tenant
+/// condition.
 fn push_search_preamble(output: &mut String, table: &Table) {
     let mut select = column_clause("SELECT", table);
     select.push(format!("FROM {}", table_ref(table)));
@@ -213,10 +234,17 @@ fn push_search_preamble(output: &mut String, table: &Table) {
     output.push_str(&super::sql::raw_block(&select, 8));
     output.push_str(",\n    );\n");
     output.push_str("    filter.push_where(&mut query);\n");
+    if let Some(tenant) = table.tenant() {
+        output.push_str(&format!(
+            "    query.push({});\n    query.push_bind({});\n",
+            str_literal(&format!(" AND {} = ", ident(&tenant.sql_name))),
+            param_name(tenant)
+        ));
+    }
 }
 
 fn render_search_after(output: &mut String, table: &Table) {
-    let key_columns = table.primary_key_columns();
+    let key_columns = table.key_columns();
     let name = &table.struct_name;
     let key_type = keys::key_type(table);
     let key_pattern = keys::key_binding(table);
@@ -240,11 +268,14 @@ fn render_search_after(output: &mut String, table: &Table) {
     push_fn_head(
         output,
         "search_after",
-        &[
-            format!("filter: {name}Filter"),
-            format!("after: Option<{key_type}>"),
-            "limit: Limit".to_owned(),
-        ],
+        &keys::scoped_params(
+            table,
+            &[
+                format!("filter: {name}Filter"),
+                format!("after: Option<{key_type}>"),
+                "limit: Limit".to_owned(),
+            ],
+        ),
         &format!("Result<Vec<{name}>, sqlx::Error>"),
     );
     push_search_preamble(output, table);
@@ -253,14 +284,14 @@ fn render_search_after(output: &mut String, table: &Table) {
         [key] => {
             output.push_str(&format!(
                 "        query.push({});\n        query.push_bind({});\n",
-                super::sql::str_literal(&format!(" AND {} > ", super::sql::ident(&key.sql_name))),
+                str_literal(&format!(" AND {} > ", ident(&key.sql_name))),
                 binds[0]
             ));
         }
         _ => {
             output.push_str(&format!(
                 "        query.push({});\n",
-                super::sql::str_literal(&format!(" AND ({}) > (", key_order(&key_columns)))
+                str_literal(&format!(" AND ({}) > (", key_order(&key_columns)))
             ));
             for (index, bind) in binds.iter().enumerate() {
                 if index > 0 {
@@ -274,7 +305,7 @@ fn render_search_after(output: &mut String, table: &Table) {
     output.push_str("    }\n");
     output.push_str(&format!(
         "    query.push({});\n",
-        super::sql::str_literal(&format!(" ORDER BY {} LIMIT ", key_order(&key_columns)))
+        str_literal(&format!(" ORDER BY {} LIMIT ", key_order(&key_columns)))
     ));
     output.push_str("    query.push_bind(limit.get());\n");
     push_build_and_fetch(output, table, "fetch_all");
@@ -302,11 +333,14 @@ fn render_search(output: &mut String, table: &Table) {
     push_fn_head(
         output,
         "search",
-        &[
-            format!("filter: {name}Filter"),
-            format!("sort: Sort<{name}SortKey>"),
-            "page: Page".to_owned(),
-        ],
+        &keys::scoped_params(
+            table,
+            &[
+                format!("filter: {name}Filter"),
+                format!("sort: Sort<{name}SortKey>"),
+                "page: Page".to_owned(),
+            ],
+        ),
         &format!("Result<Vec<{name}>, sqlx::Error>"),
     );
     push_search_preamble(output, table);
@@ -316,7 +350,7 @@ fn render_search(output: &mut String, table: &Table) {
     if !keys.is_empty() {
         output.push_str(&format!(
             "    query.push({});\n",
-            super::sql::str_literal(&format!(", {}", key_order(&keys)))
+            str_literal(&format!(", {}", key_order(&keys)))
         ));
     }
     output.push_str("    query.push(\" LIMIT \");\n");
@@ -328,10 +362,10 @@ fn render_search(output: &mut String, table: &Table) {
 }
 
 fn render_get_by_id(output: &mut String, table: &Table) {
-    let keys = table.primary_key_columns();
+    let keys = table.key_columns();
     let mut sql = column_clause("SELECT", table);
     sql.push(format!("FROM {}", table_ref(table)));
-    sql.push(format!("WHERE {}", live_key_predicate(table, &keys, 1)));
+    sql.push(format!("WHERE {}", live_key_predicate(table, &keys)));
 
     output.push('\n');
     push_read_doc(
@@ -342,13 +376,13 @@ fn render_get_by_id(output: &mut String, table: &Table) {
     push_fn_head(
         output,
         "get_by_id",
-        &[keys::key_param(table)],
+        &keys::key_params(table),
         &format!("Result<Option<{}>, sqlx::Error>", table.struct_name),
     );
     StaticQuery {
         call: &format!("sqlx::query_as::<_, {}>", table.struct_name),
         sql,
-        binds: keys::key_binds(table),
+        binds: keys::scoped_key_binds(table),
         execute: "fetch_optional(executor)",
     }
     .push(output, 4, "", "");
@@ -356,12 +390,12 @@ fn render_get_by_id(output: &mut String, table: &Table) {
 }
 
 fn render_exists_by_id(output: &mut String, table: &Table) {
-    let keys = table.primary_key_columns();
+    let keys = table.key_columns();
     let sql = vec![
         "SELECT EXISTS (".to_owned(),
         "    SELECT 1".to_owned(),
         format!("    FROM {}", table_ref(table)),
-        format!("    WHERE {}", live_key_predicate(table, &keys, 1)),
+        format!("    WHERE {}", live_key_predicate(table, &keys)),
         ")".to_owned(),
     ];
 
@@ -374,13 +408,13 @@ fn render_exists_by_id(output: &mut String, table: &Table) {
     push_fn_head(
         output,
         "exists_by_id",
-        &[keys::key_param(table)],
+        &keys::key_params(table),
         "Result<bool, sqlx::Error>",
     );
     StaticQuery {
         call: "sqlx::query_scalar::<_, bool>",
         sql,
-        binds: keys::key_binds(table),
+        binds: keys::scoped_key_binds(table),
         execute: "fetch_one(executor)",
     }
     .push(output, 4, "", "");
@@ -391,7 +425,7 @@ fn render_list(output: &mut String, table: &Table) {
     let keys = table.primary_key_columns();
     let mut sql = column_clause("SELECT", table);
     sql.push(format!("FROM {}", table_ref(table)));
-    sql.extend(live_condition(table).map(|live| format!("WHERE {live}")));
+    sql.extend(scope_condition(table).map(|scope| format!("WHERE {scope}")));
     let doc = if keys.is_empty() {
         "Fetches every row, in no particular order."
     } else {
@@ -404,13 +438,13 @@ fn render_list(output: &mut String, table: &Table) {
     push_fn_head(
         output,
         "list",
-        &[],
+        &keys::tenant_params(table),
         &format!("Result<Vec<{}>, sqlx::Error>", table.struct_name),
     );
     StaticQuery {
         call: &format!("sqlx::query_as::<_, {}>", table.struct_name),
         sql,
-        binds: Vec::new(),
+        binds: keys::tenant_bind(table).into_iter().collect(),
         execute: "fetch_all(executor)",
     }
     .push(output, 4, "", "");
@@ -421,10 +455,11 @@ fn render_list_page(output: &mut String, table: &Table) {
     let keys = table.primary_key_columns();
     let mut sql = column_clause("SELECT", table);
     sql.push(format!("FROM {}", table_ref(table)));
-    sql.extend(live_condition(table).map(|live| format!("WHERE {live}")));
+    sql.extend(scope_condition(table).map(|scope| format!("WHERE {scope}")));
     sql.push(format!("ORDER BY {}", key_order(&keys)));
-    sql.push("LIMIT $1".to_owned());
-    sql.push("OFFSET $2".to_owned());
+    let first = 1 + usize::from(table.tenant().is_some());
+    sql.push(format!("LIMIT ${first}"));
+    sql.push(format!("OFFSET ${}", first + 1));
 
     output.push('\n');
     push_read_doc(
@@ -438,13 +473,16 @@ fn render_list_page(output: &mut String, table: &Table) {
     push_fn_head(
         output,
         "list_page",
-        &["limit: i64".to_owned(), "offset: i64".to_owned()],
+        &keys::scoped_params(table, &["limit: i64".to_owned(), "offset: i64".to_owned()]),
         &format!("Result<Vec<{}>, sqlx::Error>", table.struct_name),
     );
     StaticQuery {
         call: &format!("sqlx::query_as::<_, {}>", table.struct_name),
         sql,
-        binds: vec!["limit".to_owned(), "offset".to_owned()],
+        binds: keys::tenant_bind(table)
+            .into_iter()
+            .chain(["limit".to_owned(), "offset".to_owned()])
+            .collect(),
         execute: "fetch_all(executor)",
     }
     .push(output, 4, "", "");
@@ -454,14 +492,19 @@ fn render_list_page(output: &mut String, table: &Table) {
 fn render_count(output: &mut String, table: &Table) {
     output.push('\n');
     push_read_doc(output, table, &["Counts every row."]);
-    push_fn_head(output, "count", &[], "Result<i64, sqlx::Error>");
+    push_fn_head(
+        output,
+        "count",
+        &keys::tenant_params(table),
+        "Result<i64, sqlx::Error>",
+    );
     StaticQuery {
         call: "sqlx::query_scalar::<_, i64>",
-        sql: vec![match live_condition(table) {
-            Some(live) => format!("SELECT COUNT(*) FROM {} WHERE {live}", table_ref(table)),
+        sql: vec![match scope_condition(table) {
+            Some(scope) => format!("SELECT COUNT(*) FROM {} WHERE {scope}", table_ref(table)),
             None => format!("SELECT COUNT(*) FROM {}", table_ref(table)),
         }],
-        binds: Vec::new(),
+        binds: keys::tenant_bind(table).into_iter().collect(),
         execute: "fetch_one(executor)",
     }
     .push(output, 4, "", "");

@@ -4,6 +4,7 @@ pub mod models;
 pub mod queries;
 pub mod read;
 pub mod search;
+pub mod session;
 pub mod sql;
 pub mod types;
 pub mod write;
@@ -106,9 +107,14 @@ pub fn plan_files_with_queries(
     if !enums.is_empty() {
         files.push((output.join("types.rs"), types::render(enums)));
     }
+    let session = session::render(conventions);
+    let has_session = session.is_some();
+    if let Some(session) = session {
+        files.push((output.join("session.rs"), session));
+    }
     files.push((
         output.join("mod.rs"),
-        render_db_mod(tables, !enums.is_empty(), queries),
+        render_db_mod(tables, !enums.is_empty(), has_session, queries),
     ));
     files.push((output.join("schema.rs"), render_schema_snapshot(schema_sql)));
 
@@ -355,7 +361,12 @@ pub fn push_build_and_fetch(output: &mut String, table: &Table, fetch: &str) {
     }
 }
 
-pub fn render_db_mod(tables: &[Table], has_types: bool, queries: QueriesModule<'_>) -> String {
+pub fn render_db_mod(
+    tables: &[Table],
+    has_types: bool,
+    has_session: bool,
+    queries: QueriesModule<'_>,
+) -> String {
     let mut types: Vec<String> = tables
         .iter()
         .flat_map(|table| &table.columns)
@@ -387,6 +398,9 @@ pub fn render_db_mod(tables: &[Table], has_types: bool, queries: QueriesModule<'
     modules.push("search");
     if has_types {
         modules.push("types");
+    }
+    if has_session {
+        modules.push("session");
     }
     if queries.is_declared() {
         modules.push("queries");
@@ -520,6 +534,7 @@ pub(crate) mod test_support {
             unique_keys: Vec::new(),
             version_column: None,
             soft_delete_column: None,
+            tenant_column: None,
         }
     }
 }
@@ -546,7 +561,7 @@ mod tests {
     #[test]
     fn db_mod_lists_modules_and_conditional_dependencies() {
         let tables = vec![table(vec![column("id", "uuid::Uuid")], &["id"])];
-        let rendered = render_db_mod(&tables, false, QueriesModule::None);
+        let rendered = render_db_mod(&tables, false, false, QueriesModule::None);
         assert!(rendered.contains("pub mod users;"));
         assert!(rendered.contains("pub mod schema;"));
         assert!(rendered.contains("\"uuid\""));
@@ -561,15 +576,19 @@ mod tests {
     #[test]
     fn db_mod_declares_queries_when_generated_or_kept() {
         let tables = vec![table(vec![column("id", "i64")], &["id"])];
-        assert!(!render_db_mod(&tables, false, QueriesModule::None).contains("pub mod queries;"));
-        assert!(render_db_mod(&tables, false, QueriesModule::Keep).contains(
-            "pub mod queries;
+        assert!(
+            !render_db_mod(&tables, false, false, QueriesModule::None).contains("pub mod queries;")
+        );
+        assert!(
+            render_db_mod(&tables, false, false, QueriesModule::Keep).contains(
+                "pub mod queries;
 pub mod schema;
 pub mod search;
 pub mod users;"
-        ));
+            )
+        );
         assert!(
-            render_db_mod(&tables, false, QueriesModule::Generate(&[]))
+            render_db_mod(&tables, false, false, QueriesModule::Generate(&[]))
                 .contains("pub mod queries;")
         );
     }
@@ -577,7 +596,7 @@ pub mod users;"
     #[test]
     fn db_mod_hints_rust_decimal_when_used() {
         let tables = vec![table(vec![column("id", "rust_decimal::Decimal")], &["id"])];
-        let rendered = render_db_mod(&tables, false, QueriesModule::None);
+        let rendered = render_db_mod(&tables, false, false, QueriesModule::None);
         assert!(rendered.contains("\"rust_decimal\""));
         assert!(rendered.contains("rust_decimal = \"1\""));
         assert!(!rendered.contains("\"uuid\""));

@@ -65,14 +65,44 @@ pub fn live_condition(table: &Table) -> Option<String> {
         .map(|column| format!("{} IS NULL", ident(column)))
 }
 
-/// `key_predicate`, followed by `AND <soft-delete column> IS NULL` when the
-/// table has one, so only a live row matches.
-pub fn live_key_predicate(table: &Table, keys: &[&Column], first: usize) -> String {
-    let predicate = key_predicate(keys, first);
+/// `<tenant column> = $1` when the table has a tenant column: static SQL
+/// always binds the tenant parameter first.
+pub fn tenant_condition(table: &Table) -> Option<String> {
+    table
+        .tenant()
+        .map(|tenant| format!("{} = $1", ident(&tenant.sql_name)))
+}
+
+/// The tenant condition (when the table has a tenant column) followed by
+/// `key_predicate` over `keys`, numbered after the tenant's placeholder.
+pub fn scoped_key_predicate(table: &Table, keys: &[&Column]) -> String {
+    let tenant = tenant_condition(table);
+    let first = 1 + usize::from(tenant.is_some());
+    tenant
+        .into_iter()
+        .chain((!keys.is_empty()).then(|| key_predicate(keys, first)))
+        .collect::<Vec<_>>()
+        .join(" AND ")
+}
+
+/// `scoped_key_predicate`, followed by `AND <soft-delete column> IS NULL`
+/// when the table has one, so only a live row matches.
+pub fn live_key_predicate(table: &Table, keys: &[&Column]) -> String {
+    let predicate = scoped_key_predicate(table, keys);
     match live_condition(table) {
         Some(live) => format!("{predicate} AND {live}"),
         None => predicate,
     }
+}
+
+/// The condition selecting every row a whole-table read sees: the tenant's
+/// rows (`$1`) that are live, or `None` when every row is visible.
+pub fn scope_condition(table: &Table) -> Option<String> {
+    let conditions: Vec<String> = tenant_condition(table)
+        .into_iter()
+        .chain(live_condition(table))
+        .collect();
+    (!conditions.is_empty()).then(|| conditions.join(" AND "))
 }
 
 /// `a, b` over the given key columns, for `ORDER BY`.

@@ -85,8 +85,20 @@ against earlier development snapshots.
   (`rok_sqlc::Conventions` in the library), off by default, with a `rok`
   preset for the Rok ERP. Managed columns (`managed_columns`, such as
   `updated_at` and `row_version`) are left out of create inputs and update
-  patches and kept in rows. The tenant key is validated but not applied
-  yet. See ADR 0010.
+  patches and kept in rows. See ADR 0010.
+- Tenant scoping (`tenant_column`, `organization_id` in the `rok` preset). On
+  a table with that column, every generated function takes the tenant id
+  right after the executor and adds `<column> = <tenant>` to every statement:
+  reads, unique-key lookups, `search`, `search_after`, `create`, `update`
+  (versioned or not, empty patch included), and every delete. The column is
+  left out of create inputs (it is set from the parameter) and update patches
+  (it never changes). When it is part of the primary key, the tenant
+  parameter replaces that key column, and unique-key lookups leave it out of
+  their name (`UNIQUE (organization_id, code)` gives `get_by_code`).
+- `db::session` (generated when `tenant_setting` or `user_setting` is set):
+  `set_tenant(&mut tx, id)` and `set_user(&mut tx, id)` run a
+  transaction-local `set_config`, for row-level security policies and audit
+  triggers. `session` is a reserved module name.
 - A version column (`version_column`, `row_version` in the `rok` preset) for
   optimistic concurrency. On a table that has it, `update` takes
   `expected_version` and returns `UpdateOutcome<Row>` (`Updated(row)`,

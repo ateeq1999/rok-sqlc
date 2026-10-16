@@ -85,9 +85,11 @@ fn key_struct_name(table: &Table) -> String {
 }
 
 /// The type generated functions take a table's key as: the key column's type
-/// (its typed id when it has one) or the key struct.
+/// (its typed id when it has one) or the key struct. The tenant column is
+/// not part of it (see [`Table::key_columns`]).
 pub fn key_type(table: &Table) -> String {
-    match table.primary_key_columns().as_slice() {
+    match table.key_columns().as_slice() {
+        [] => "()".to_owned(),
         [key] => key.value_type().to_owned(),
         _ => key_struct_name(table),
     }
@@ -96,20 +98,61 @@ pub fn key_type(table: &Table) -> String {
 /// The name of the key parameter or binding: the key column's parameter
 /// name, or `key` for a key struct.
 pub fn key_binding(table: &Table) -> String {
-    match table.primary_key_columns().as_slice() {
+    match table.key_columns().as_slice() {
+        [] => "()".to_owned(),
         [key] => param_name(key),
         _ => "key".to_owned(),
     }
 }
 
-/// The key parameter of a generated function, e.g. `id: ProductId`.
-pub fn key_param(table: &Table) -> String {
-    format!("{}: {}", key_binding(table), key_type(table))
+/// The key parameters of a generated function: the tenant parameter, when
+/// the table has a tenant column, then the key, e.g. `id: ProductId`. A
+/// primary key that is only the tenant column takes no key parameter.
+pub fn key_params(table: &Table) -> Vec<String> {
+    let mut params = tenant_params(table);
+    if !table.key_columns().is_empty() {
+        params.push(format!("{}: {}", key_binding(table), key_type(table)));
+    }
+    params
+}
+
+/// The arguments passing a function's own key parameters on to another
+/// generated function taking them.
+pub fn key_args(table: &Table) -> Vec<String> {
+    let mut args: Vec<String> = table.tenant().map(param_name).into_iter().collect();
+    if !table.key_columns().is_empty() {
+        args.push(key_binding(table));
+    }
+    args
+}
+
+/// The tenant parameter, e.g. `organization_id: uuid::Uuid`, which every
+/// generated function on a tenant table takes right after the executor; no
+/// parameter without a tenant column.
+pub fn tenant_params(table: &Table) -> Vec<String> {
+    table
+        .tenant()
+        .map(|tenant| format!("{}: {}", param_name(tenant), tenant.value_type()))
+        .into_iter()
+        .collect()
+}
+
+/// `params` preceded by the tenant parameter, when the table has one.
+pub fn scoped_params(table: &Table, params: &[String]) -> Vec<String> {
+    let mut scoped = tenant_params(table);
+    scoped.extend(params.iter().cloned());
+    scoped
+}
+
+/// The tenant parameter's bind expression, when the table has a tenant
+/// column. Static SQL binds it as `$1`.
+pub fn tenant_bind(table: &Table) -> Option<String> {
+    table.tenant().map(param_name)
 }
 
 /// The bind expressions of the key, one per key column in key order.
 pub fn key_binds(table: &Table) -> Vec<String> {
-    match table.primary_key_columns().as_slice() {
+    match table.key_columns().as_slice() {
         [key] => vec![param_name(key)],
         keys => keys
             .iter()
@@ -118,14 +161,35 @@ pub fn key_binds(table: &Table) -> Vec<String> {
     }
 }
 
+/// The bind expressions of the tenant (when the table has one) and the key,
+/// in placeholder order.
+pub fn scoped_key_binds(table: &Table) -> Vec<String> {
+    let mut binds: Vec<String> = tenant_bind(table).into_iter().collect();
+    binds.extend(key_binds(table));
+    binds
+}
+
 /// The names `models.rs` defines for the key: the typed id or key struct;
 /// none when the single key column's type cannot be wrapped.
 pub fn key_items(table: &Table) -> Vec<String> {
-    match table.primary_key_columns().as_slice() {
+    match table.key_columns().as_slice() {
         [] => Vec::new(),
-        [key] => key.typed_id.iter().map(|id| id.name.clone()).collect(),
+        [key] => key
+            .typed_id
+            .iter()
+            .filter(|id| id.module == table.module_name)
+            .map(|id| id.name.clone())
+            .collect(),
         _ => vec![key_struct_name(table)],
     }
+}
+
+/// The columns whose own types the key parameters name: the tenant column
+/// and a single key column (a key struct names its fields' types itself).
+pub fn param_columns(table: &Table) -> Vec<&Column> {
+    let keys = table.key_columns();
+    let single = if keys.len() == 1 { keys } else { Vec::new() };
+    table.tenant().into_iter().chain(single).collect()
 }
 
 /// `use` paths for the typed ids of `columns` that `table`'s resource files
@@ -156,11 +220,15 @@ pub fn id_imports<'a>(
 
 /// Renders the table's typed id or key struct (before the row struct).
 pub fn render_key_type(output: &mut String, table: &Table) {
-    let keys = table.primary_key_columns();
+    let keys = table.key_columns();
     match keys.as_slice() {
         [] => {}
         [key] => {
-            if let Some(id) = &key.typed_id {
+            if let Some(id) = key
+                .typed_id
+                .as_ref()
+                .filter(|id| id.module == table.module_name)
+            {
                 render_typed_id(output, table, key, &id.name);
             }
         }
@@ -203,8 +271,13 @@ fn render_key_struct(output: &mut String, table: &Table, keys: &[&Column]) {
         output,
         0,
         &[&format!(
-            "The composite primary key of the `{}` table.",
-            table.display_name()
+            "The composite primary key of the `{}` table{}.",
+            table.display_name(),
+            if table.key_columns().len() < table.primary_key.len() {
+                ", without the tenant column"
+            } else {
+                ""
+            }
         )],
     );
     let derives = if keys.iter().all(|key| key.supports_typed_id()) {
@@ -233,7 +306,7 @@ fn render_key_struct(output: &mut String, table: &Table, keys: &[&Column]) {
 /// struct), so a fetched row's key can be passed back, e.g. as a
 /// `search_after` cursor.
 pub fn render_row_key(output: &mut String, table: &Table) {
-    let keys = table.primary_key_columns();
+    let keys = table.key_columns();
     if keys.len() < 2 {
         return;
     }

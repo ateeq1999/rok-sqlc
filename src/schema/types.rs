@@ -84,6 +84,10 @@ pub struct Table {
     /// configured and this table has that column. The parser leaves it
     /// `None`; the generator applies the conventions.
     pub soft_delete_column: Option<String>,
+    /// The tenant column (ADR 0010), when the tenant convention is
+    /// configured and this table has that column. The parser leaves it
+    /// `None`; the generator applies the conventions.
+    pub tenant_column: Option<String>,
 }
 
 impl Table {
@@ -128,26 +132,54 @@ impl Table {
             .collect()
     }
 
+    /// The primary key columns a caller passes to identify a row: every key
+    /// column but the tenant column, which the tenant parameter supplies.
+    /// Without a tenant column, the primary key columns.
+    pub fn key_columns(&self) -> Vec<&Column> {
+        self.primary_key_columns()
+            .into_iter()
+            .filter(|column| !self.is_tenant_column(column))
+            .collect()
+    }
+
+    /// The tenant column, when the table has one.
+    pub fn tenant(&self) -> Option<&Column> {
+        let name = self.tenant_column.as_deref()?;
+        self.columns.iter().find(|column| column.sql_name == name)
+    }
+
     /// Whether `column` is this table's soft-delete column.
     pub fn is_soft_delete_column(&self, column: &Column) -> bool {
         self.soft_delete_column.as_deref() == Some(column.sql_name.as_str())
     }
 
-    /// Columns a caller may supply on insert. The soft-delete column is left
-    /// out: only `delete` and `restore` set it.
+    /// Whether `column` is this table's tenant column.
+    pub fn is_tenant_column(&self, column: &Column) -> bool {
+        self.tenant_column.as_deref() == Some(column.sql_name.as_str())
+    }
+
+    /// Whether a caller never supplies `column` in an input or patch: the
+    /// soft-delete column (only `delete` and `restore` set it) and the tenant
+    /// column (set from the tenant parameter, never changed).
+    fn is_convention_controlled(&self, column: &Column) -> bool {
+        self.is_soft_delete_column(column) || self.is_tenant_column(column)
+    }
+
+    /// Columns a caller may supply on insert. The soft-delete and tenant
+    /// columns are left out.
     pub fn insert_columns(&self) -> Vec<&Column> {
         self.columns
             .iter()
-            .filter(|column| column.is_insertable() && !self.is_soft_delete_column(column))
+            .filter(|column| column.is_insertable() && !self.is_convention_controlled(column))
             .collect()
     }
 
-    /// Columns a caller may change on update. The soft-delete column is left
-    /// out: only `delete` and `restore` set it.
+    /// Columns a caller may change on update. The soft-delete and tenant
+    /// columns are left out.
     pub fn update_columns(&self) -> Vec<&Column> {
         self.columns
             .iter()
-            .filter(|column| column.is_updatable() && !self.is_soft_delete_column(column))
+            .filter(|column| column.is_updatable() && !self.is_convention_controlled(column))
             .collect()
     }
 }

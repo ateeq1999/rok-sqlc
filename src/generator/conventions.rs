@@ -2,8 +2,8 @@
 //! tables being generated before any renderer runs.
 //!
 //! A convention is recorded on the schema model, so renderers ask a column
-//! or table what it is (`Column::is_managed`, `Table::soft_delete_column`)
-//! instead of each taking the configuration. Only the tables generated in a
+//! or table what it is (`Column::is_managed`, `Table::soft_delete_column`,
+//! `Table::tenant_column`) instead of each taking the configuration. Only the tables generated in a
 //! run are annotated; query files never see conventions.
 
 use crate::Conventions;
@@ -26,11 +26,15 @@ pub fn apply(tables: &mut [Table], conventions: &Conventions) {
             column.is_managed = conventions.managed_columns.contains(&column.sql_name)
                 || Some(column.sql_name.as_str()) == version;
         }
-        table.soft_delete_column = conventions
-            .soft_delete_column
-            .as_ref()
-            .filter(|name| table.columns.iter().any(|column| column.sql_name == **name))
-            .cloned();
+        let present = |name: &Option<String>| {
+            name.as_ref()
+                .filter(|name| table.columns.iter().any(|column| column.sql_name == **name))
+                .cloned()
+        };
+        let soft_delete_column = present(&conventions.soft_delete_column);
+        let tenant_column = present(&conventions.tenant_column);
+        table.soft_delete_column = soft_delete_column;
+        table.tenant_column = tenant_column;
     }
 }
 

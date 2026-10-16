@@ -17,7 +17,7 @@ pub struct SearchApi {
     /// `search`: needs at least one sort key, or `Sort<XSortKey>` could
     /// never be constructed.
     pub search: bool,
-    /// `search_after`: needs a primary key to page by.
+    /// `search_after`: needs a key (other than the tenant column) to page by.
     pub search_after: bool,
 }
 
@@ -25,7 +25,7 @@ impl SearchApi {
     pub fn for_table(table: &Table) -> Self {
         Self {
             search: !sortable(table).is_empty(),
-            search_after: !table.primary_key.is_empty(),
+            search_after: !table.key_columns().is_empty(),
         }
     }
 

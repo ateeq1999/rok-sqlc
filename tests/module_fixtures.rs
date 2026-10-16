@@ -317,19 +317,29 @@ fn render_smoke(outcomes: &[Outcome]) -> Result<String> {
             if !read.is_file() {
                 continue;
             }
-            let functions = generated_functions(&fs::read_to_string(&read)?);
+            let source = fs::read_to_string(&read)?;
+            let functions = generated_functions(&source);
             let path = format!("super::modules::{module}::{table}::read");
             for (function, args) in [
-                ("list", "pool"),
-                ("count", "pool"),
+                ("list", ""),
+                ("count", ""),
                 (
                     "search_after",
                     &*format!(
-                        "pool, Default::default(), None, super::modules::{module}::search::Limit::new(10)"
+                        ", Default::default(), None, super::modules::{module}::search::Limit::new(10)"
                     ),
                 ),
             ] {
                 if functions.iter().any(|name| name == function) {
+                    // A tenant table's reads take the tenant right after the
+                    // executor; the nil tenant owns no rows, which still runs
+                    // every statement.
+                    let tenant = if takes_tenant(&source, function) {
+                        ", uuid::Uuid::nil().into()"
+                    } else {
+                        ""
+                    };
+                    let args = format!("pool{tenant}{args}");
                     writeln!(
                         text,
                         "    record(&mut failures, \"{module}::{table}::{function}\", {path}::{function}({args}).await);"
@@ -347,6 +357,18 @@ fn render_smoke(outcomes: &[Outcome]) -> Result<String> {
          }\n",
     );
     Ok(text)
+}
+
+/// Whether the generated `function` in `rust` takes the `rok` preset's tenant
+/// column as a parameter.
+fn takes_tenant(rust: &str, function: &str) -> bool {
+    let tenant = rok_sqlc::Conventions::rok()
+        .tenant_column
+        .expect("the rok preset has a tenant column");
+    rust.split(&format!("pub async fn {function}<"))
+        .nth(1)
+        .and_then(|rest| rest.split(") ->").next())
+        .is_some_and(|params| params.contains(&format!("{tenant}:")))
 }
 
 /// The up migrations of a fixture's `migrations/` directory, in the

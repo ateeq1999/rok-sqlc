@@ -9,8 +9,9 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tempfile::TempDir;
 
-/// A table maintained by a `touch_row`-style trigger, plus one without any
-/// convention column.
+/// A table maintained by a `touch_row`-style trigger, one without any
+/// convention column, and two with an `organization_id` tenant column (one
+/// with it in the primary key).
 const SCHEMA: &str = "CREATE TABLE documents (
     id UUID PRIMARY KEY,
     title TEXT NOT NULL,
@@ -20,6 +21,19 @@ const SCHEMA: &str = "CREATE TABLE documents (
     removed_at TIMESTAMPTZ
 );
 CREATE TABLE tags (id UUID PRIMARY KEY, label TEXT NOT NULL);
+CREATE TABLE notes (
+    id UUID PRIMARY KEY,
+    organization_id UUID NOT NULL,
+    code TEXT NOT NULL,
+    body TEXT NOT NULL,
+    UNIQUE (organization_id, code)
+);
+CREATE TABLE members (
+    organization_id UUID NOT NULL,
+    id UUID NOT NULL,
+    email TEXT NOT NULL,
+    PRIMARY KEY (organization_id, id)
+);
 ";
 
 fn run(args: &[&str]) -> Result<()> {
@@ -354,6 +368,163 @@ fn the_soft_delete_column_is_left_out_of_inputs_and_patches_but_kept_in_rows() -
     assert_eq!(
         struct_fields(&models, "UpdateDocument"),
         ["title", "updated_at", "row_version", "removed_at"]
+    );
+    Ok(())
+}
+
+fn resource_file(dir: &TempDir, module: &str, file: &str) -> Result<String> {
+    Ok(fs::read_to_string(
+        dir.path().join("out").join(module).join(file),
+    )?)
+}
+
+/// Every `pub async fn` signature in `source`, as `name(params)` on one line.
+fn signatures(source: &str) -> Vec<String> {
+    source
+        .split("pub async fn ")
+        .skip(1)
+        .map(|rest| {
+            let name = rest.split(['<', '(']).next().unwrap();
+            let params = &rest[rest.find('(').unwrap() + 1..rest.find(") ->").unwrap()];
+            let params: Vec<&str> = params
+                .split(",\n")
+                .flat_map(|chunk| chunk.split(", "))
+                .map(str::trim)
+                .filter(|param| !param.is_empty())
+                .collect();
+            format!("{name}({})", params.join(", "))
+        })
+        .collect()
+}
+
+const TENANT: &str = "[conventions]\ntenant_column = \"organization_id\"\n";
+
+#[test]
+fn tenant_tables_take_the_tenant_right_after_the_executor() -> Result<()> {
+    let (dir, config) = project(TENANT)?;
+
+    generate(&config)?;
+
+    let read = signatures(&resource_file(&dir, "notes", "read.rs")?);
+    let write = signatures(&resource_file(&dir, "notes", "write.rs")?);
+    assert_eq!(
+        read,
+        [
+            "get_by_id(executor: E, organization_id: uuid::Uuid, id: NoteId)",
+            "exists_by_id(executor: E, organization_id: uuid::Uuid, id: NoteId)",
+            "get_by_code(executor: E, organization_id: uuid::Uuid, code: &str)",
+            "list(executor: E, organization_id: uuid::Uuid)",
+            "list_page(executor: E, organization_id: uuid::Uuid, limit: i64, offset: i64)",
+            "count(executor: E, organization_id: uuid::Uuid)",
+            "search(executor: E, organization_id: uuid::Uuid, filter: NoteFilter, sort: Sort<NoteSortKey>, page: Page)",
+            "search_after(executor: E, organization_id: uuid::Uuid, filter: NoteFilter, after: Option<NoteId>, limit: Limit)",
+        ]
+    );
+    assert_eq!(
+        write,
+        [
+            "create(executor: E, organization_id: uuid::Uuid, input: NewNote)",
+            "update(executor: E, organization_id: uuid::Uuid, id: NoteId, input: UpdateNote)",
+            "delete(executor: E, organization_id: uuid::Uuid, id: NoteId)",
+        ]
+    );
+
+    let models = models(&dir, "notes")?;
+    assert_eq!(
+        struct_fields(&models, "Note"),
+        ["id", "organization_id", "code", "body"]
+    );
+    assert_eq!(struct_fields(&models, "NewNote"), ["id", "code", "body"]);
+    assert_eq!(struct_fields(&models, "UpdateNote"), ["code", "body"]);
+    Ok(())
+}
+
+#[test]
+fn a_primary_key_including_the_tenant_takes_the_tenant_once() -> Result<()> {
+    let (dir, config) = project(TENANT)?;
+
+    generate(&config)?;
+
+    let read = signatures(&resource_file(&dir, "members", "read.rs")?);
+    assert_eq!(
+        read[0],
+        "get_by_id(executor: E, organization_id: uuid::Uuid, id: uuid::Uuid)"
+    );
+    assert!(
+        read.iter()
+            .all(|signature| signature.matches("organization_id").count() == 1),
+        "{read:?}"
+    );
+    let write = signatures(&resource_file(&dir, "members", "write.rs")?);
+    assert_eq!(
+        write,
+        [
+            "create(executor: E, organization_id: uuid::Uuid, input: NewMember)",
+            "update(executor: E, organization_id: uuid::Uuid, id: uuid::Uuid, input: UpdateMember)",
+            "delete(executor: E, organization_id: uuid::Uuid, id: uuid::Uuid)",
+        ]
+    );
+    let models = models(&dir, "members")?;
+    assert_eq!(struct_fields(&models, "NewMember"), ["id", "email"]);
+    assert!(!models.contains("MemberKey"), "{models}");
+    Ok(())
+}
+
+#[test]
+fn without_the_tenant_convention_signatures_are_unchanged() -> Result<()> {
+    let (plain, plain_config) = project("")?;
+    let (tenant, tenant_config) = project(TENANT)?;
+
+    generate(&plain_config)?;
+    generate(&tenant_config)?;
+
+    assert_eq!(
+        signatures(&resource_file(&plain, "notes", "read.rs")?)[0],
+        "get_by_id(executor: E, id: NoteId)"
+    );
+    assert_eq!(
+        signatures(&resource_file(&plain, "members", "read.rs")?)[0],
+        "get_by_id(executor: E, key: MemberKey)"
+    );
+    // A table without the tenant column is generated as if no convention
+    // were configured.
+    assert_eq!(
+        tree(&plain.path().join("out").join("tags"))?,
+        tree(&tenant.path().join("out").join("tags"))?
+    );
+    assert!(!plain.path().join("out/session.rs").exists());
+    assert!(!tenant.path().join("out/session.rs").exists());
+    Ok(())
+}
+
+#[test]
+fn session_settings_generate_transaction_local_helpers() -> Result<()> {
+    let (dir, config) = project(
+        "[conventions]\ntenant_setting = \"app.organization_id\"\nuser_setting = \"app.user_id\"\n",
+    )?;
+
+    generate(&config)?;
+
+    let session = fs::read_to_string(dir.path().join("out/session.rs"))?;
+    assert_eq!(
+        signatures(&session),
+        [
+            "set_tenant(connection: &mut sqlx::PgConnection, id: impl std::fmt::Display)",
+            "set_user(connection: &mut sqlx::PgConnection, id: impl std::fmt::Display)",
+        ]
+    );
+    assert!(session.contains("SELECT set_config('app.organization_id', $1, true)"));
+    assert!(session.contains("SELECT set_config('app.user_id', $1, true)"));
+    let db_mod = fs::read_to_string(dir.path().join("out/mod.rs"))?;
+    assert!(db_mod.contains("pub mod session;\n"), "{db_mod}");
+
+    let (tenant_only, config) =
+        project("[conventions]\ntenant_setting = \"app.organization_id\"\n")?;
+    generate(&config)?;
+    let session = fs::read_to_string(tenant_only.path().join("out/session.rs"))?;
+    assert_eq!(
+        signatures(&session),
+        ["set_tenant(connection: &mut sqlx::PgConnection, id: impl std::fmt::Display)"]
     );
     Ok(())
 }

@@ -178,3 +178,39 @@ CREATE TABLE soft_notes (
     deleted_at TIMESTAMPTZ
 );
 CREATE UNIQUE INDEX soft_notes_code_unique_index ON soft_notes (code) WHERE deleted_at IS NULL;
+
+-- Tenant scoping: tests/fixture_compile.rs generates the fixture with
+-- `tenant_column = "tenant_id"`. `tenant_notes` also has the soft-delete and
+-- version columns, so every write path is scoped to the tenant.
+CREATE TABLE tenant_notes (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    code TEXT NOT NULL,
+    body TEXT NOT NULL,
+    revision BIGINT NOT NULL DEFAULT 1,
+    deleted_at TIMESTAMPTZ,
+    UNIQUE (tenant_id, code)
+);
+
+CREATE TRIGGER bump_revision BEFORE UPDATE ON tenant_notes
+    FOR EACH ROW EXECUTE FUNCTION bump_revision();
+
+-- The tenant column is part of the primary key, so the key is `code` alone.
+CREATE TABLE tenant_members (
+    tenant_id UUID NOT NULL,
+    code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, code)
+);
+
+-- Row-level security reading the tenant setting (`tenant_setting =
+-- "app.tenant_id"`), as the Rok ERP's `core.prepare_table` sets up. An unset
+-- (or reset, hence empty) setting matches no row.
+CREATE TABLE rls_notes (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    body TEXT NOT NULL
+);
+ALTER TABLE rls_notes ENABLE ROW LEVEL SECURITY;
+CREATE POLICY rls_notes_tenant ON rls_notes
+    USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);

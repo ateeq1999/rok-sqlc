@@ -9,7 +9,9 @@
 
 use crate::schema::{Column, Table};
 
-use super::sql::{column_clause, ident, key_predicate, live_condition, str_literal, table_ref};
+use super::sql::{
+    column_clause, ident, live_condition, scoped_key_predicate, str_literal, table_ref,
+};
 use super::{
     HEADER, StaticQuery, keys, push_and_chain, push_build_and_fetch, push_doc, push_fn_head,
     push_let_call, types_import, use_list,
@@ -32,17 +34,27 @@ pub fn render(table: &Table) -> String {
     imports.sort();
     // Key parameters use the key's type: an enum key column's type, never a
     // key struct's fields.
-    let types = if keys.is_empty() {
-        String::new()
-    } else {
-        types_import("super::super", [super::keys::key_type(table).as_str()])
-    };
+    let mut key_types: Vec<String> = table
+        .tenant()
+        .map(|tenant| tenant.value_type().to_owned())
+        .into_iter()
+        .collect();
+    if !table.key_columns().is_empty() {
+        key_types.push(super::keys::key_type(table));
+    }
+    let types = types_import("super::super", key_types.iter().map(String::as_str));
+    let key_columns = table.key_columns();
+    let ids = super::use_paths(&super::keys::id_imports(
+        table,
+        super::keys::param_columns(table),
+        true,
+    ));
     let outcome = if has_versioned_update(table) {
         "use super::super::UpdateOutcome;\n"
     } else {
         ""
     };
-    let mut output = format!("{HEADER}\n{outcome}{types}{}", use_models(&imports));
+    let mut output = format!("{HEADER}\n{outcome}{types}{ids}{}", use_models(&imports));
 
     if insert_columns.is_empty() {
         output.push_str(
@@ -69,14 +81,14 @@ pub fn render(table: &Table) -> String {
             Some(version) => {
                 render_versioned_update(&mut output, table, version, &keys, &update_columns);
             }
-            None => render_update(&mut output, table, &keys, &update_columns),
+            None => render_update(&mut output, table, &update_columns),
         }
     } else {
         output.push_str(
             "\n// No updatable columns detected; update is not generated for this table.\n",
         );
     }
-    render_delete(&mut output, table, &keys);
+    render_delete(&mut output, table, &key_columns);
 
     output
 }
@@ -97,19 +109,19 @@ fn push_create_head(output: &mut String, table: &Table, doc: &[&str]) {
     push_fn_head(
         output,
         "create",
-        &[format!("input: New{}", table.struct_name)],
+        &keys::scoped_params(table, &[format!("input: New{}", table.struct_name)]),
         &format!("Result<{}, sqlx::Error>", table.struct_name),
     );
 }
 
 fn render_static_create(output: &mut String, table: &Table, columns: &[&Column]) {
-    let names: Vec<String> = columns
-        .iter()
+    let names: Vec<String> = table
+        .tenant()
+        .into_iter()
+        .chain(columns.iter().copied())
         .map(|column| ident(&column.sql_name))
         .collect();
-    let placeholders: Vec<String> = (1..=columns.len())
-        .map(|index| format!("${index}"))
-        .collect();
+    let placeholders: Vec<String> = (1..=names.len()).map(|index| format!("${index}")).collect();
     let mut sql = vec![
         format!("INSERT INTO {} ({})", table_ref(table), names.join(", ")),
         format!("VALUES ({})", placeholders.join(", ")),
@@ -124,9 +136,13 @@ fn render_static_create(output: &mut String, table: &Table, columns: &[&Column])
     StaticQuery {
         call: &format!("sqlx::query_as::<_, {}>", table.struct_name),
         sql,
-        binds: columns
-            .iter()
-            .map(|column| format!("input.{}", column.rust_name))
+        binds: keys::tenant_bind(table)
+            .into_iter()
+            .chain(
+                columns
+                    .iter()
+                    .map(|column| format!("input.{}", column.rust_name)),
+            )
             .collect(),
         execute: "fetch_one(executor)",
     }
@@ -145,8 +161,9 @@ fn render_dynamic_create(output: &mut String, table: &Table, columns: &[&Column]
     );
 
     // When every insertable column is defaulted, an all-`None` input lists no
-    // columns at all, which only `DEFAULT VALUES` can express.
-    if columns.iter().all(|column| column.is_omittable_on_insert()) {
+    // columns at all, which only `DEFAULT VALUES` can express. A tenant table
+    // always lists its tenant column.
+    if table.tenant().is_none() && columns.iter().all(|column| column.is_omittable_on_insert()) {
         let terms: Vec<String> = columns
             .iter()
             .map(|column| format!("input.{}.is_none()", column.rust_name))
@@ -175,6 +192,12 @@ fn render_dynamic_create(output: &mut String, table: &Table, columns: &[&Column]
         &str_literal(&format!("INSERT INTO {} (", table_ref(table))),
     );
     output.push_str("    let mut columns = query.separated(\", \");\n");
+    if let Some(tenant) = table.tenant() {
+        output.push_str(&format!(
+            "    columns.push({});\n",
+            str_literal(&ident(&tenant.sql_name))
+        ));
+    }
     for column in columns {
         let name = str_literal(&ident(&column.sql_name));
         if column.is_omittable_on_insert() {
@@ -187,6 +210,9 @@ fn render_dynamic_create(output: &mut String, table: &Table, columns: &[&Column]
     }
     output.push_str("    query.push(\") VALUES (\");\n");
     output.push_str("    let mut values = query.separated(\", \");\n");
+    if let Some(tenant) = keys::tenant_bind(table) {
+        output.push_str(&format!("    values.push_bind({tenant});\n"));
+    }
     for column in columns {
         if column.is_omittable_on_insert() {
             output.push_str(&format!(
@@ -208,8 +234,8 @@ fn render_dynamic_create(output: &mut String, table: &Table, columns: &[&Column]
     output.push_str("}\n");
 }
 
-fn render_update(output: &mut String, table: &Table, key_columns: &[&Column], columns: &[&Column]) {
-    let mut params = vec![keys::key_param(table)];
+fn render_update(output: &mut String, table: &Table, columns: &[&Column]) {
+    let mut params = keys::key_params(table);
     params.push(format!("input: Update{}", table.struct_name));
 
     output.push('\n');
@@ -230,10 +256,7 @@ fn render_update(output: &mut String, table: &Table, key_columns: &[&Column], co
     );
 
     output.push_str("    if input.is_empty() {\n");
-    output.push_str(&format!(
-        "        return super::read::get_by_id(executor, {}).await;\n",
-        keys::key_binding(table)
-    ));
+    push_get_by_id(output, table, "return ", ";", None);
     output.push_str("    }\n\n");
 
     push_let_call(
@@ -244,7 +267,7 @@ fn render_update(output: &mut String, table: &Table, key_columns: &[&Column], co
         &str_literal(&format!("UPDATE {} SET ", table_ref(table))),
     );
     push_assignments(output, columns);
-    push_key_condition(output, table, key_columns);
+    push_key_condition(output, table);
     push_returning(output, table);
     push_build_and_fetch(output, table, "fetch_optional");
     output.push_str("}\n");
@@ -288,11 +311,11 @@ fn render_versioned_update(
     key_columns: &[&Column],
     columns: &[&Column],
 ) {
-    let params = vec![
-        keys::key_param(table),
+    let mut params = keys::key_params(table);
+    params.extend([
         format!("{VERSION_PARAM}: {}", version.field_type()),
         format!("input: Update{}", table.struct_name),
-    ];
+    ]);
 
     output.push('\n');
     let first = format!(
@@ -319,10 +342,7 @@ fn render_versioned_update(
     );
 
     output.push_str("    if input.is_empty() {\n");
-    output.push_str(&format!(
-        "        let Some(row) = super::read::get_by_id(executor, {}).await? else {{\n",
-        keys::key_binding(table)
-    ));
+    push_get_by_id(output, table, "let Some(row) = ", "?", Some(" else {"));
     output.push_str("            return Ok(UpdateOutcome::NotFound);\n");
     output.push_str("        };\n");
     output.push_str(&format!(
@@ -354,7 +374,7 @@ fn render_versioned_update(
         output,
         &format!("SELECT {} FROM {}", aliases.join(", "), table_ref(table)),
     );
-    push_key_condition(output, table, key_columns);
+    push_key_condition(output, table);
     push_query_push(
         output,
         &format!("), rok_sqlc_updated AS (UPDATE {} SET ", table_ref(table)),
@@ -402,6 +422,56 @@ fn render_versioned_update(
     output.push_str("}\n");
 }
 
+/// `{lead}super::read::get_by_id(executor, <key args>).await{trail}` at an
+/// indent of 8, with `else_open` (` else {`) after it for a `let`-`else`,
+/// laid out as rustfmt lays it out: on one line when it fits; for a `let`,
+/// with `else {` on its own line, then with the call moved below the `=`;
+/// otherwise with one argument per line.
+fn push_get_by_id(
+    output: &mut String,
+    table: &Table,
+    lead: &str,
+    trail: &str,
+    else_open: Option<&str>,
+) {
+    let mut args = vec!["executor".to_owned()];
+    args.extend(keys::key_args(table));
+    let call = format!("super::read::get_by_id({}).await{trail}", args.join(", "));
+    let else_open = else_open.unwrap_or("");
+    let fits = |line: &str| line.len() <= super::MAX_WIDTH;
+
+    let one_line = format!("        {lead}{call}{else_open}");
+    if fits(&one_line) {
+        output.push_str(&format!("{one_line}\n"));
+        return;
+    }
+    let else_line = if else_open.is_empty() {
+        String::new()
+    } else {
+        format!("        {}\n", else_open.trim_start())
+    };
+    if !else_open.is_empty() {
+        let head = format!("        {lead}{call}");
+        if fits(&head) {
+            output.push_str(&format!("{head}\n{else_line}"));
+            return;
+        }
+        let below = format!("            {call}");
+        if fits(&below) {
+            output.push_str(&format!(
+                "        {}\n{below}\n{else_line}",
+                lead.trim_end()
+            ));
+            return;
+        }
+    }
+    output.push_str(&format!("        {lead}super::read::get_by_id(\n"));
+    for arg in &args {
+        output.push_str(&format!("            {arg},\n"));
+    }
+    output.push_str(&format!("        )\n        .await{trail}\n{else_line}"));
+}
+
 /// One `if let Some(value)` assignment per patch field, in column order.
 fn push_assignments(output: &mut String, columns: &[&Column]) {
     output.push_str("    let mut assignments = query.separated(\", \");\n");
@@ -419,10 +489,13 @@ fn push_assignments(output: &mut String, columns: &[&Column]) {
     }
 }
 
-/// ` WHERE k1 = $n AND k2 = $m`, binding the key, then ` AND <col> IS NULL`
-/// on a table with a soft-delete column, so a deleted row counts as missing.
-fn push_key_condition(output: &mut String, table: &Table, key_columns: &[&Column]) {
-    for (index, (column, bind)) in key_columns.iter().zip(keys::key_binds(table)).enumerate() {
+/// ` WHERE t = $n AND k1 = $m ...`, binding the tenant (on a tenant table)
+/// and the key, then ` AND <col> IS NULL` on a table with a soft-delete
+/// column, so a deleted row counts as missing.
+fn push_key_condition(output: &mut String, table: &Table) {
+    let columns = table.tenant().into_iter().chain(table.key_columns());
+    let binds = keys::scoped_key_binds(table);
+    for (index, (column, bind)) in columns.zip(binds).enumerate() {
         let connective = if index == 0 { " WHERE" } else { " AND" };
         push_query_push(
             output,
@@ -461,7 +534,7 @@ fn render_delete(output: &mut String, table: &Table, key_columns: &[&Column]) {
             &["Deletes the row with the given primary key and returns whether one existed."],
             vec![
                 format!("DELETE FROM {}", table_ref(table)),
-                format!("WHERE {}", key_predicate(key_columns, 1)),
+                format!("WHERE {}", scoped_key_predicate(table, key_columns)),
             ],
         );
         return;
@@ -473,7 +546,7 @@ fn render_delete(output: &mut String, table: &Table, key_columns: &[&Column]) {
             format!("SET {column} = {value}"),
             format!(
                 "WHERE {} AND {column} {condition}",
-                key_predicate(key_columns, 1)
+                scoped_key_predicate(table, key_columns)
             ),
         ]
     };
@@ -511,7 +584,7 @@ fn render_delete(output: &mut String, table: &Table, key_columns: &[&Column]) {
         ],
         vec![
             format!("DELETE FROM {}", table_ref(table)),
-            format!("WHERE {}", key_predicate(key_columns, 1)),
+            format!("WHERE {}", scoped_key_predicate(table, key_columns)),
         ],
     );
 }
@@ -530,13 +603,13 @@ fn render_key_statement(
     push_fn_head(
         output,
         name,
-        &[keys::key_param(table)],
+        &keys::key_params(table),
         "Result<bool, sqlx::Error>",
     );
     StaticQuery {
         call: "sqlx::query",
         sql,
-        binds: keys::key_binds(table),
+        binds: keys::scoped_key_binds(table),
         execute: "execute(executor)",
     }
     .push(output, 4, "let result = ", "?;");
