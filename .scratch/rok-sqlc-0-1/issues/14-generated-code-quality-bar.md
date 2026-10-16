@@ -7,7 +7,7 @@
 
 Record the generated-code quality bar, with typed ids, as ADR 0013.
 
-**Blocked by:** 13, 04
+**Blocked by:** 13, 04, 27
 
 **Status:** ready-for-agent
 

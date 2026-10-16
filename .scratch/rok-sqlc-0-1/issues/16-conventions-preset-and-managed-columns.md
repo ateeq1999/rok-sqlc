@@ -2,7 +2,7 @@
 
 **What to build:** A `[conventions]` section (config file and JSON payload) with `preset`, `tenant_column`, `tenant_setting`, `user_setting`, `soft_delete_column`, `managed_columns`, and `version_column`, all off by default. `preset = "rok"` sets the Rok values: `organization_id`, `app.organization_id`, `app.user_id`, `deleted_at`, `["updated_at", "row_version"]`, and `row_version`. Explicit keys override the preset, and an unknown preset is an error. This ticket implements **managed columns**: they are dropped from create inputs and update patches but stay in rows. The other conventions are parsed and validated here and implemented by tickets 17–19. Record the conventions design as ADR 0010.
 
-**Blocked by:** 04, 13
+**Blocked by:** 04, 13, 27
 
 **Status:** ready-for-agent
 

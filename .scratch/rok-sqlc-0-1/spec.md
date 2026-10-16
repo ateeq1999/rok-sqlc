@@ -15,7 +15,7 @@ A developer who keeps a PostgreSQL schema as migration files wants to write SQL 
 
 ## Solution
 
-rok-sqlc 0.1 is a public crate (`cargo install rok-sqlc`) that turns a project's **migrations** and **query files** into SQLx 0.8 Rust code. It is general-purpose, and the Rok ERP's conventions ship as an opt-in **preset**.
+rok-sqlc 0.1 is a public crate (`cargo install rok-sqlc`) that turns a project's **migrations** and **query files** into SQLx 0.9 Rust code. It is general-purpose, and the Rok ERP's conventions ship as an opt-in **preset**.
 
 - **Inputs and configuration.** Migrations and query files can be given as files or directories, and each flag can be repeated. Options can come from flags, a JSON payload, or an optional `rok-sqlc.toml`. Every command and flag has a short alias. Errors cite `path:line`. Generation removes **stale files**, and a check mode reports **drift** for CI. Build scripts use one stable library entry point.
 - **Schema understanding.** Shape-changing `ALTER TABLE`/`ALTER TYPE` statements are applied, harmless statements are ignored on purpose, and anything else that targets a known table fails. Enumerated types and **value-list columns** become Rust enums. **Unique keys** get lookups, and `ON CONFLICT` targets are checked against them.
@@ -171,7 +171,7 @@ rok-sqlc 0.1 is a public crate (`cargo install rok-sqlc`) that turns a project's
 - Aliases: `generate`→`g`, `--schema`→`-s`, `--output`→`-o`, `--resource`→`-r`, `--queries`→`-q`, `--json`→`-j`, `--config`→`-c`, `--check`→`-k`, `--dry-run`→`-n`, `--force`→`-f`, `--lenient`→`-l`, `--help`→`-h`, `--version`→`-V`. New commands and flags must add an unused alias.
 - Stale files: after a successful run, files under the output directory that carry the generated header but are not in the plan are removed. `--check` computes missing, changed, and stale files, writes nothing, and exits 1 on any drift.
 - Library: one stable `generate(&Config) -> Result<Report>` entry point (and the config types it takes). Everything else is hidden or crate-private.
-- Generated code targets SQLx 0.8 only. The tool declares `rust-version = "1.88"`, and generated code's lower floor is documented separately.
+- Generated code targets SQLx 0.9 only. The tool declares `rust-version = "1.88"`; generated code's lower floor is Rust 1.94 (SQLx 0.9's MSRV) and is documented separately.
 
 ### Schema understanding
 
@@ -249,7 +249,7 @@ rok-sqlc 0.1 is a public crate (`cargo install rok-sqlc`) that turns a project's
 - Nested writes (creating a row together with its children).
 - Machine-readable output (`--format json`).
 - Prebuilt binaries (cargo-dist).
-- SQLx versions other than 0.8; a user-facing module-directory input layout (module fixtures stay test-only); databases other than PostgreSQL.
+- SQLx versions other than 0.9; a user-facing module-directory input layout (module fixtures stay test-only); databases other than PostgreSQL.
 - JSONB operators in typed filters.
 
 ## Further Notes

@@ -2,7 +2,7 @@
 
 **What to build:** The current README (a design walkthrough for building the tool) moves to `docs/design.md`, with a note that it is historical background. A new user-facing README follows the agreed outline:
 1. Pitch, with a short "SQL in, Rust out" example.
-2. Install: `cargo install`, the minimum Rust version, and the SQLx 0.8 dependencies to add.
+2. Install: `cargo install`, the minimum Rust version, and the SQLx 0.9 dependencies to add (and the Rust 1.94 floor for generated code).
 3. Quickstart: a migrations folder and a query file, then `rok-sqlc g`, then calling generated code with a pool and with `&mut *tx`.
 4. What gets generated, per table and shared.
 5. Writing query files: annotations, return modes, overrides, and what is inferred.
