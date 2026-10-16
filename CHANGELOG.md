@@ -139,6 +139,21 @@ against earlier development snapshots.
   a list per key (empty when nothing relates) for to-many. Loaders on a
   tenant table take the tenant and skip soft-deleted rows. Two relationships
   of a table with the same name fail generation, naming both.
+- Many-to-many relationships through join tables: a table whose two
+  non-tenant `NOT NULL` foreign keys, to two other different tables, form a
+  unique key (payload columns allowed) relates those tables many-to-many,
+  named after the far table (`permissions`, or
+  `permissions_through_role_permissions` when the name is taken or several
+  join tables lead there). Its `load_<name>` loader goes through the join
+  table in one query and respects both tables' tenant and soft-delete
+  columns. The join table's `write.rs` gains `attach` (idempotent, returns
+  whether the pair is new), `detach`, and `sync(near, &[far])`, which
+  replaces the set in one statement, so it is atomic in the caller's
+  transaction. On a soft-delete join table `detach` soft-deletes and
+  `attach`/`sync` restore the soft-deleted row instead of inserting another.
+  `attach` and `sync` are left out when another column needs a value. A
+  table with two foreign keys but no unique pair (like `user_roles`) is not a
+  join table.
 - `-k/--check` reports drift without writing and exits 1 when generated
   files are missing, changed, or stale. Successful runs remove stale
   generated files.

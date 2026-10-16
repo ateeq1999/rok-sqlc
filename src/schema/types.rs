@@ -114,6 +114,22 @@ pub struct Relationship {
     pub column: String,
     /// The column of the related table's rows equal to `column` (SQL name).
     pub target_column: String,
+    /// The join table a many-to-many relationship goes through; `None` for
+    /// every other kind.
+    pub through: Option<Through>,
+}
+
+/// The join table of a many-to-many [`Relationship`]: each of its rows pairs
+/// a row of the relationship's table with a row of the related table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Through {
+    /// The join table's module name.
+    pub table: String,
+    /// The join table's column equal to the relationship's `column` (SQL name).
+    pub column: String,
+    /// The join table's column equal to the relationship's `target_column`
+    /// (SQL name).
+    pub target_column: String,
 }
 
 /// Which way a [`Relationship`] runs, and how many rows it reaches.
@@ -126,12 +142,18 @@ pub enum RelationshipKind {
     /// The related table holds the foreign key, and that column alone is a
     /// unique key there; at most one related row.
     HasOne,
+    /// A join table pairs this table's rows with the related table's rows
+    /// (see [`Relationship::through`]); any number of related rows.
+    ManyToMany,
 }
 
 impl RelationshipKind {
     /// Whether one row relates to any number of rows.
     pub fn is_to_many(self) -> bool {
-        self == RelationshipKind::HasMany
+        matches!(
+            self,
+            RelationshipKind::HasMany | RelationshipKind::ManyToMany
+        )
     }
 }
 

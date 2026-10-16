@@ -26,7 +26,7 @@ Many-to-many through join tables, renaming, and opt-out build on this model (tic
 The result is recorded **on the schema model**, like conventions: `Table::relationships` is a list of `Relationship { name, kind, target, column, target_column }`, belongs-to first in foreign-key order, then the inverses in table order. `kind` is `BelongsTo`, `HasMany`, or `HasOne`; `target` is the related table's module name (unique in a run); `column` is the joining column on this table's rows (the foreign key for a belongs-to, the referenced column for an inverse) and `target_column` its partner on the related table. Renderers read this list and look the target up among the run's tables; none of them re-derive relationships from foreign keys. Later tickets plug in here:
 
 - **Rename and opt-out** (ticket 24) edit the list between inference and the collision check: a rename changes `name`, an opt-out removes both sides of the foreign key's pair.
-- **Many-to-many** (ticket 23) adds a kind whose target is the far table, recording the join table alongside.
+- **Many-to-many** (ticket 23) adds the kind `ManyToMany`, whose target is the far table, with the join table in `through: Some(Through { table, column, target_column })` (`None` for every other kind); see below.
 - **Joined reads** (ticket 21) and **relationship filters** (ticket 22) iterate the to-one (resp. all) relationships of a table.
 
 ## `with`: loaders
@@ -47,6 +47,26 @@ pub async fn load_comments<'e, E>(executor: E, tenant_id: TenantId, rows: &[Post
 - Like every generated function, it is generic over `PgExecutor` and runs one statement (ADR 0006).
 
 Loaders return maps rather than attaching related rows to the caller's structs: generated rows stay plain `FromRow` structs, a caller loads only what a view needs, and composing two loaders is two lookups. "Nested" loading is loading the next relationship for the rows a loader returned.
+
+## Many-to-many through join tables (ticket 23)
+
+A **join table** is a table with a unique key (its primary key first, then its unique constraints and indexes, a partial one only over live rows) whose columns, leaving out the tenant column, are exactly two `NOT NULL` foreign keys that are belongs-to relationships to two **different** tables, neither of them the join table itself. Other columns, other foreign keys among them, are payload. `core.role_permissions` (`unique (role_id, permission_key)`) is one; `core.user_roles` is not, because its only unique index is over an expression. Its two foreign keys keep their belongs-to and has-many relationships, and each of the two tables also gains a **many-to-many** to the other, named after that table's module (`permissions` on `roles`, `roles` on `permissions`). When the table already has a relationship of that name, or several join tables lead to the same table, the name adds the join table (`permissions_through_role_permissions`), so a schema that generated before keeps generating.
+
+The loader is a to-many loader: a map from each input row's key to a list of related rows, ordered by the related table's primary key. Its one query joins the join table to the related table and returns each related row with the key it was loaded for (`rok_sqlc_owner`), since one related row can be paired with several input rows. The related table's tenant and soft-delete conditions go in the `JOIN … ON` clause and the join table's in `WHERE`, both bound to the one tenant parameter, which the loader takes when either table has a tenant column.
+
+The join table's `write.rs` also gets, for the key's first foreign key (`near`) and its second (`far`):
+
+- `attach(near, far) -> bool`: inserts the pair with `ON CONFLICT (<key>) DO NOTHING`, so a second call changes nothing and returns `false`.
+- `detach(near, far) -> bool`: deletes the pair.
+- `sync(near, &[far])`: replaces `near`'s set in one statement (ADR 0006), so it is atomic inside the caller's transaction or on its own. An empty slice removes every pair.
+
+On a **soft-delete join table**, `detach` sets the soft-delete column, and `attach` and `sync` first restore a soft-deleted row of the pair (chosen by `ctid`, the most recently deleted one, only when no live row exists) and insert only when there is none, so history rows are not duplicated and a full unique key over the pair never conflicts. Every statement is scoped to the tenant. `attach` and `sync` insert only the pair and the tenant, so they are not generated when another column has neither a default nor `NULL` to fall back on; `detach` always is.
+
+Considered for many-to-many:
+
+- **Recognising a join table by having exactly two foreign keys.** Rejected: `user_roles`-style tables with two foreign keys and no unique pair hold duplicates, and `sync` could not tell which row to keep; the unique key is what makes the pair a set.
+- **`sync` as a `DELETE` followed by `INSERT`s.** Rejected: the generic executor runs one statement (ADR 0006); CTEs do it in one.
+- **`ON CONFLICT … DO UPDATE SET deleted_at = NULL` for restoring.** Rejected: it works only when the unique key covers deleted rows; a partial unique index over live rows never conflicts with a deleted row, so restoring has to find the row itself.
 
 ## `join`: joined reads (ticket 21)
 

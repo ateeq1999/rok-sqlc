@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use heck::ToSnakeCase;
 
 use crate::parser::naming::rust_identifier;
-use crate::schema::{Column, Relationship, RelationshipKind, Table};
+use crate::schema::{Column, Relationship, RelationshipKind, Table, Through};
 
 use super::sql::{column_clause, ident, key_order, live_condition, table_ref};
 use super::{HEADER, StaticQuery, doc_name, keys, push_doc, push_fn_head, types_import, use_list};
@@ -49,6 +49,7 @@ pub fn infer(tables: &mut [Table]) -> Result<(), String> {
             target: tables[edge.parent].module_name.clone(),
             column: edge.column.clone(),
             target_column: edge.parent_column.clone(),
+            through: None,
         });
     }
     for edge in &edges {
@@ -64,10 +65,15 @@ pub fn infer(tables: &mut [Table]) -> Result<(), String> {
             target: child.module_name.clone(),
             column: edge.parent_column.clone(),
             target_column: edge.column.clone(),
+            through: None,
         });
     }
     for (table, relationships) in tables.iter_mut().zip(inferred) {
         table.relationships = relationships;
+    }
+    let many_to_many = many_to_many(tables);
+    for (table, relationships) in tables.iter_mut().zip(many_to_many) {
+        table.relationships.extend(relationships);
     }
     for table in tables.iter() {
         check_names(table)?;
@@ -181,6 +187,134 @@ fn inverse_name(edge: &Edge, edges: &[Edge], child: &Table, kind: RelationshipKi
     }
 }
 
+/// A join table's two foreign keys (ticket 23): together, apart from the
+/// tenant column, they form a unique key, and each is a belongs-to to a
+/// different table, neither of them the join table itself. Both columns are
+/// `NOT NULL`, so every row pairs two rows.
+pub struct JoinPair<'a> {
+    /// The unique key's first non-tenant column, and its belongs-to.
+    pub near: &'a Column,
+    pub near_relationship: &'a Relationship,
+    /// The unique key's second non-tenant column, and its belongs-to.
+    pub far: &'a Column,
+    pub far_relationship: &'a Relationship,
+    /// The unique key's columns as declared, the tenant column included when
+    /// the key has it: the conflict target of an insert.
+    pub key: &'a [String],
+    /// Whether the key is a unique index over live rows only
+    /// (`WHERE <soft-delete column> IS NULL`).
+    pub partial: bool,
+}
+
+/// The join pair of `table` when it is a join table, read from its
+/// belongs-to relationships: the first unique key (primary key first) whose
+/// columns, leaving out the tenant column, are two such foreign keys.
+pub fn join_pair(table: &Table) -> Option<JoinPair<'_>> {
+    let soft_delete = table.soft_delete_column.as_deref();
+    let primary = (!table.primary_key.is_empty()).then_some((&table.primary_key, false));
+    let declared = table
+        .unique_keys
+        .iter()
+        .filter(|key| key.counts(soft_delete))
+        .map(|key| (&key.columns, key.predicate.is_some()));
+    primary
+        .into_iter()
+        .chain(declared)
+        .find_map(|(key, partial)| {
+            let pair: Vec<&String> = key
+                .iter()
+                .filter(|name| table.tenant_column.as_deref() != Some(name.as_str()))
+                .collect();
+            let [near, far] = pair.as_slice() else {
+                return None;
+            };
+            let near_relationship = belongs_to(table, near)?;
+            let far_relationship = belongs_to(table, far)?;
+            let targets = [&near_relationship.target, &far_relationship.target];
+            if targets[0] == targets[1] || targets.contains(&&table.module_name) {
+                return None;
+            }
+            let near = find_column(table, near).filter(|column| !column.nullable)?;
+            let far = find_column(table, far).filter(|column| !column.nullable)?;
+            Some(JoinPair {
+                near,
+                near_relationship,
+                far,
+                far_relationship,
+                key,
+                partial,
+            })
+        })
+}
+
+fn belongs_to<'a>(table: &'a Table, column: &str) -> Option<&'a Relationship> {
+    table.relationships.iter().find(|relationship| {
+        relationship.kind == RelationshipKind::BelongsTo && relationship.column == column
+    })
+}
+
+/// The many-to-many relationships each table gains from the join tables
+/// among `tables`, whose belongs-to relationships are already inferred. Each
+/// is named after the related table's module (`permissions`), or adds the
+/// join table (`permissions_through_role_permissions`) when the table
+/// already has a relationship of that name or several join tables lead to
+/// the same table.
+fn many_to_many(tables: &[Table]) -> Vec<Vec<Relationship>> {
+    let mut gained: Vec<Vec<Relationship>> = vec![Vec::new(); tables.len()];
+    for join in tables {
+        let Some(pair) = join_pair(join) else {
+            continue;
+        };
+        let sides = [
+            (pair.near_relationship, pair.far_relationship),
+            (pair.far_relationship, pair.near_relationship),
+        ];
+        for (from, to) in sides {
+            let index = tables
+                .iter()
+                .position(|table| table.module_name == from.target)
+                .expect("a belongs-to's target is generated with it");
+            gained[index].push(Relationship {
+                name: to.target.clone(),
+                kind: RelationshipKind::ManyToMany,
+                target: to.target.clone(),
+                column: from.target_column.clone(),
+                target_column: to.target_column.clone(),
+                through: Some(Through {
+                    table: join.module_name.clone(),
+                    column: from.column.clone(),
+                    target_column: to.column.clone(),
+                }),
+            });
+        }
+    }
+    for (table, relationships) in tables.iter().zip(&mut gained) {
+        let names: Vec<String> = relationships
+            .iter()
+            .map(|relationship| {
+                let parallel = relationships
+                    .iter()
+                    .filter(|other| other.target == relationship.target)
+                    .count();
+                let taken = table
+                    .relationships
+                    .iter()
+                    .any(|other| other.name == relationship.target);
+                if parallel > 1 || taken {
+                    let through = relationship.through.as_ref().expect("a join table");
+                    format!("{}_through_{}", relationship.target, through.table)
+                } else {
+                    relationship.target.clone()
+                }
+            })
+            .collect();
+        for (relationship, name) in relationships.iter_mut().zip(names) {
+            relationship.name = name;
+        }
+    }
+    gained
+}
+
 fn check_names(table: &Table) -> Result<(), String> {
     let mut seen: BTreeMap<&str, &Relationship> = BTreeMap::new();
     for relationship in &table.relationships {
@@ -213,6 +347,14 @@ fn describe(table: &Table, relationship: &Relationship) -> String {
             relationship.target,
             relationship.target,
             relationship.target_column
+        ),
+        RelationshipKind::ManyToMany => format!(
+            "many-to-many `{}` through `{}`",
+            relationship.target,
+            relationship
+                .through
+                .as_ref()
+                .map_or("", |through| through.table.as_str())
         ),
     }
 }
@@ -249,14 +391,44 @@ struct Loader<'a> {
     column: &'a Column,
     /// The joining column on `target`'s rows.
     target_column: &'a Column,
+    /// A many-to-many relationship's join table.
+    join: Option<Join<'a>>,
+}
+
+/// The join table a many-to-many loader goes through.
+struct Join<'a> {
+    table: &'a Table,
+    /// The join table's column equal to the loader's `column`.
+    column: &'a Column,
+    /// The join table's column equal to the loader's `target_column`.
+    target_column: &'a Column,
+}
+
+/// The aliases a many-to-many loader's query gives its two tables and the
+/// column naming the row each related row was loaded for.
+const JOIN_ALIAS: &str = "rok_sqlc_join";
+const TARGET_ALIAS: &str = "rok_sqlc_target";
+const OWNER_ALIAS: &str = "rok_sqlc_owner";
+
+fn module_table<'a>(tables: &'a [Table], module: &str) -> &'a Table {
+    tables
+        .iter()
+        .find(|other| other.module_name == module)
+        .expect("a relationship's tables are generated with it")
 }
 
 impl<'a> Loader<'a> {
     fn new(table: &'a Table, tables: &'a [Table], relationship: &'a Relationship) -> Self {
-        let target = tables
-            .iter()
-            .find(|other| other.module_name == relationship.target)
-            .expect("a relationship's target is generated with it");
+        let target = module_table(tables, &relationship.target);
+        let join = relationship.through.as_ref().map(|through| {
+            let join = module_table(tables, &through.table);
+            Join {
+                table: join,
+                column: find_column(join, &through.column).expect("the join column exists"),
+                target_column: find_column(join, &through.target_column)
+                    .expect("the join column exists"),
+            }
+        });
         Self {
             table,
             relationship,
@@ -264,6 +436,7 @@ impl<'a> Loader<'a> {
             column: find_column(table, &relationship.column).expect("the joining column exists"),
             target_column: find_column(target, &relationship.target_column)
                 .expect("the related joining column exists"),
+            join,
         }
     }
 
@@ -271,7 +444,20 @@ impl<'a> Loader<'a> {
     fn key_column(&self) -> &'a Column {
         match self.relationship.kind {
             RelationshipKind::BelongsTo => self.target_column,
-            RelationshipKind::HasMany | RelationshipKind::HasOne => self.column,
+            RelationshipKind::HasMany | RelationshipKind::HasOne | RelationshipKind::ManyToMany => {
+                self.column
+            }
+        }
+    }
+
+    /// The table whose tenant column the loader takes the tenant for: the
+    /// related table, or a many-to-many's join table when only it has one.
+    fn tenant_table(&self) -> &'a Table {
+        match &self.join {
+            Some(join) if self.target.tenant().is_none() && join.table.tenant().is_some() => {
+                join.table
+            }
+            _ => self.target,
         }
     }
 
@@ -316,7 +502,7 @@ impl<'a> Loader<'a> {
         let doc = self.doc();
         let doc: Vec<&str> = doc.iter().map(String::as_str).collect();
         push_doc(output, 0, &doc);
-        let mut params = keys::tenant_params(target);
+        let mut params = keys::tenant_params(self.tenant_table());
         params.push(format!("rows: &[{}]", self.table.struct_name));
         push_fn_head(
             output,
@@ -327,7 +513,9 @@ impl<'a> Loader<'a> {
                 self.key_type()
             ),
         );
-        if self.relationship.kind.is_to_many() {
+        if let Some(join) = &self.join {
+            self.render_many_to_many(join, output);
+        } else if self.relationship.kind.is_to_many() {
             self.render_to_many(output);
         } else {
             self.render_to_one(output);
@@ -354,14 +542,132 @@ impl<'a> Loader<'a> {
                 format!("{target_column} references it, keyed by {column}, in one query."),
                 "Every row's key has an entry, empty when no row references it.".to_owned(),
             ],
+            RelationshipKind::ManyToMany => {
+                let through = self
+                    .join
+                    .as_ref()
+                    .map_or(String::new(), |join| doc_name(&join.table.display_name()));
+                vec![
+                    format!("Loads the {name} of each of `rows`: the {target} rows a"),
+                    format!("{through} row pairs it with, keyed by {column}, in one query."),
+                    "Every row's key has an entry, empty when no row is paired with it.".to_owned(),
+                ]
+            }
         };
-        if self.target.tenant().is_some() {
+        let tables: Vec<&Table> = std::iter::once(self.target)
+            .chain(self.join.as_ref().map(|join| join.table))
+            .collect();
+        if tables.iter().any(|table| table.tenant().is_some()) {
             lines.push("Only the given tenant's rows are loaded.".to_owned());
         }
-        if self.target.soft_delete_column.is_some() {
+        if tables
+            .iter()
+            .any(|table| table.soft_delete_column.is_some())
+        {
             lines.push("Soft-deleted rows are left out.".to_owned());
         }
         lines
+    }
+
+    /// The query loading the related rows paired, through the join table,
+    /// with a row whose joining column is among `keys`, bound after the
+    /// tenant. Each row also carries that key as `rok_sqlc_owner`. The
+    /// related table's tenant and soft-delete conditions go in the `JOIN`'s
+    /// `ON` clause, the join table's in `WHERE`.
+    fn many_to_many_query(&self, join: &Join<'_>, output: &mut String) {
+        let target = self.target;
+        let tenant = keys::tenant_bind(self.tenant_table());
+        let placeholder = 1 + usize::from(tenant.is_some());
+        let qualified = |alias: &str, column: &str| format!("{alias}.{}", ident(column));
+        let scope = |alias: &str, table: &Table| -> Vec<String> {
+            table
+                .tenant()
+                .map(|tenant| format!("{} = $1", qualified(alias, &tenant.sql_name)))
+                .into_iter()
+                .chain(
+                    table
+                        .soft_delete_column
+                        .as_deref()
+                        .map(|column| format!("{} IS NULL", qualified(alias, column))),
+                )
+                .collect()
+        };
+
+        let mut on = vec![format!(
+            "{} = {}",
+            qualified(TARGET_ALIAS, &self.target_column.sql_name),
+            qualified(JOIN_ALIAS, &join.target_column.sql_name)
+        )];
+        on.extend(scope(TARGET_ALIAS, target));
+        let mut conditions = scope(JOIN_ALIAS, join.table);
+        let owner = qualified(JOIN_ALIAS, &join.column.sql_name);
+        conditions.insert(
+            usize::from(join.table.tenant().is_some()),
+            format!("{owner} = ANY(${placeholder})"),
+        );
+
+        let mut sql = vec![
+            "SELECT".to_owned(),
+            format!("    {owner} AS {OWNER_ALIAS},"),
+        ];
+        let columns = &target.columns;
+        for (index, column) in columns.iter().enumerate() {
+            let separator = if index + 1 < columns.len() { "," } else { "" };
+            sql.push(format!(
+                "    {}{separator}",
+                qualified(TARGET_ALIAS, &column.sql_name)
+            ));
+        }
+        sql.push(format!("FROM {} AS {JOIN_ALIAS}", table_ref(join.table)));
+        sql.push(format!("JOIN {} AS {TARGET_ALIAS}", table_ref(target)));
+        sql.push(format!("    ON {}", on.join(" AND ")));
+        sql.push(format!("WHERE {}", conditions.join(" AND ")));
+        let order: Vec<String> = target
+            .primary_key_columns()
+            .iter()
+            .map(|column| qualified(TARGET_ALIAS, &column.sql_name))
+            .collect();
+        if !order.is_empty() {
+            sql.push(format!("ORDER BY {}", order.join(", ")));
+        }
+        StaticQuery {
+            call: "sqlx::query",
+            sql,
+            binds: tenant.into_iter().chain(["keys".to_owned()]).collect(),
+            execute: "fetch_all(executor)",
+        }
+        .push(output, 4, "let related = ", "?;");
+    }
+
+    /// A many-to-many loader's body: like a has-many's, but each loaded row
+    /// says which key it was loaded for (`rok_sqlc_owner`), since one related
+    /// row can be paired with several of `rows`.
+    fn render_many_to_many(&self, join: &Join<'_>, output: &mut String) {
+        self.push_key_map(output);
+        self.many_to_many_query(join, output);
+        output.push_str("    for row in related {\n");
+        output.push_str(&format!(
+            "        let owner: {} = sqlx::Row::try_get(&row, \"{OWNER_ALIAS}\")?;\n",
+            join.column.value_type()
+        ));
+        let owner = self.convert(join.column, "owner".to_owned());
+        output.push_str(&format!(
+            "        if let Some(list) = loaded.get_mut(&{owner}) {{\n            list.push(sqlx::FromRow::from_row(&row)?);\n        }}\n"
+        ));
+        output.push_str("    }\n    Ok(loaded)\n");
+    }
+
+    /// `loaded`, with an empty list for every row's key, and `keys`; returns
+    /// the empty map when there are no keys.
+    fn push_key_map(&self, output: &mut String) {
+        output.push_str(
+            "    let mut loaded = HashMap::new();\n    let mut keys = Vec::new();\n    for row in rows {\n",
+        );
+        let key = self.owned_key(output, self.column, false);
+        output.push_str(&format!(
+            "        loaded.insert({key}, Vec::new());\n        keys.push({key});\n"
+        ));
+        output.push_str("    }\n    if keys.is_empty() {\n        return Ok(loaded);\n    }\n");
     }
 
     /// The query loading the related rows whose joining column is among
@@ -412,14 +718,7 @@ impl<'a> Loader<'a> {
     }
 
     fn render_to_many(&self, output: &mut String) {
-        output.push_str(
-            "    let mut loaded = HashMap::new();\n    let mut keys = Vec::new();\n    for row in rows {\n",
-        );
-        let key = self.owned_key(output, self.column, false);
-        output.push_str(&format!(
-            "        loaded.insert({key}, Vec::new());\n        keys.push({key});\n"
-        ));
-        output.push_str("    }\n    if keys.is_empty() {\n        return Ok(loaded);\n    }\n");
+        self.push_key_map(output);
         self.query("let related = ", output);
         output.push_str("    for row in related {\n");
         let column = self.target_column;
@@ -501,8 +800,12 @@ fn imports(table: &Table, loaders: &[Loader<'_>]) -> String {
     let mut value_types = Vec::new();
     for loader in loaders {
         add(&loader.target.module_name, &loader.target.struct_name);
-        let tenant = loader.target.tenant();
-        for column in [Some(loader.key_column()), tenant].into_iter().flatten() {
+        let tenant = loader.tenant_table().tenant();
+        let owner = loader.join.as_ref().map(|join| join.column);
+        for column in [Some(loader.key_column()), tenant, owner]
+            .into_iter()
+            .flatten()
+        {
             if let Some(id) = &column.typed_id {
                 add(&id.module, &id.name);
             }

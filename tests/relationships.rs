@@ -106,3 +106,68 @@ CREATE TABLE profiles (
     assert!(!dir.path().join("out").exists());
     Ok(())
 }
+
+fn writes(dir: &Path, module: &str) -> String {
+    fs::read_to_string(dir.join("out").join(module).join("write.rs")).unwrap()
+}
+
+const ACCESS_SCHEMA: &str = "CREATE TABLE organizations (id UUID PRIMARY KEY);
+CREATE TABLE users (id BIGINT PRIMARY KEY);
+CREATE TABLE roles (id BIGINT PRIMARY KEY, organization_id UUID NOT NULL REFERENCES organizations (id));
+CREATE TABLE permissions (key TEXT PRIMARY KEY);
+CREATE TABLE role_permissions (
+    id BIGSERIAL PRIMARY KEY,
+    organization_id UUID NOT NULL REFERENCES organizations (id),
+    role_id BIGINT NOT NULL REFERENCES roles (id),
+    permission_key TEXT NOT NULL REFERENCES permissions (key),
+    limits TEXT,
+    UNIQUE (organization_id, role_id, permission_key)
+);
+CREATE TABLE user_roles (
+    id BIGINT PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users (id),
+    role_id BIGINT NOT NULL REFERENCES roles (id)
+);
+";
+
+#[test]
+fn a_join_table_relates_its_two_tables_many_to_many() -> Result<()> {
+    let (dir, result) = generate(
+        ACCESS_SCHEMA,
+        "[conventions]\ntenant_column = \"organization_id\"\n",
+    );
+    result?;
+    let roles = loaders(dir.path(), "roles").expect("roles has relationships");
+    assert!(roles.contains("pub async fn load_permissions<"), "{roles}");
+    assert!(
+        roles.contains("pub async fn load_role_permissions<"),
+        "{roles}"
+    );
+    let permissions = loaders(dir.path(), "permissions").expect("the other side");
+    assert!(
+        permissions.contains("pub async fn load_roles<"),
+        "{permissions}"
+    );
+
+    let join = writes(dir.path(), "role_permissions");
+    for function in ["attach", "detach", "sync"] {
+        assert!(
+            join.contains(&format!("pub async fn {function}<")),
+            "{function}: {join}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn two_foreign_keys_without_a_unique_pair_are_not_a_join_table() -> Result<()> {
+    let (dir, result) = generate(ACCESS_SCHEMA, "");
+    result?;
+    let users = loaders(dir.path(), "users").expect("users has user_roles");
+    assert!(!users.contains("pub async fn load_roles<"), "{users}");
+    let roles = loaders(dir.path(), "roles").expect("roles has relationships");
+    assert!(!roles.contains("pub async fn load_users<"), "{roles}");
+    let user_roles = writes(dir.path(), "user_roles");
+    assert!(!user_roles.contains("pub async fn attach<"), "{user_roles}");
+    Ok(())
+}

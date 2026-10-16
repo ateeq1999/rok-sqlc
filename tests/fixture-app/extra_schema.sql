@@ -279,3 +279,40 @@ CREATE TABLE org_units (
     parent_id BIGINT REFERENCES org_units (id),
     name TEXT NOT NULL
 );
+
+-- Many-to-many (ticket 23). `role_permissions` is a join table: its two
+-- foreign keys and the tenant form a unique key, so `roles` and `permissions`
+-- relate many-to-many through it. It carries a payload column (`granted_at`)
+-- and a soft-delete column, so `detach` soft-deletes and `attach` restores.
+CREATE TABLE roles (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants (id),
+    name TEXT NOT NULL
+);
+
+CREATE TABLE permissions (
+    code TEXT PRIMARY KEY,
+    description TEXT NOT NULL
+);
+
+CREATE TABLE role_permissions (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants (id),
+    role_id BIGINT NOT NULL REFERENCES roles (id),
+    permission_code TEXT NOT NULL REFERENCES permissions (code),
+    granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ,
+    UNIQUE (tenant_id, role_id, permission_code)
+);
+
+-- A plain join table keyed by its pair: `detach` and `sync` delete rows.
+CREATE TABLE member_groups (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE group_members (
+    group_id BIGINT NOT NULL REFERENCES member_groups (id),
+    user_id BIGINT NOT NULL REFERENCES users (id),
+    PRIMARY KEY (group_id, user_id)
+);
