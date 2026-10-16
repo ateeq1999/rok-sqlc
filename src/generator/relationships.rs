@@ -16,6 +16,7 @@ use crate::parser::naming::rust_identifier;
 use crate::schema::{Column, Relationship, RelationshipKind, Table, Through};
 use crate::{Conventions, RelationshipChange};
 
+use super::joins::{self, Join};
 use super::sql::{column_clause, ident, key_order, live_condition, table_ref};
 use super::{HEADER, StaticQuery, doc_name, keys, push_doc, push_fn_head, types_import, use_list};
 
@@ -50,6 +51,12 @@ pub fn infer(tables: &mut [Table], changes: &Changes) -> Result<(), String> {
     let renamed = apply_changes(tables, changes, false)?;
     for table in tables.iter() {
         check_names(table, &renamed)?;
+        super::search::check_filter_fields(table, tables).map_err(|message| {
+            format!(
+                "{message}; rename the relationship in {}",
+                location(&table.module_name, None)
+            )
+        })?;
     }
     Ok(())
 }
@@ -607,13 +614,24 @@ pub fn render(table: &Table, tables: &[Table]) -> Option<String> {
         .map(|relationship| Loader::new(table, tables, relationship))
         .collect();
 
+    let joins = joins::joins(table, tables);
+
     let mut output = format!(
-        "{HEADER}\n//! Loaders for the relationships of the `{}` table: each loads one\n//! relationship for many rows in a single query.\n\nuse std::collections::HashMap;\n\n",
-        table.display_name()
+        "{HEADER}\n//! Loaders for the relationships of the `{}` table: each loads one\n//! relationship for many rows in a single query.{}\n\n{}use std::collections::HashMap;\n\n",
+        table.display_name(),
+        if joins.is_empty() {
+            ""
+        } else {
+            "\n//!\n//! Each to-one relationship also has a joined read, `get_with_<relationship>`,\n//! fetching one row together with its related row in a single query."
+        },
+        joins::sqlx_imports(&joins)
     );
-    output.push_str(&imports(table, &loaders));
+    output.push_str(&imports(table, &loaders, &joins));
     for loader in &loaders {
         loader.render(&mut output);
+    }
+    for join in &joins {
+        join.render(&mut output);
     }
     Some(output)
 }
@@ -628,11 +646,11 @@ struct Loader<'a> {
     /// The joining column on `target`'s rows.
     target_column: &'a Column,
     /// A many-to-many relationship's join table.
-    join: Option<Join<'a>>,
+    join: Option<JoinTable<'a>>,
 }
 
 /// The join table a many-to-many loader goes through.
-struct Join<'a> {
+struct JoinTable<'a> {
     table: &'a Table,
     /// The join table's column equal to the loader's `column`.
     column: &'a Column,
@@ -658,7 +676,7 @@ impl<'a> Loader<'a> {
         let target = module_table(tables, &relationship.target);
         let join = relationship.through.as_ref().map(|through| {
             let join = module_table(tables, &through.table);
-            Join {
+            JoinTable {
                 table: join,
                 column: find_column(join, &through.column).expect("the join column exists"),
                 target_column: find_column(join, &through.target_column)
@@ -810,7 +828,7 @@ impl<'a> Loader<'a> {
     /// tenant. Each row also carries that key as `rok_sqlc_owner`. The
     /// related table's tenant and soft-delete conditions go in the `JOIN`'s
     /// `ON` clause, the join table's in `WHERE`.
-    fn many_to_many_query(&self, join: &Join<'_>, output: &mut String) {
+    fn many_to_many_query(&self, join: &JoinTable<'_>, output: &mut String) {
         let target = self.target;
         let tenant = keys::tenant_bind(self.tenant_table());
         let placeholder = 1 + usize::from(tenant.is_some());
@@ -878,7 +896,7 @@ impl<'a> Loader<'a> {
     /// A many-to-many loader's body: like a has-many's, but each loaded row
     /// says which key it was loaded for (`rok_sqlc_owner`), since one related
     /// row can be paired with several of `rows`.
-    fn render_many_to_many(&self, join: &Join<'_>, output: &mut String) {
+    fn render_many_to_many(&self, join: &JoinTable<'_>, output: &mut String) {
         self.push_key_map(output);
         self.many_to_many_query(join, output);
         output.push_str("    for row in related {\n");
@@ -1022,7 +1040,7 @@ fn from_call(rust_type: &str) -> String {
 
 /// The `use` lines for the row types, typed ids, and enums the loaders name,
 /// one line per module, sorted the way rustfmt sorts them.
-fn imports(table: &Table, loaders: &[Loader<'_>]) -> String {
+fn imports(table: &Table, loaders: &[Loader<'_>], joins: &[Join<'_>]) -> String {
     let mut by_module: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut add = |module: &str, name: &str| {
         let path = if module == table.module_name {
@@ -1047,6 +1065,15 @@ fn imports(table: &Table, loaders: &[Loader<'_>]) -> String {
             }
             value_types.push(column.value_type().to_owned());
         }
+    }
+    for column in joins::param_columns(joins) {
+        if let Some(id) = &column.typed_id {
+            add(&id.module, &id.name);
+        }
+        value_types.push(column.value_type().to_owned());
+    }
+    if let Some(key) = joins::key_struct(table, joins) {
+        add(&table.module_name, &key);
     }
     let mut lines: Vec<(Vec<(bool, String)>, String)> = by_module
         .into_iter()

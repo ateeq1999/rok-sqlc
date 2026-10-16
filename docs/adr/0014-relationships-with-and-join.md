@@ -77,6 +77,8 @@ The join table's `write.rs` also gets, for the key's first foreign key (`near`) 
 
 On a **soft-delete join table**, `detach` sets the soft-delete column, and `attach` and `sync` first restore a soft-deleted row of the pair (chosen by `ctid`, the most recently deleted one, only when no live row exists) and insert only when there is none, so history rows are not duplicated and a full unique key over the pair never conflicts. Every statement is scoped to the tenant. `attach` and `sync` insert only the pair and the tenant, so they are not generated when another column has neither a default nor `NULL` to fall back on; `detach` always is.
 
+A many-to-many gets no joined read (it is to-many). Its relationship filter field nests a second `EXISTS` inside the one over the related table: `EXISTS (SELECT 1 FROM <join> AS <alias>_j WHERE <alias>_j.<far> = <alias>.<target column> AND <alias>_j.<near> = <outer>.<column> …)`, correlated on the tenant when the join table has one and requiring a live join row on a soft-delete join table, so a detached or other-tenant pairing never matches. Like any filter field into a tenant table, it is left out when the filtered table has no tenant column but the join table does.
+
 Considered for many-to-many:
 
 - **Recognising a join table by having exactly two foreign keys.** Rejected: `user_roles`-style tables with two foreign keys and no unique pair hold duplicates, and `sync` could not tell which row to keep; the unique key is what makes the pair a set.
@@ -86,6 +88,31 @@ Considered for many-to-many:
 ## `join`: joined reads (ticket 21)
 
 A to-one relationship also gets a single-query joined read, `get_with_<name>`, returning a struct holding both rows (the related row optional when the foreign key is nullable). Columns are aliased per side, since both tables commonly have `id` and `name`. The related table's tenant and soft-delete conditions go in the `JOIN … ON` clause, not `WHERE`, so a deleted parent yields `None` for the related row instead of hiding the child. Only to-one relationships are joined: a to-many join multiplies rows, and loaders already cover it in one more query.
+
+As built:
+
+- `get_with_<name>` sits in `relationships.rs` next to the loaders, with its `{Row}With{Relationship}` struct (`ProductWithCategory { product, category }`; the row's field is `row` when the relationship shares its name). It takes the table's key parameters, like `get_by_id`, so a table without a primary key gets none.
+- The related row is an `Option` unless the join cannot miss: a belongs-to through a NOT NULL foreign key into a table with neither a tenant nor a soft-delete column is a plain row read with an inner `JOIN`; every other case (a has-one, a nullable foreign key, a related table that hides rows) is a `LEFT JOIN` and an `Option`. Requiring an `Option` where the foreign key guarantees the row would make every caller handle a case that cannot occur.
+- The tables are aliased `t` (the row) and `r` (the related row), so a self-reference joins cleanly, and each column is selected as `t_<column>` / `r_<column>`. The struct implements `FromRow` by hand from those aliases; an optional related row is `None` when its joining column is `NULL`, which a joined row's never is.
+- The tenant parameter is the row's tenant column, or the related table's when only it has one; both sides compare their tenant column with `$1`.
+
+## Relationship filters (ticket 22)
+
+Each resource's search filter gains an optional field per relationship, named like it and holding the related resource's filter: `ProductFilter { category: Some(Box::new(CategoryFilter { name: vec![Text::Eq(…)], .. })), .. }`. Search does not join; each set field becomes a correlated subquery:
+
+```sql
+AND EXISTS (SELECT 1 FROM categories AS _r1 WHERE TRUE
+    AND _r1.id = products.category_id
+    [AND _r1.tenant_id = products.tenant_id] [AND deleted_at IS NULL]
+    <the category filter's conditions, bare, resolving to _r1>)
+```
+
+- **`EXISTS`, never a join**, so a matching row comes back once however many related rows match. For a to-many relationship the field means "has at least one related row matching"; for a to-one, "its related row exists and matches". An **empty related filter** only requires a related row: a `NULL` foreign key, a soft-deleted parent, or an other-tenant row has none.
+- The subquery's table is aliased by depth (`_r1`, `_r2`, …) and the outermost row is referenced by its table name, so self-references (`parent`, `children`) work. The searched table's own conditions stay bare.
+- **Soft delete and tenancy follow the related table**, as for loaders. Soft-deleted related rows never match (`include_deleted` applies only to the searched table). A related tenant table is correlated on the tenant column with the enclosing row, which is itself bound to the tenant parameter at the root; a resource without a tenant column gets no field into a tenant table, since there is no tenant to scope it by.
+- **Depth**: the filter types are recursive (`Box`), so nesting is limited at runtime to `db::search::MAX_RELATIONSHIP_DEPTH` (4) relationship hops; deeper filters make `search` fail with `sqlx::Error::InvalidArgument` instead of silently dropping conditions.
+- A field exists only when the related resource has a filter that can nest (it has relationships of its own, as every target has the inverse). Filters of tables with relationships get a `push_conditions` function that other filters call.
+- A relationship named like one of the filter's fields (a column's condition field, its `*_is_null` field, or `include_deleted`) **fails generation**, naming both; renaming it (ticket 24) resolves the clash.
 
 ## Considered Options
 

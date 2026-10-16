@@ -16,7 +16,9 @@ async fn fresh_database() -> Option<PgPool> {
         eprintln!("skipping: ROK_SQLC_TEST_DATABASE_URL is not set");
         return None;
     };
-    let pool = PgPool::connect(&url).await.expect("connect to test database");
+    let pool = PgPool::connect(&url)
+        .await
+        .expect("connect to test database");
     sqlx::raw_sql(
         "DROP SCHEMA IF EXISTS app CASCADE; DROP SCHEMA IF EXISTS legacy CASCADE;
          DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;",
@@ -78,10 +80,19 @@ async fn generated_crud_against_postgres() {
     several_foreign_keys_to_one_table_get_distinct_names(&pool).await;
     unique_foreign_key_loads_one_row(&pool).await;
     self_reference_loads_parent_and_children(&pool).await;
+    belongs_to_filter_matches_each_row_once(&pool).await;
+    has_many_filter_matches_each_parent_once(&pool).await;
+    relationship_filters_skip_deleted_and_other_tenant_rows(&pool).await;
+    self_reference_filters_and_nesting_depth(&pool).await;
     renamed_relationships_load_under_their_new_names(&pool).await;
+    joined_read_fetches_a_row_with_its_parent_in_one_query(&pool).await;
+    joined_read_of_a_nullable_foreign_key_without_a_parent(&pool).await;
+    joined_read_respects_soft_delete_and_tenant_on_both_sides(&pool).await;
+    renamed_relationships_filter_under_their_new_names(&pool).await;
     many_to_many_attach_detach_and_sync(&pool).await;
     soft_delete_join_rows_are_restored_not_duplicated(&pool).await;
     plain_join_table_deletes_detached_pairs(&pool).await;
+    many_to_many_filters_go_through_the_join_table(&pool).await;
 }
 
 /// A category's typed id goes straight into a product's foreign key field
@@ -136,18 +147,29 @@ async fn typed_ids_flow_from_rows_to_foreign_keys(pool: &PgPool) {
     )
     .await
     .unwrap();
-    assert_eq!(found, vec![product.clone()], "a category's id filters its products");
+    assert_eq!(
+        found,
+        vec![product.clone()],
+        "a category's id filters its products"
+    );
 
-    let fetched = db::products::read::get_by_id(pool, product_id).await.unwrap();
+    let fetched = db::products::read::get_by_id(pool, product_id)
+        .await
+        .unwrap();
     assert_eq!(fetched, Some(product));
-    let parent = db::categories::read::get_by_id(pool, category.id).await.unwrap();
+    let parent = db::categories::read::get_by_id(pool, category.id)
+        .await
+        .unwrap();
     assert_eq!(parent.map(|row| row.name), Some("typed".to_owned()));
 
     // `Copy`: the id is used again after being passed by value above.
     let raw: i64 = category.id.into();
     assert_eq!(CategoryId::from(raw), category.id);
     assert_eq!(category.id.to_string(), raw.to_string());
-    assert_eq!(product_id.to_string(), "00000000-0000-0000-0000-000000001b59");
+    assert_eq!(
+        product_id.to_string(),
+        "00000000-0000-0000-0000-000000001b59"
+    );
     assert!(CategoryId::from(1) < CategoryId::from(2));
     let distinct: HashSet<CategoryId> = [category.id, category.id, CategoryId::from(raw + 1)]
         .into_iter()
@@ -299,7 +321,9 @@ async fn keyset_pagination_follows_the_primary_key(pool: &PgPool, category: Cate
     let mut after = None;
     let mut pages = Vec::new();
     loop {
-        let page = search_after(pool, in_category(), after, Limit::new(2)).await.unwrap();
+        let page = search_after(pool, in_category(), after, Limit::new(2))
+            .await
+            .unwrap();
         let Some(last) = page.last() else {
             break;
         };
@@ -349,8 +373,14 @@ async fn keyset_pagination_follows_the_primary_key(pool: &PgPool, category: Cate
     let clamped = Page::new(10_000, -5);
     assert_eq!((clamped.limit(), clamped.offset()), (MAX_PAGE_SIZE, 0));
     let last = Page::new(MAX_PAGE_SIZE, i64::MAX - 10).next();
-    assert_eq!(last.offset(), i64::MAX, "next() saturates instead of overflowing");
-    let one = search_after(pool, in_category(), None, Limit::new(0)).await.unwrap();
+    assert_eq!(
+        last.offset(),
+        i64::MAX,
+        "next() saturates instead of overflowing"
+    );
+    let one = search_after(pool, in_category(), None, Limit::new(0))
+        .await
+        .unwrap();
     assert_eq!(one.len(), 1, "a limit below 1 is clamped to 1");
     assert_eq!(Limit::new(10_000).get(), MAX_PAGE_SIZE);
 }
@@ -446,7 +476,11 @@ async fn null_checks_and_equality_filters(pool: &PgPool, category: CategoryId) {
         ..Default::default()
     })
     .await;
-    assert_eq!(by_id, ["S-1", "S-2", "S-4"], "ids 501 and 503 are S-5 and S-3");
+    assert_eq!(
+        by_id,
+        ["S-1", "S-2", "S-4"],
+        "ids 501 and 503 are S-5 and S-3"
+    );
 
     let picked = skus_where(ProductFilter {
         id: vec![Equality::In(vec![
@@ -605,7 +639,10 @@ async fn annotated_queries(pool: &PgPool) {
     )
     .await
     .unwrap();
-    assert_eq!(inserted, 2, "both VALUES rows bind to the right placeholders");
+    assert_eq!(
+        inserted, 2,
+        "both VALUES rows bind to the right placeholders"
+    );
 
     let hammer = queries::get_product_by_sku(pool, "Q-1")
         .await
@@ -614,9 +651,7 @@ async fn annotated_queries(pool: &PgPool) {
     assert_eq!(hammer.id, uuid::Uuid::from_u128(101));
     assert_eq!(hammer.name, "Query hammer");
     assert_eq!(
-        queries::get_product_by_sku(pool, "missing")
-            .await
-            .unwrap(),
+        queries::get_product_by_sku(pool, "missing").await.unwrap(),
         None
     );
 
@@ -631,16 +666,16 @@ async fn annotated_queries(pool: &PgPool) {
         .collect();
     assert_eq!(low_stock, ["Q-2"], "only the anvil has stock <= 10");
 
-    let joined = queries::list_products_with_category(
-        pool,
-        &["Q-1".to_owned(), "Q-2".to_owned()],
-    )
-    .await
-    .unwrap();
+    let joined = queries::list_products_with_category(pool, &["Q-1".to_owned(), "Q-2".to_owned()])
+        .await
+        .unwrap();
     assert_eq!(joined.len(), 2);
     assert_eq!(joined[0].category_name, "query-cat");
     assert_eq!(joined[0].supplier_name.as_deref(), Some("Acme"));
-    assert_eq!(joined[1].supplier_name, None, "LEFT JOIN without a supplier");
+    assert_eq!(
+        joined[1].supplier_name, None,
+        "LEFT JOIN without a supplier"
+    );
 
     assert_eq!(
         queries::count_products_in_category(pool, category.id.into())
@@ -661,7 +696,10 @@ async fn annotated_queries(pool: &PgPool) {
     assert_eq!(stocked.len(), 1, "the CTE pre-aggregates per category");
     assert_eq!(stocked[0].id, i64::from(category.id));
     assert_eq!(stocked[0].category_name, "query-cat");
-    assert_eq!(stocked[0].product_count, 1, "only the hammer has stock >= 1");
+    assert_eq!(
+        stocked[0].product_count, 1,
+        "only the hammer has stock >= 1"
+    );
     assert_eq!(stocked[0].total_stock, Some(50));
     assert!(
         queries::stocked_categories(pool, 51, category.id.into())
@@ -671,21 +709,15 @@ async fn annotated_queries(pool: &PgPool) {
         "the CTE placeholder filters before aggregation"
     );
 
-    let found = queries::search_products(pool, "%ANVIL%")
-        .await
-        .unwrap();
+    let found = queries::search_products(pool, "%ANVIL%").await.unwrap();
     assert_eq!(found, ["Q-2"]);
 
     assert_eq!(
-        queries::delete_product_by_sku(pool, "Q-2")
-            .await
-            .unwrap(),
+        queries::delete_product_by_sku(pool, "Q-2").await.unwrap(),
         1
     );
     assert_eq!(
-        queries::delete_product_by_sku(pool, "Q-2")
-            .await
-            .unwrap(),
+        queries::delete_product_by_sku(pool, "Q-2").await.unwrap(),
         0
     );
 }
@@ -702,9 +734,7 @@ async fn query_modules_per_file(pool: &PgPool) {
     assert!(globex.is_active, "the column default applies");
 
     assert_eq!(
-        suppliers::search_products(pool, "Acme")
-            .await
-            .unwrap(),
+        suppliers::search_products(pool, "Acme").await.unwrap(),
         ["Q-1"]
     );
     assert!(
@@ -714,9 +744,7 @@ async fn query_modules_per_file(pool: &PgPool) {
             .is_empty()
     );
     assert_eq!(
-        inventory::search_products(pool, "%hammer%")
-            .await
-            .unwrap(),
+        inventory::search_products(pool, "%hammer%").await.unwrap(),
         ["Q-1"]
     );
 }
@@ -745,9 +773,17 @@ async fn insert_applies_defaults_and_explicit_nulls(pool: &PgPool) {
     .await
     .unwrap();
     assert_eq!(defaults.score, 0, "omitted score uses DEFAULT 0");
-    assert_eq!(defaults.tag.as_deref(), Some("none"), "omitted tag uses DEFAULT 'none'");
+    assert_eq!(
+        defaults.tag.as_deref(),
+        Some("none"),
+        "omitted tag uses DEFAULT 'none'"
+    );
     assert_eq!(defaults.note, None);
-    assert_eq!(defaults.doubled, Some(0), "generated column is computed by the database");
+    assert_eq!(
+        defaults.doubled,
+        Some(0),
+        "generated column is computed by the database"
+    );
 
     let explicit = create(
         pool,
@@ -761,7 +797,10 @@ async fn insert_applies_defaults_and_explicit_nulls(pool: &PgPool) {
     .await
     .unwrap();
     assert_eq!(explicit.score, 4);
-    assert_eq!(explicit.tag, None, "Some(None) inserts NULL instead of the default");
+    assert_eq!(
+        explicit.tag, None,
+        "Some(None) inserts NULL instead of the default"
+    );
     assert_eq!(explicit.note.as_deref(), Some("n"));
     assert_eq!(explicit.doubled, Some(8));
 }
@@ -853,8 +892,14 @@ async fn delete_reports_existing_and_missing_rows(pool: &PgPool) {
 
     let row = write::create(pool, base_patch_target()).await.unwrap();
     assert!(read::exists_by_id(pool, row.id).await.unwrap());
-    assert!(write::delete(pool, row.id).await.unwrap(), "existing row is deleted");
-    assert!(!write::delete(pool, row.id).await.unwrap(), "second delete finds nothing");
+    assert!(
+        write::delete(pool, row.id).await.unwrap(),
+        "existing row is deleted"
+    );
+    assert!(
+        !write::delete(pool, row.id).await.unwrap(),
+        "second delete finds nothing"
+    );
     assert!(!read::exists_by_id(pool, row.id).await.unwrap());
     assert_eq!(read::get_by_id(pool, row.id).await.unwrap(), None);
 }
@@ -915,7 +960,10 @@ async fn reserved_and_quoted_identifiers_round_trip(pool: &PgPool) {
     )
     .await
     .unwrap();
-    assert_eq!(row.mixed_case, 1, "quoted defaulted column applies its default");
+    assert_eq!(
+        row.mixed_case, 1,
+        "quoted defaulted column applies its default"
+    );
     assert_eq!(row.type_.as_deref(), Some("kind"));
     assert_eq!(row._1st, Some(true));
 
@@ -925,7 +973,10 @@ async fn reserved_and_quoted_identifiers_round_trip(pool: &PgPool) {
         mixed_case: Some(9),
         ..Default::default()
     };
-    let updated = write::update(pool, row.select, patch).await.unwrap().unwrap();
+    let updated = write::update(pool, row.select, patch)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(updated.type_, None);
     assert_eq!(updated.user.as_deref(), Some("alice"));
     assert_eq!(updated.mixed_case, 9);
@@ -998,7 +1049,10 @@ async fn uuid_keys_listing_and_pagination(pool: &PgPool) {
         )
         .await
         .unwrap();
-        assert_eq!(product.reorder_level, 10, "defaulted SMALLINT applies DEFAULT 10");
+        assert_eq!(
+            product.reorder_level, 10,
+            "defaulted SMALLINT applies DEFAULT 10"
+        );
     }
 
     let all: Vec<u128> = read::list(pool)
@@ -1017,7 +1071,10 @@ async fn uuid_keys_listing_and_pagination(pool: &PgPool) {
     assert_eq!(paged, all, "pages neither repeat nor skip rows");
     assert_eq!(read::count(pool).await.unwrap(), 5);
 
-    let first = read::get_by_id(pool, uuid::Uuid::from_u128(3).into()).await.unwrap().unwrap();
+    let first = read::get_by_id(pool, uuid::Uuid::from_u128(3).into())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(first.price_cents, 1999);
     assert_eq!(first.weight_kg, Some(1.5));
 }
@@ -1067,7 +1124,10 @@ async fn composite_keys_arrays_and_numeric(pool: &PgPool) {
         product_id: order_id,
     };
     assert!(read::exists_by_id(pool, key).await.unwrap());
-    assert!(!read::exists_by_id(pool, swapped).await.unwrap(), "key parts are not interchangeable");
+    assert!(
+        !read::exists_by_id(pool, swapped).await.unwrap(),
+        "key parts are not interchangeable"
+    );
     assert!(write::delete(pool, key).await.unwrap());
     assert!(!read::exists_by_id(pool, key).await.unwrap());
 }
@@ -1255,7 +1315,11 @@ async fn value_list_columns_round_trip(pool: &PgPool) {
     )
     .await
     .unwrap();
-    assert_eq!(defaulted.status, ShipmentStatus::Pending, "the default applies");
+    assert_eq!(
+        defaulted.status,
+        ShipmentStatus::Pending,
+        "the default applies"
+    );
     assert_eq!(defaulted.carrier, None);
 
     let moving = write::create(
@@ -1395,7 +1459,10 @@ async fn unique_key_lookups_find_one_row_or_none(pool: &PgPool) {
         by_sku.map(|row| row.id),
         Some(ProductId::from(uuid::Uuid::from_u128(8_002)))
     );
-    assert_eq!(db::products::read::get_by_sku(pool, "U-3").await.unwrap(), None);
+    assert_eq!(
+        db::products::read::get_by_sku(pool, "U-3").await.unwrap(),
+        None
+    );
 
     let acme = uuid::Uuid::from_u128(1);
     let globex = uuid::Uuid::from_u128(2);
@@ -1418,7 +1485,10 @@ async fn unique_key_lookups_find_one_row_or_none(pool: &PgPool) {
     let globex_hq = db::branches::read::get_by_organization_id_and_code(pool, globex, "HQ")
         .await
         .unwrap();
-    assert_eq!(globex_hq.map(|row| row.name), Some("Globex head office".to_owned()));
+    assert_eq!(
+        globex_hq.map(|row| row.name),
+        Some("Globex head office".to_owned())
+    );
     let acme_west = db::branches::read::get_by_organization_id_and_code(pool, acme, "WEST")
         .await
         .unwrap();
@@ -1524,7 +1594,11 @@ async fn versioned_updates_detect_concurrent_edits(pool: &PgPool) {
     .unwrap();
     assert_eq!(second, UpdateOutcome::VersionConflict);
     let stored = read::get_by_id(pool, created.id).await.unwrap();
-    assert_eq!(stored, Some(saved.clone()), "the stale update changed nothing");
+    assert_eq!(
+        stored,
+        Some(saved.clone()),
+        "the stale update changed nothing"
+    );
 
     // Inside a caller-owned transaction, with the current revision.
     let mut tx = pool.begin().await.unwrap();
@@ -1616,7 +1690,10 @@ async fn versioned_updates_detect_concurrent_edits(pool: &PgPool) {
     assert_eq!(empty_deleted, UpdateOutcome::NotFound);
     assert!(write::restore(pool, created.id).await.unwrap());
     let restored = read::get_by_id(pool, created.id).await.unwrap().unwrap();
-    assert_eq!(restored.title, "second editor", "the update changed nothing");
+    assert_eq!(
+        restored.title, "second editor",
+        "the update changed nothing"
+    );
 }
 
 /// A text key's typed id is not `Copy`, so every generated function borrows
@@ -1641,7 +1718,11 @@ async fn text_keys_are_borrowed(pool: &PgPool) {
 
     let found = db::currencies::read::get_by_id(pool, &eur).await.unwrap();
     assert_eq!(found.map(|row| row.name), Some("eur".to_owned()));
-    assert!(db::currencies::read::exists_by_id(pool, &eur).await.unwrap());
+    assert!(
+        db::currencies::read::exists_by_id(pool, &eur)
+            .await
+            .unwrap()
+    );
     let renamed = db::currencies::write::update(
         pool,
         &eur,
@@ -1865,7 +1946,10 @@ async fn tenant_rows_are_invisible_to_other_tenants(pool: &PgPool) {
     let note = create(tenant_a, "a").await.unwrap();
     // The unique key is per tenant, so both tenants can use the same code.
     let other = create(tenant_b, "b").await.unwrap();
-    assert_eq!(note.tenant_id, tenant_a, "the tenant comes from the parameter");
+    assert_eq!(
+        note.tenant_id, tenant_a,
+        "the tenant comes from the parameter"
+    );
     assert_eq!(other.tenant_id, tenant_b);
 
     let ids = |rows: Vec<TenantNote>| rows.into_iter().map(|row| row.id).collect::<Vec<_>>();
@@ -1911,7 +1995,10 @@ async fn tenant_rows_are_invisible_to_other_tenants(pool: &PgPool) {
     sees(tenant_b, vec![other.id]).await;
 
     // Tenant B cannot reach tenant A's row by its key.
-    assert_eq!(read::get_by_id(pool, tenant_b, note.id).await.unwrap(), None);
+    assert_eq!(
+        read::get_by_id(pool, tenant_b, note.id).await.unwrap(),
+        None
+    );
     assert!(!read::exists_by_id(pool, tenant_b, note.id).await.unwrap());
     let patch = || UpdateTenantNote {
         code: None,
@@ -2002,7 +2089,10 @@ async fn a_tenant_in_the_primary_key_is_passed_once(pool: &PgPool) {
     .await
     .unwrap()
     .unwrap();
-    assert_eq!((renamed.tenant_id, renamed.name.as_str()), (tenant_b, "Bea"));
+    assert_eq!(
+        (renamed.tenant_id, renamed.name.as_str()),
+        (tenant_b, "Bea")
+    );
     assert_eq!(name(tenant_a).await.as_deref(), Some("Ann"));
 
     let page = read::search_after(
@@ -2017,11 +2107,7 @@ async fn a_tenant_in_the_primary_key_is_passed_once(pool: &PgPool) {
     assert_eq!(page.len(), 1);
     assert_eq!(page[0].tenant_id, tenant_a);
 
-    assert!(
-        write::delete(pool, tenant_a, "M1")
-            .await
-            .unwrap()
-    );
+    assert!(write::delete(pool, tenant_a, "M1").await.unwrap());
     assert_eq!(name(tenant_a).await, None);
     assert_eq!(name(tenant_b).await.as_deref(), Some("Bea"));
 }
@@ -2158,7 +2244,11 @@ async fn belongs_to_loader_fetches_every_parent_in_one_query(pool: &PgPool) {
         .unwrap();
     let after = scans_in_transaction(&mut tx, "categories").await;
     tx.rollback().await.unwrap();
-    assert_eq!(after - before, 1, "one query loads every product's category");
+    assert_eq!(
+        after - before,
+        1,
+        "one query loads every product's category"
+    );
 
     assert_eq!(loaded.len(), 3, "each category is loaded once");
     for product in &products {
@@ -2213,6 +2303,7 @@ async fn has_many_loader_stays_in_the_tenant_and_skips_deleted_rows(pool: &PgPoo
             tenant,
             NewComment {
                 post_id,
+                author_id: None,
                 body: body.to_owned(),
             },
         )
@@ -2318,10 +2409,14 @@ async fn several_foreign_keys_to_one_table_get_distinct_names(pool: &PgPool) {
     assert_eq!(approvers[&manager.id], manager);
 
     let users = vec![clerk.clone(), manager.clone()];
-    let created = load_invoices_by_created_by_user(pool, &users).await.unwrap();
+    let created = load_invoices_by_created_by_user(pool, &users)
+        .await
+        .unwrap();
     assert_eq!(created[&clerk.id], vec![approved.clone(), pending]);
     assert_eq!(created[&manager.id], Vec::new());
-    let to_approve = load_invoices_by_approved_by_user(pool, &users).await.unwrap();
+    let to_approve = load_invoices_by_approved_by_user(pool, &users)
+        .await
+        .unwrap();
     assert_eq!(to_approve[&clerk.id], Vec::new());
     assert_eq!(to_approve[&manager.id], vec![approved]);
 }
@@ -2398,6 +2493,365 @@ async fn self_reference_loads_parent_and_children(pool: &PgPool) {
     assert_eq!(children[&leaf.id], Vec::new());
 }
 
+/// Products filtered by their category's name: exactly the products in a
+/// matching category, each once.
+async fn belongs_to_filter_matches_each_row_once(pool: &PgPool) {
+    use db::categories::filter::CategoryFilter;
+    use db::categories::models::NewCategory;
+    use db::products::filter::{ProductFilter, ProductSortKey};
+    use db::products::models::{NewProduct, ProductId};
+    use db::search::{Page, Sort, Text};
+
+    let mut categories = Vec::new();
+    for name in ["rel-tools", "rel-toys", "rel-tools-extra"] {
+        let category = db::categories::write::create(
+            pool,
+            NewCategory {
+                name: name.to_owned(),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        categories.push(category);
+    }
+    for (index, category) in [0, 0, 1, 2, 0].into_iter().enumerate() {
+        db::products::write::create(
+            pool,
+            NewProduct {
+                id: ProductId::from(uuid::Uuid::from_u128(22_000 + index as u128)),
+                sku: format!("REL-{index}"),
+                name: format!("Related {index}"),
+                category_id: categories[category].id,
+                supplier_id: None,
+                price_cents: None,
+                stock_on_hand: None,
+                reorder_level: None,
+                weight_kg: None,
+                discontinued: None,
+                released_on: None,
+                created_at: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+    let search = async |category: CategoryFilter| {
+        let rows = db::products::read::search(
+            pool,
+            ProductFilter {
+                category: Some(Box::new(category)),
+                ..Default::default()
+            },
+            Sort::asc(ProductSortKey::Sku),
+            Page::first(100),
+        )
+        .await
+        .unwrap();
+        skus(&rows)
+    };
+
+    let tools = search(CategoryFilter {
+        name: vec![Text::Eq("rel-tools".to_owned())],
+        ..Default::default()
+    })
+    .await;
+    assert_eq!(tools, ["REL-0", "REL-1", "REL-4"]);
+    let either = search(CategoryFilter {
+        name: vec![Text::StartsWith("rel-to".to_owned())],
+        ..Default::default()
+    })
+    .await;
+    assert_eq!(either, ["REL-0", "REL-1", "REL-2", "REL-3", "REL-4"]);
+}
+
+/// Creates a tenant with the given id.
+async fn create_tenant(pool: &PgPool, id: u128) -> db::tenants::models::TenantId {
+    use db::tenants::models::{NewTenant, TenantId};
+
+    db::tenants::write::create(
+        pool,
+        NewTenant {
+            id: TenantId::from(uuid::Uuid::from_u128(id)),
+            name: format!("tenant {id}"),
+        },
+    )
+    .await
+    .unwrap()
+    .id
+}
+
+async fn create_post(
+    pool: &PgPool,
+    tenant: db::tenants::models::TenantId,
+    title: &str,
+) -> db::posts::models::Post {
+    db::posts::write::create(
+        pool,
+        tenant,
+        db::posts::models::NewPost {
+            title: title.to_owned(),
+        },
+    )
+    .await
+    .unwrap()
+}
+
+async fn create_comment(
+    pool: &PgPool,
+    tenant: db::tenants::models::TenantId,
+    post: &db::posts::models::Post,
+    author: Option<&db::users::models::User>,
+) -> db::comments::models::Comment {
+    db::comments::write::create(
+        pool,
+        tenant,
+        db::comments::models::NewComment {
+            post_id: post.id,
+            author_id: author.map(|author| author.id),
+            body: format!("on {}", post.title),
+        },
+    )
+    .await
+    .unwrap()
+}
+
+async fn create_user(pool: &PgPool, email: &str) -> db::users::models::User {
+    db::users::write::create(
+        pool,
+        db::users::models::NewUser {
+            email: email.to_owned(),
+        },
+    )
+    .await
+    .unwrap()
+}
+
+/// The titles of the tenant's posts matching `filter`, in key order.
+async fn post_titles(
+    pool: &PgPool,
+    tenant: db::tenants::models::TenantId,
+    filter: db::posts::filter::PostFilter,
+) -> Vec<String> {
+    use db::posts::filter::PostSortKey;
+    use db::search::{Page, Sort};
+
+    db::posts::read::search(pool, tenant, filter, Sort::asc(PostSortKey::Id), Page::first(100))
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|post| post.title)
+        .collect()
+}
+
+/// Posts with at least one comment by an author: each post once, however
+/// many of its comments match; an empty comment filter means "has a
+/// comment".
+async fn has_many_filter_matches_each_parent_once(pool: &PgPool) {
+    use db::comments::filter::CommentFilter;
+    use db::posts::filter::PostFilter;
+    use db::search::Text;
+    use db::users::filter::UserFilter;
+
+    let tenant = create_tenant(pool, 22_101).await;
+    let alice = create_user(pool, "alice@rel.example").await;
+    let bob = create_user(pool, "bob@rel.example").await;
+    let busy = create_post(pool, tenant, "busy").await;
+    let single = create_post(pool, tenant, "single").await;
+    create_post(pool, tenant, "silent").await;
+    for _ in 0..3 {
+        create_comment(pool, tenant, &busy, Some(&alice)).await;
+    }
+    create_comment(pool, tenant, &busy, Some(&bob)).await;
+    create_comment(pool, tenant, &single, Some(&bob)).await;
+
+    let by = |email: &str| PostFilter {
+        comments: Some(Box::new(CommentFilter {
+            author: Some(Box::new(UserFilter {
+                email: vec![Text::Eq(email.to_owned())],
+                ..Default::default()
+            })),
+            ..Default::default()
+        })),
+        ..Default::default()
+    };
+    assert_eq!(post_titles(pool, tenant, by("alice@rel.example")).await, ["busy"]);
+    assert_eq!(
+        post_titles(pool, tenant, by("bob@rel.example")).await,
+        ["busy", "single"]
+    );
+    assert_eq!(
+        post_titles(pool, tenant, by("nobody@rel.example")).await,
+        Vec::<String>::new()
+    );
+
+    let commented = PostFilter {
+        comments: Some(Box::default()),
+        ..Default::default()
+    };
+    assert_eq!(
+        post_titles(pool, tenant, commented).await,
+        ["busy", "single"],
+        "an empty filter means at least one comment"
+    );
+}
+
+/// Soft-deleted and other tenants' related rows never satisfy a
+/// relationship filter, in either direction; an empty to-one filter needs a
+/// non-null, live related row.
+async fn relationship_filters_skip_deleted_and_other_tenant_rows(pool: &PgPool) {
+    use db::comments::filter::{CommentFilter, CommentSortKey};
+    use db::posts::filter::PostFilter;
+    use db::search::{Page, Sort};
+
+    let tenant = create_tenant(pool, 22_201).await;
+    let other = create_tenant(pool, 22_202).await;
+    let author = create_user(pool, "carol@rel.example").await;
+    let deleted_only = create_post(pool, tenant, "deleted only").await;
+    let foreign_only = create_post(pool, tenant, "foreign only").await;
+    let live = create_post(pool, tenant, "live").await;
+    let gone = create_post(pool, tenant, "gone").await;
+
+    let deleted = create_comment(pool, tenant, &deleted_only, Some(&author)).await;
+    assert!(
+        db::comments::write::delete(pool, tenant, deleted.id)
+            .await
+            .unwrap()
+    );
+    // The foreign key does not stop another tenant's comment pointing here.
+    let foreign = create_comment(pool, other, &foreign_only, Some(&author)).await;
+    let anonymous = create_comment(pool, tenant, &live, None).await;
+    let signed = create_comment(pool, tenant, &live, Some(&author)).await;
+    let orphaned = create_comment(pool, tenant, &gone, Some(&author)).await;
+    assert!(db::posts::write::delete(pool, tenant, gone.id).await.unwrap());
+
+    let commented = PostFilter {
+        comments: Some(Box::default()),
+        ..Default::default()
+    };
+    assert_eq!(post_titles(pool, tenant, commented.clone()).await, ["live"]);
+    let with_deleted_posts = PostFilter {
+        include_deleted: true,
+        ..commented
+    };
+    assert_eq!(
+        post_titles(pool, tenant, with_deleted_posts).await,
+        ["live", "gone"],
+        "include_deleted applies to the searched table only"
+    );
+
+    let comment_ids = async |tenant, filter: CommentFilter| {
+        db::comments::read::search(
+            pool,
+            tenant,
+            filter,
+            Sort::asc(CommentSortKey::Id),
+            Page::first(100),
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|comment| comment.id)
+        .collect::<Vec<_>>()
+    };
+    let with_live_post = CommentFilter {
+        post: Some(Box::default()),
+        ..Default::default()
+    };
+    assert_eq!(
+        comment_ids(tenant, with_live_post.clone()).await,
+        [anonymous.id, signed.id],
+        "a soft-deleted post is no parent"
+    );
+    assert_eq!(
+        comment_ids(other, with_live_post).await,
+        Vec::new(),
+        "another tenant's post is no parent"
+    );
+    let all = comment_ids(other, CommentFilter::default()).await;
+    assert_eq!(all, [foreign.id]);
+
+    let authored = CommentFilter {
+        author: Some(Box::default()),
+        ..Default::default()
+    };
+    assert_eq!(
+        comment_ids(tenant, authored).await,
+        [signed.id, orphaned.id],
+        "a NULL foreign key has no author"
+    );
+}
+
+/// A `parent_id` self-reference filters both ways, nested; relationship
+/// filters nest at most `MAX_RELATIONSHIP_DEPTH` deep.
+async fn self_reference_filters_and_nesting_depth(pool: &PgPool) {
+    use db::org_units::filter::{OrgUnitFilter, OrgUnitSortKey};
+    use db::org_units::models::NewOrgUnit;
+    use db::search::{MAX_RELATIONSHIP_DEPTH, Page, Sort, Text};
+
+    let unit = async |parent_id, name: &str| {
+        db::org_units::write::create(
+            pool,
+            NewOrgUnit {
+                parent_id,
+                name: name.to_owned(),
+            },
+        )
+        .await
+        .unwrap()
+    };
+    let top = unit(None, "rel-top").await;
+    let middle = unit(Some(top.id), "rel-middle").await;
+    unit(Some(middle.id), "rel-bottom").await;
+    let names = async |filter: OrgUnitFilter| {
+        db::org_units::read::search(
+            pool,
+            filter,
+            Sort::asc(OrgUnitSortKey::Id),
+            Page::first(100),
+        )
+        .await
+        .map(|units| units.into_iter().map(|unit| unit.name).collect::<Vec<_>>())
+    };
+    let named = |name: &str| OrgUnitFilter {
+        name: vec![Text::Eq(name.to_owned())],
+        ..Default::default()
+    };
+
+    let under_top = OrgUnitFilter {
+        parent: Some(Box::new(named("rel-top"))),
+        ..Default::default()
+    };
+    assert_eq!(names(under_top).await.unwrap(), ["rel-middle"]);
+    let above_bottom = OrgUnitFilter {
+        children: Some(Box::new(named("rel-bottom"))),
+        ..Default::default()
+    };
+    assert_eq!(names(above_bottom).await.unwrap(), ["rel-middle"]);
+
+    // `hops` nested `parent` filters ending at `rel-top`.
+    let ancestors = |hops: usize| {
+        let mut filter = named("rel-top");
+        for _ in 0..hops {
+            filter = OrgUnitFilter {
+                parent: Some(Box::new(filter)),
+                ..Default::default()
+            };
+        }
+        filter
+    };
+    assert_eq!(names(ancestors(2)).await.unwrap(), ["rel-bottom"]);
+    assert_eq!(
+        names(ancestors(MAX_RELATIONSHIP_DEPTH)).await.unwrap(),
+        Vec::<String>::new()
+    );
+    let too_deep = names(ancestors(MAX_RELATIONSHIP_DEPTH + 1)).await;
+    assert!(
+        matches!(too_deep, Err(sqlx::Error::InvalidArgument(_))),
+        "{too_deep:?}"
+    );
+}
+
 /// `tests/fixture_compile.rs` renames `expense_claims.created_by_user` to
 /// `author` and its inverse on `users` to `authored_expense_claims`, and opts
 /// out `expense_claims.approved_by_user`, which removes both of its sides:
@@ -2405,7 +2859,7 @@ async fn self_reference_loads_parent_and_children(pool: &PgPool) {
 /// or `load_expense_claims_by_approved_by_user` exists to call.
 async fn renamed_relationships_load_under_their_new_names(pool: &PgPool) {
     use db::expense_claims::models::NewExpenseClaim;
-    use db::expense_claims::relationships::load_author;
+    use db::expense_claims::relationships::{ExpenseClaimWithAuthor, get_with_author, load_author};
     use db::users::models::NewUser;
     use db::users::relationships::load_authored_expense_claims;
 
@@ -2445,8 +2899,290 @@ async fn renamed_relationships_load_under_their_new_names(pool: &PgPool) {
     let authored = load_authored_expense_claims(pool, &[author.clone(), approver.clone()])
         .await
         .unwrap();
-    assert_eq!(authored[&author.id], vec![first, second]);
+    assert_eq!(authored[&author.id], vec![first.clone(), second]);
     assert_eq!(authored[&approver.id], Vec::new());
+
+    // The joined read takes the new name too; the opted-out
+    // `approved_by_user` has none (`get_with_approved_by_user` does not
+    // exist, see `tests/relationships.rs`).
+    let ExpenseClaimWithAuthor {
+        expense_claim,
+        author: read_author,
+    } = get_with_author(pool, first.id).await.unwrap().unwrap();
+    assert_eq!(expense_claim, first);
+    assert_eq!(read_author, author);
+}
+
+/// `get_with_category` reads a product and its category in one statement.
+/// Both tables have `id` and `name`; each row gets its own values.
+async fn joined_read_fetches_a_row_with_its_parent_in_one_query(pool: &PgPool) {
+    use db::categories::models::NewCategory;
+    use db::products::models::{NewProduct, ProductId};
+    use db::products::relationships::{ProductWithCategory, get_with_category};
+
+    let category = db::categories::write::create(
+        pool,
+        NewCategory {
+            name: "joined category".to_owned(),
+            description: Some("shares column names".to_owned()),
+        },
+    )
+    .await
+    .unwrap();
+    let product = db::products::write::create(
+        pool,
+        NewProduct {
+            id: ProductId::from(uuid::Uuid::from_u128(21_000)),
+            sku: "J-1".to_owned(),
+            name: "joined product".to_owned(),
+            category_id: category.id,
+            supplier_id: None,
+            price_cents: Some(1_250),
+            stock_on_hand: None,
+            reorder_level: None,
+            weight_kg: None,
+            discontinued: None,
+            released_on: None,
+            created_at: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let mut tx = pool.begin().await.unwrap();
+    let products_before = scans_in_transaction(&mut tx, "products").await;
+    let categories_before = scans_in_transaction(&mut tx, "categories").await;
+    let joined = get_with_category(&mut *tx, product.id)
+        .await
+        .unwrap()
+        .expect("the product exists");
+    let products_after = scans_in_transaction(&mut tx, "products").await;
+    let categories_after = scans_in_transaction(&mut tx, "categories").await;
+    tx.rollback().await.unwrap();
+    assert_eq!(products_after - products_before, 1, "one statement");
+    assert_eq!(categories_after - categories_before, 1, "one statement");
+
+    // The category is not optional: the foreign key is NOT NULL and
+    // categories are never hidden.
+    let ProductWithCategory {
+        product: read_product,
+        category: read_category,
+    } = joined;
+    assert_eq!(read_product, product);
+    assert_eq!(read_category, category);
+    assert_ne!(read_product.name, read_category.name);
+
+    let missing = ProductId::from(uuid::Uuid::from_u128(21_999));
+    assert_eq!(get_with_category(pool, missing).await.unwrap(), None);
+}
+
+/// A NULL foreign key reads the row with `None` as the related row; a set
+/// one reads its parent, and a `parent_id` self-reference joins the table
+/// to itself. A has-one reads the parent with its child, or with `None`.
+async fn joined_read_of_a_nullable_foreign_key_without_a_parent(pool: &PgPool) {
+    use db::org_units::models::NewOrgUnit;
+    use db::org_units::relationships::get_with_parent;
+    use db::user_profiles::models::NewUserProfile;
+    use db::users::models::NewUser;
+    use db::users::relationships::get_with_user_profile;
+
+    let unit = async |parent_id, name: &str| {
+        db::org_units::write::create(
+            pool,
+            NewOrgUnit {
+                parent_id,
+                name: name.to_owned(),
+            },
+        )
+        .await
+        .unwrap()
+    };
+    let root = unit(None, "joined root").await;
+    let child = unit(Some(root.id), "joined child").await;
+
+    let orphan = get_with_parent(pool, root.id).await.unwrap().unwrap();
+    assert_eq!(orphan.org_unit, root);
+    assert_eq!(orphan.parent, None);
+    let joined = get_with_parent(pool, child.id).await.unwrap().unwrap();
+    assert_eq!(joined.org_unit, child);
+    assert_eq!(joined.parent, Some(root));
+
+    let user = db::users::write::create(
+        pool,
+        NewUser {
+            email: "joined@example.com".to_owned(),
+        },
+    )
+    .await
+    .unwrap();
+    let alone = get_with_user_profile(pool, user.id).await.unwrap().unwrap();
+    assert_eq!(alone.user, user);
+    assert_eq!(alone.user_profile, None);
+    let profile = db::user_profiles::write::create(
+        pool,
+        NewUserProfile {
+            user_id: user.id,
+            bio: "joined".to_owned(),
+        },
+    )
+    .await
+    .unwrap();
+    let profiled = get_with_user_profile(pool, user.id).await.unwrap().unwrap();
+    assert_eq!(profiled.user_profile, Some(profile));
+}
+
+/// Comments and posts are both tenant-scoped and soft-deleted. A deleted or
+/// other-tenant post reads as an absent parent and keeps the comment; a
+/// deleted or other-tenant comment reads as `None`.
+async fn joined_read_respects_soft_delete_and_tenant_on_both_sides(pool: &PgPool) {
+    use db::comments::models::NewComment;
+    use db::comments::relationships::get_with_post;
+    use db::posts::models::NewPost;
+    use db::tenants::models::{NewTenant, TenantId};
+
+    let tenant = async |id: u128| {
+        db::tenants::write::create(
+            pool,
+            NewTenant {
+                id: TenantId::from(uuid::Uuid::from_u128(id)),
+                name: format!("tenant {id}"),
+            },
+        )
+        .await
+        .unwrap()
+        .id
+    };
+    let tenant_a = tenant(21_101).await;
+    let tenant_b = tenant(21_102).await;
+    let post = async |tenant, title: &str| {
+        db::posts::write::create(
+            pool,
+            tenant,
+            NewPost {
+                title: title.to_owned(),
+            },
+        )
+        .await
+        .unwrap()
+    };
+    let comment = async |tenant, post_id, body: &str| {
+        db::comments::write::create(
+            pool,
+            tenant,
+            NewComment {
+                post_id,
+                author_id: None,
+                body: body.to_owned(),
+            },
+        )
+        .await
+        .unwrap()
+    };
+    let live_post = post(tenant_a, "live").await;
+    let doomed_post = post(tenant_a, "doomed").await;
+    let foreign_post = post(tenant_b, "foreign").await;
+    let on_live = comment(tenant_a, live_post.id, "on live").await;
+    let on_doomed = comment(tenant_a, doomed_post.id, "on doomed").await;
+    // The foreign key does not stop a row from pointing at another tenant's.
+    let on_foreign = comment(tenant_a, foreign_post.id, "on foreign").await;
+
+    let joined = get_with_post(pool, tenant_a, on_live.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(joined.comment, on_live);
+    assert_eq!(joined.post, Some(live_post));
+
+    assert!(
+        db::posts::write::delete(pool, tenant_a, doomed_post.id)
+            .await
+            .unwrap()
+    );
+    let orphaned = get_with_post(pool, tenant_a, on_doomed.id)
+        .await
+        .unwrap()
+        .expect("a deleted parent does not hide the child");
+    assert_eq!(orphaned.comment, on_doomed);
+    assert_eq!(orphaned.post, None);
+
+    let crossed = get_with_post(pool, tenant_a, on_foreign.id)
+        .await
+        .unwrap()
+        .expect("the comment is the tenant's");
+    assert_eq!(crossed.post, None, "the post is another tenant's");
+
+    assert_eq!(
+        get_with_post(pool, tenant_b, on_live.id).await.unwrap(),
+        None,
+        "the comment is another tenant's"
+    );
+    assert!(
+        db::comments::write::delete(pool, tenant_a, on_live.id)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        get_with_post(pool, tenant_a, on_live.id).await.unwrap(),
+        None,
+        "a deleted child reads as missing"
+    );
+}
+
+/// Relationship filters use the configured names: `author` and
+/// `authored_expense_claims` filter like inferred relationships, and the
+/// opted-out `approved_by_user` has no filter field (only its column's).
+async fn renamed_relationships_filter_under_their_new_names(pool: &PgPool) {
+    use db::expense_claims::filter::{ExpenseClaimFilter, ExpenseClaimSortKey};
+    use db::expense_claims::models::NewExpenseClaim;
+    use db::search::{Ordered, Page, Sort, Text};
+    use db::users::filter::{UserFilter, UserSortKey};
+
+    let writer = create_user(pool, "writer@claims.example").await;
+    let reviewer = create_user(pool, "reviewer@claims.example").await;
+    let claim = db::expense_claims::write::create(
+        pool,
+        NewExpenseClaim {
+            created_by_user_id: writer.id,
+            approved_by_user_id: Some(reviewer.id),
+            amount_cents: 22_500,
+        },
+    )
+    .await
+    .unwrap();
+
+    let claims = db::expense_claims::read::search(
+        pool,
+        ExpenseClaimFilter {
+            author: Some(Box::new(UserFilter {
+                email: vec![Text::Eq("writer@claims.example".to_owned())],
+                ..Default::default()
+            })),
+            // The opted-out relationship leaves only its column's conditions.
+            approved_by_user_id: vec![Ordered::Eq(reviewer.id)],
+            ..Default::default()
+        },
+        Sort::asc(ExpenseClaimSortKey::Id),
+        Page::first(10),
+    )
+    .await
+    .unwrap();
+    assert_eq!(claims, vec![claim]);
+
+    let authors = db::users::read::search(
+        pool,
+        UserFilter {
+            authored_expense_claims: Some(Box::new(ExpenseClaimFilter {
+                amount_cents: vec![Ordered::Eq(22_500)],
+                ..Default::default()
+            })),
+            ..Default::default()
+        },
+        Sort::asc(UserSortKey::Id),
+        Page::first(10),
+    )
+    .await
+    .unwrap();
+    assert_eq!(authors, vec![writer], "the reviewer only approved it");
 }
 
 /// Two tenants, two roles in the first, and three permissions shared by all,
@@ -2680,4 +3416,93 @@ async fn plain_join_table_deletes_detached_pairs(pool: &PgPool) {
     sync(pool, group.id, &[]).await.unwrap();
     let members = load_users(pool, &groups).await.unwrap();
     assert_eq!(members[&group.id], Vec::new());
+}
+
+/// A many-to-many filter field matches rows paired, through a live row of
+/// the join table in the same tenant, with a related row matching the filter.
+async fn many_to_many_filters_go_through_the_join_table(pool: &PgPool) {
+    use db::member_groups::filter::{MemberGroupFilter, MemberGroupSortKey};
+    use db::member_groups::models::NewMemberGroup;
+    use db::permissions::filter::PermissionFilter;
+    use db::roles::filter::{RoleFilter, RoleSortKey};
+    use db::search::{Page, Sort, Text};
+    use db::users::filter::{UserFilter, UserSortKey};
+
+    let ([tenant, other_tenant], roles, permissions) = seed_roles(pool, 23_201).await;
+    let [admin, clerk] = [&roles[0], &roles[1]];
+    let [read, refund, _] = [&permissions[0], &permissions[1], &permissions[2]];
+    let attach = db::role_permissions::write::attach;
+    assert!(attach(pool, tenant, admin.id, &refund.code).await.unwrap());
+    assert!(attach(pool, tenant, clerk.id, &read.code).await.unwrap());
+    // Paired in another tenant only, or no longer paired: neither matches.
+    assert!(attach(pool, other_tenant, clerk.id, &refund.code).await.unwrap());
+    assert!(attach(pool, tenant, clerk.id, &refund.code).await.unwrap());
+    assert!(
+        db::role_permissions::write::detach(pool, tenant, clerk.id, &refund.code)
+            .await
+            .unwrap()
+    );
+
+    let refunders = db::roles::read::search(
+        pool,
+        tenant,
+        RoleFilter {
+            permissions: Some(Box::new(PermissionFilter {
+                code: vec![Text::Eq(refund.code.to_string())],
+                ..Default::default()
+            })),
+            ..Default::default()
+        },
+        Sort::asc(RoleSortKey::Id),
+        Page::first(10),
+    )
+    .await
+    .unwrap();
+    assert_eq!(refunders, vec![admin.clone()]);
+
+    let group = db::member_groups::write::create(
+        pool,
+        NewMemberGroup {
+            name: "filtered group".to_owned(),
+        },
+    )
+    .await
+    .unwrap();
+    let member = create_user(pool, "member@filters.example").await;
+    let outsider = create_user(pool, "outsider@filters.example").await;
+    assert!(
+        db::group_members::write::attach(pool, group.id, member.id)
+            .await
+            .unwrap()
+    );
+    let members = db::users::read::search(
+        pool,
+        UserFilter {
+            member_groups: Some(Box::new(MemberGroupFilter {
+                name: vec![Text::Eq("filtered group".to_owned())],
+                ..Default::default()
+            })),
+            ..Default::default()
+        },
+        Sort::asc(UserSortKey::Id),
+        Page::first(10),
+    )
+    .await
+    .unwrap();
+    assert_eq!(members, vec![member.clone()]);
+    let groups = db::member_groups::read::search(
+        pool,
+        MemberGroupFilter {
+            users: Some(Box::new(UserFilter {
+                email: vec![Text::Eq(outsider.email.clone())],
+                ..Default::default()
+            })),
+            ..Default::default()
+        },
+        Sort::asc(MemberGroupSortKey::Id),
+        Page::first(10),
+    )
+    .await
+    .unwrap();
+    assert_eq!(groups, Vec::new());
 }

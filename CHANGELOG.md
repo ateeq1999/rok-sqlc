@@ -155,7 +155,32 @@ against earlier development snapshots.
   table with two foreign keys but no unique pair (like `user_roles`) is not a
   join table. Opting out one side of a many-to-many removes the other;
   opting out a join table's foreign key removes the pair through it and
-  its join writes.
+  its join writes. A many-to-many relationship filter goes through a live
+  join row in the same tenant.
+- Joined reads for to-one relationships (ADR 0014): a table with a primary
+  key gets `get_with_<name>` in `relationships.rs` for each belongs-to and
+  has-one, reading the row and its related row in one query into a
+  `{Row}With{Relationship}` struct (`ProductWithCategory`). The related row
+  is an `Option` unless a NOT NULL foreign key guarantees it (a has-one, a
+  nullable foreign key, or a related table with a tenant or soft-delete
+  column makes it optional). Columns are selected under per-side aliases, so
+  shared column names decode unambiguously; the related table's tenant and
+  soft-delete conditions sit in the join's `ON` clause, so a deleted or
+  other-tenant parent reads as `None` instead of hiding the child.
+- Relationship filters (ADR 0014): a resource's `{Struct}Filter` gains an
+  `Option<Box<{Related}Filter>>` field per relationship
+  (`ProductFilter { category: Some(Box::new(CategoryFilter { name, .. })), .. }`),
+  rendered as a correlated `EXISTS` subquery so rows never repeat; for a
+  to-many relationship it means "at least one related row matches". An
+  empty related filter requires a related row (a `NULL` foreign key has
+  none). Soft-deleted related rows never match, and a related tenant
+  table's rows must share the searched row's tenant; an untenanted
+  resource gets no filter field into a tenant table. Filters nest up to
+  `db::search::MAX_RELATIONSHIP_DEPTH` (4) deep, and `search` fails with
+  `sqlx::Error::InvalidArgument` beyond it. A relationship named like one of
+  the filter's column fields fails generation, naming both; renaming it
+  in `[relationships]` resolves the clash, and filters use renamed names
+  and skip opted-out relationships.
 - A `[relationships]` section (config file, JSON payload, or
   `Config::relationships` with `rok_sqlc::RelationshipChange`) renames or
   opts out inferred relationships, by table and inferred name:
