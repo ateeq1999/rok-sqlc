@@ -459,7 +459,9 @@ filters (`ProductFilter`), sort keys, and the `db::search` conditions and
 `Sort` derive `Serialize` and `Deserialize`, so an API can take a search as
 JSON. In a patch, an absent field leaves the column alone and `null` sets it
 to `NULL` (`{"note": null}` is `note: Some(None)`); serializing skips the
-absent fields. A filter field left out of the JSON adds no condition. Without
+absent fields. A filter field left out of the JSON adds no condition, and
+condition, direction, and sort-key variants are snake_case
+(`{"price_cents": [{"ge": 400}]}`, `{"key": "price_cents", "direction": "desc"}`). Without
 `derive`, generated code doesn't mention serde. SQLx's `PgInterval` and
 `PgTimeTz` implement no serde traits, so with serde a table with an
 `INTERVAL` or `TIME WITH TIME ZONE` column (which would also reach its

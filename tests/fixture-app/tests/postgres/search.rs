@@ -137,9 +137,15 @@ async fn filters_round_trip_through_json(pool: &PgPool, category: CategoryId) {
         .unwrap();
     assert_eq!(found, expected);
 
+    // Variants are snake_case in JSON.
+    assert_eq!(
+        serde_json::to_string(&sort).unwrap(),
+        r#"{"key":"price_cents","direction":"desc"}"#
+    );
+
     // Fields left out of the JSON keep their defaults.
     let sparse: ProductFilter =
-        serde_json::from_str(r#"{"price_cents": [{"Ge": 400}]}"#).unwrap();
+        serde_json::from_str(r#"{"price_cents": [{"ge": 400}]}"#).unwrap();
     assert_eq!(
         sparse,
         ProductFilter {

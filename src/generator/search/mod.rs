@@ -265,7 +265,7 @@ mod tests {
             "#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]\n#[serde(default)]\npub struct UserFilter {"
         ), "{rendered}");
         assert!(rendered.contains(
-            "#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]\npub enum UserSortKey {"
+            "#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]\n#[serde(rename_all = \"snake_case\")]\npub enum UserSortKey {"
         ), "{rendered}");
     }
 
@@ -273,18 +273,24 @@ mod tests {
     fn serde_derives_shared_conditions_and_sorting_but_not_pages() {
         assert!(!render_shared(false).contains("serde"));
         let rendered = render_shared(true);
+        // Enums serialize their variants in snake_case, as JSON APIs expect.
         for item in [
             "pub enum Direction {",
-            "pub struct Sort<K> {",
             "pub enum Ordered<T> {",
             "pub enum Equality<T> {",
             "pub enum Text {",
         ] {
             assert!(
-                rendered.contains(&format!("serde::Deserialize)]\n{item}")),
+                rendered.contains(&format!(
+                    "serde::Deserialize)]\n#[serde(rename_all = \"snake_case\")]\n{item}"
+                )),
                 "{item}:\n{rendered}"
             );
         }
+        assert!(
+            rendered.contains("serde::Deserialize)]\npub struct Sort<K> {"),
+            "{rendered}"
+        );
         for item in ["pub struct Page {", "pub struct Limit(i64);"] {
             assert!(
                 rendered.contains(&format!("PartialEq, Eq)]\n{item}")),

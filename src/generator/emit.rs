@@ -68,6 +68,14 @@ pub fn push_serde_derive(output: &mut String, serde: bool) {
     }
 }
 
+/// Makes a serde-deriving search enum (a condition, `Direction`, or a sort
+/// key) read and write its variants in snake_case, as JSON APIs expect
+/// (`{"ge": 400}`, `"price_cents"`; ADR 0013). Generated enum types keep
+/// their database labels instead.
+pub fn push_serde_snake_case(output: &mut String) {
+    output.push_str("#[serde(rename_all = \"snake_case\")]\n");
+}
+
 /// `use {prefix}::...;` for sorted `names`, wrapped like rustfmt wraps a use
 /// list that does not fit on one line.
 pub fn use_list(prefix: &str, names: &[String]) -> String {

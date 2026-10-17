@@ -29,7 +29,8 @@ the *generated* API count as breaking (see ADR 0012).
 - With `derive = ["serde"]`, `{Table}Filter` (including its relationship
   fields), `{Table}SortKey`, and `Direction`, `Sort`, `Ordered`, `Equality`,
   and `Text` in `db::search` derive `Serialize` and `Deserialize`. A filter
-  field absent from the JSON adds no condition.
+  field absent from the JSON adds no condition. The enums among them use
+  snake_case variants in JSON (`{"ge": 400}`, `"desc"`, `"price_cents"`).
 - A `SERIAL`, `BIGSERIAL`, or `SMALLSERIAL` column off the primary key is
   `NOT NULL`, as in PostgreSQL: its row field is `i32`/`i64`/`i16` instead
   of `Option<…>`, and inserts still leave it to its sequence. After
