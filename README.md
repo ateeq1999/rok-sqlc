@@ -73,13 +73,12 @@ sync.
 
 ## Install
 
-rok-sqlc is not on crates.io yet. Install it from the repository:
-
 ```sh
-cargo install --git https://github.com/ateeq1999/rok-sqlc rok-sqlc
+cargo install rok-sqlc
 ```
 
-Once it is published, `cargo install rok-sqlc` will work too.
+To track unreleased changes, install from the repository instead:
+`cargo install --git https://github.com/ateeq1999/rok-sqlc rok-sqlc`.
 
 There are two Rust version floors:
 

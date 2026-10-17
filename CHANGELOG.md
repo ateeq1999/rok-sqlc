@@ -7,9 +7,10 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
-Nothing has been published to crates.io yet. The entries below record the
-work toward 0.1.0, including generated-API changes that break code written
-against earlier development snapshots.
+## [0.1.0] - 2026-10-17
+
+First release on crates.io. The entries below include generated-API changes
+that break code written against earlier development snapshots.
 
 ### Breaking changes to the generated API
 
@@ -237,3 +238,6 @@ against earlier development snapshots.
 - Diagnostics and file lists print paths with `/` on every platform, and
   paths under the current directory relative to it (also when they come
   from `rok-sqlc.toml`).
+
+[Unreleased]: https://github.com/ateeq1999/rok-sqlc/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ateeq1999/rok-sqlc/releases/tag/v0.1.0
