@@ -14,7 +14,11 @@ Test it in the fixture app with `actix_web::test` (`init_service` and `call_serv
 
 **Blocked by:** 04
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Fixture tests for every rejection path, plus a hand-written type, on actix-web 4.
-- [ ] Both frameworks generate together, and bodies match across them.
+- [x] Fixture tests for every rejection path, plus a hand-written type, on actix-web 4.
+- [x] Both frameworks generate together, and bodies match across them.
+
+## Comments
+
+- Implemented on branch `rok-sqlc-0-3-05`. `actix_web.rs` reads the body with `web::Bytes` (honouring `PayloadConfig`) and calls the shared `validated` rather than wrapping `web::Json<T>`, as ticket 04 chose for axum; a body over the limit is 400 `MALFORMED_BODY`. Bodies match axum compared as JSON, since validator's `params` is a `HashMap` whose key order varies per rejection in either framework.

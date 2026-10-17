@@ -63,6 +63,9 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
     if extractors.contains(&Extractor::Axum) {
         output.push_str("//   axum = \"0.8\"\n");
     }
+    if extractors.contains(&Extractor::ActixWeb) {
+        output.push_str("//   actix-web = \"4\"\n");
+    }
     output.push('\n');
     // Sorted the way rustfmt sorts `mod` declarations.
     let mut modules: Vec<&str> = tables

@@ -350,3 +350,55 @@ fn extractors_generate_the_http_module() -> Result<()> {
     }
     Ok(())
 }
+
+/// `extractors = ["actix_web"]` adds `db/http/actix_web.rs` next to the
+/// shared `db/http/mod.rs`, with `actix-web` among the dependency hints;
+/// `["axum", "actix_web"]` generates both side by side, sharing `mod.rs`.
+#[test]
+fn the_actix_web_extractor_is_generated_alone_or_beside_axum() -> Result<()> {
+    use rok_sqlc::{Derive, Extractor};
+    let inputs = Inputs::new()?;
+
+    let mut config = inputs.config("actix");
+    config.derive = vec![Derive::Serde, Derive::Validate];
+    config.extractors = vec![Extractor::ActixWeb];
+    rok_sqlc::generate(&config)?;
+    let actix = tree(&inputs.path("actix"))?;
+    let http_mod = &actix[&Path::new("http").join("mod.rs")];
+    assert!(http_mod.contains("pub mod actix_web;"), "{http_mod}");
+    assert!(!http_mod.contains("pub mod axum;"), "{http_mod}");
+    assert!(!actix.contains_key(&Path::new("http").join("axum.rs")));
+    let extractor = &actix[&Path::new("http").join("actix_web.rs")];
+    assert!(
+        extractor.contains("pub struct ValidatedJson<T>(pub T);"),
+        "{extractor}"
+    );
+    assert!(
+        extractor.contains("impl ResponseError for BodyRejection"),
+        "{extractor}"
+    );
+    let db_mod = &actix[Path::new("mod.rs")];
+    assert!(db_mod.contains("pub mod http;"), "{db_mod}");
+    assert!(db_mod.contains("//   actix-web = \"4\"\n"), "{db_mod}");
+    assert!(!db_mod.contains("axum"), "{db_mod}");
+
+    let mut config = inputs.config("both");
+    config.derive = vec![Derive::Serde, Derive::Validate];
+    config.extractors = vec![Extractor::ActixWeb, Extractor::Axum];
+    rok_sqlc::generate(&config)?;
+    let both = tree(&inputs.path("both"))?;
+    let http_mod = &both[&Path::new("http").join("mod.rs")];
+    assert!(
+        http_mod.contains("pub mod actix_web;\npub mod axum;\n"),
+        "{http_mod}"
+    );
+    assert_eq!(
+        both[&Path::new("http").join("actix_web.rs")],
+        *extractor,
+        "the actix-web module does not depend on axum being generated"
+    );
+    let db_mod = &both[Path::new("mod.rs")];
+    assert!(db_mod.contains("//   axum = \"0.8\"\n"), "{db_mod}");
+    assert!(db_mod.contains("//   actix-web = \"4\"\n"), "{db_mod}");
+    Ok(())
+}

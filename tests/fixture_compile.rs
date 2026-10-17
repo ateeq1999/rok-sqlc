@@ -93,8 +93,9 @@ fn generate_fixture() -> Result<Vec<PathBuf>> {
     validated.output = app_dir().join("src/validated_db");
     validated.force = true;
     validated.derive = vec![rok_sqlc::Derive::Serde, rok_sqlc::Derive::Validate];
-    // `db/http/`, whose extractors `tests/axum.rs` drives.
-    validated.extractors = vec![rok_sqlc::Extractor::Axum];
+    // `db/http/`, whose extractors `tests/axum.rs` and `tests/actix_web.rs`
+    // drive.
+    validated.extractors = vec![rok_sqlc::Extractor::Axum, rok_sqlc::Extractor::ActixWeb];
     let report = rok_sqlc::generate(&validated)?;
     files.extend(report.written.into_iter().chain(report.unchanged));
     Ok(files)
@@ -144,6 +145,31 @@ fn generated_axum_extractor_validates_bodies() -> Result<()> {
     ensure!(
         status.success(),
         "the generated axum extractor failed its tests"
+    );
+    Ok(())
+}
+
+/// The generated actix-web extractor takes valid bodies, answers every
+/// rejection in the Rok error envelope, and answers each input with the
+/// same bytes as the axum one beside it (`tests/actix_web.rs` in the
+/// fixture crate). Needs no database.
+#[test]
+fn generated_actix_web_extractor_validates_bodies_like_axum() -> Result<()> {
+    let _guard = FIXTURE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(reason) = common::generated_code_skip_reason(&app_dir()) {
+        eprintln!("{reason}");
+        return Ok(());
+    }
+    generate_fixture()?;
+
+    let status = cargo(&app_dir(), &["test", "--quiet", "--test", "actix_web"])
+        .status()
+        .context("failed to run cargo test in tests/fixture-app")?;
+    ensure!(
+        status.success(),
+        "the generated actix-web extractor failed its tests"
     );
     Ok(())
 }

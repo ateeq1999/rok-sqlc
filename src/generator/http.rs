@@ -15,6 +15,9 @@ pub fn render(output: &Path, extractors: &[Extractor]) -> Vec<(std::path::PathBu
     }
     let dir = output.join("http");
     let mut files = vec![(dir.join("mod.rs"), render_mod(extractors))];
+    if extractors.contains(&Extractor::ActixWeb) {
+        files.push((dir.join("actix_web.rs"), format!("{HEADER}\n{ACTIX_WEB}")));
+    }
     if extractors.contains(&Extractor::Axum) {
         files.push((dir.join("axum.rs"), format!("{HEADER}\n{AXUM}")));
     }
@@ -24,6 +27,10 @@ pub fn render(output: &Path, extractors: &[Extractor]) -> Vec<(std::path::PathBu
 /// `db/http/mod.rs`: a module per framework, then the shared items.
 fn render_mod(extractors: &[Extractor]) -> String {
     let mut output = format!("{HEADER}\n{MOD_DOC}\n");
+    // Sorted the way rustfmt sorts `mod` declarations.
+    if extractors.contains(&Extractor::ActixWeb) {
+        output.push_str("pub mod actix_web;\n");
+    }
     if extractors.contains(&Extractor::Axum) {
         output.push_str("pub mod axum;\n");
     }
@@ -288,6 +295,85 @@ impl IntoResponse for BodyRejection {
     fn into_response(self) -> Response {
         let status = StatusCode::from_u16(self.status()).unwrap_or(StatusCode::BAD_REQUEST);
         (status, Json(self.body())).into_response()
+    }
+}
+";
+
+/// `db/http/actix_web.rs`.
+const ACTIX_WEB: &str = r"//! The actix-web extractor: [`ValidatedJson<T>`] takes a validated body,
+//! and [`BodyRejection`] answers anything else in the Rok error envelope, so
+//! no `JsonConfig` error handler is needed.
+
+use std::future::Future;
+use std::ops::Deref;
+use std::pin::Pin;
+
+use actix_web::dev::Payload;
+use actix_web::http::{StatusCode, header};
+use actix_web::web::Bytes;
+use actix_web::{FromRequest, HttpRequest, HttpResponse, ResponseError};
+use serde::de::DeserializeOwned;
+use validator::Validate;
+
+pub use super::BodyRejection;
+
+/// A JSON request body that deserialized into `T` and passed every
+/// validation rule. Any `T: DeserializeOwned + Validate` works: a generated
+/// create input or update patch, or a hand-written request type. The body is
+/// read within the limit of the app's `PayloadConfig`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ValidatedJson<T>(pub T);
+
+impl<T> ValidatedJson<T> {
+    /// The validated body.
+    #[must_use]
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+}
+
+impl<T> Deref for ValidatedJson<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T> FromRequest for ValidatedJson<T>
+where
+    T: DeserializeOwned + Validate + 'static,
+{
+    type Error = BodyRejection;
+    type Future = Pin<Box<dyn Future<Output = Result<Self, BodyRejection>>>>;
+
+    fn from_request(request: &HttpRequest, payload: &mut Payload) -> Self::Future {
+        let is_json = request
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(super::is_json);
+        // Read only a JSON body, within the app's `PayloadConfig` limit.
+        let bytes = is_json.then(|| Bytes::from_request(request, payload));
+        Box::pin(async move {
+            let Some(bytes) = bytes else {
+                return Err(BodyRejection::not_json());
+            };
+            let bytes = bytes.await.map_err(|error| BodyRejection::Malformed {
+                message: error.to_string(),
+            })?;
+            super::validated(&bytes).map(Self)
+        })
+    }
+}
+
+impl ResponseError for BodyRejection {
+    fn status_code(&self) -> StatusCode {
+        StatusCode::from_u16(self.status()).unwrap_or(StatusCode::BAD_REQUEST)
+    }
+
+    fn error_response(&self) -> HttpResponse {
+        HttpResponse::build(self.status_code()).json(self.body())
     }
 }
 ";
