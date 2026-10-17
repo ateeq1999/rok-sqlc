@@ -17,6 +17,11 @@ use super::{
 /// instead of positional arguments.
 const MAX_POSITIONAL_PARAMS: usize = 3;
 
+/// Whether the query's function takes a `{Name}Params` struct.
+pub fn uses_params_struct(query: &AnalyzedQuery) -> bool {
+    query.params.len() > MAX_POSITIONAL_PARAMS
+}
+
 /// Renders `db/queries.rs`, a direct child of `db`. `tables` are the
 /// generated tables, whose typed ids the query types may name.
 pub fn render(queries: &[AnalyzedQuery], tables: &[Table], serde: bool) -> String {
@@ -150,7 +155,7 @@ fn render_query(
         output.push_str("}\n");
     }
 
-    let uses_params_struct = query.params.len() > MAX_POSITIONAL_PARAMS;
+    let uses_params_struct = uses_params_struct(query);
     if uses_params_struct {
         output.push('\n');
         push_doc(output, 0, &[&format!("Parameters of `{}`.", query.fn_name)]);

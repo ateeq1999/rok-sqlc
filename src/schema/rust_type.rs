@@ -12,6 +12,19 @@
 /// imports `types` along its path to the `db` module.
 pub const TYPES_MODULE: &str = "types";
 
+/// `INTERVAL`: SQLx's own type, which implements neither `PartialOrd` nor
+/// serde's traits.
+pub const INTERVAL: &str = "sqlx::postgres::types::PgInterval";
+
+/// `BYTEA`.
+pub const BYTES: &str = "Vec<u8>";
+
+/// `TIME WITH TIME ZONE`: SQLx's own type, which implements neither
+/// `PartialOrd` nor serde's traits. Its default parameters are `chrono`'s
+/// `NaiveTime` and `FixedOffset`, or the `time` crate's types when SQLx's
+/// `time` feature is on; the generated code compiles with either.
+pub const TIME_TZ: &str = "sqlx::postgres::types::PgTimeTz";
+
 /// The outer shape of a Rust type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shape<'a> {
@@ -67,6 +80,12 @@ pub enum BaseType {
     Timestamp,
     /// `chrono::DateTime<chrono::Utc>`.
     TimestampTz,
+    /// [`INTERVAL`].
+    Interval,
+    /// [`BYTES`], which is a list of bytes in Rust but one value in SQL.
+    Bytes,
+    /// [`TIME_TZ`].
+    TimeTz,
     /// A generated enum, `types::X`.
     Enum,
     /// An array, `Vec<T>`.
@@ -88,6 +107,9 @@ impl BaseType {
             "chrono::NaiveTime" => BaseType::Time,
             "chrono::NaiveDateTime" => BaseType::Timestamp,
             "chrono::DateTime<chrono::Utc>" => BaseType::TimestampTz,
+            INTERVAL => BaseType::Interval,
+            BYTES => BaseType::Bytes,
+            TIME_TZ => BaseType::TimeTz,
             other if is_enum_path(other) => BaseType::Enum,
             other => match Shape::of(other) {
                 Shape::List(_) => BaseType::Array,
@@ -125,6 +147,13 @@ fn is_enum_path(rust_type: &str) -> bool {
         .strip_prefix(TYPES_MODULE)
         .and_then(|rest| rest.strip_prefix("::"))
         .is_some_and(|name| !name.is_empty() && !name.contains([':', '<', '>']))
+}
+
+/// Whether a Rust type holds an SQLx type that implements neither
+/// `Serialize` nor `Deserialize` ([`INTERVAL`], `PgTimeTz`), possibly
+/// inside `Option<…>` or `Vec<…>`.
+pub fn lacks_serde(rust_type: &str) -> bool {
+    rust_type.contains(INTERVAL) || rust_type.contains("sqlx::postgres::types::PgTimeTz")
 }
 
 /// Whether a Rust type mentions a generated enum (`types::X`, possibly inside

@@ -1291,7 +1291,7 @@ mod tests {
             stock INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE app.tags (id BIGSERIAL PRIMARY KEY, \"select\" TEXT NOT NULL);
-        CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, length INTERVAL NOT NULL);
+        CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, length INET NOT NULL);
     ";
 
     fn analyze(queries: &str) -> (Vec<AnalyzedQuery>, Vec<QueryFailure>) {
@@ -1351,6 +1351,39 @@ mod tests {
         };
         assert_eq!(columns[0].rust_type, "uuid::Uuid");
         assert_eq!(columns[1].rust_name, "sku");
+    }
+
+    #[test]
+    fn casts_to_interval_bytea_and_timetz_infer_their_mapped_types() {
+        let query = one(
+            "-- name: Q :many\nSELECT id, '1 day'::interval AS span, sku::bytea AS raw, '12:00+01'::timetz AS opens \
+             FROM products WHERE $1::interval IS NOT NULL AND $2::bytea IS NOT NULL AND $3::time with time zone IS NOT NULL;",
+        );
+        let interval = "sqlx::postgres::types::PgInterval";
+        let time_tz = "sqlx::postgres::types::PgTimeTz";
+        assert_eq!(
+            query.params,
+            [
+                param(1, "param_1", interval),
+                param(2, "param_2", "Vec<u8>"),
+                param(3, "param_3", time_tz),
+            ]
+        );
+        let ResultShape::Row(columns) = &query.result else {
+            panic!("expected a row struct");
+        };
+        let types: Vec<&str> = columns
+            .iter()
+            .map(|column| column.rust_type.as_str())
+            .collect();
+        assert_eq!(
+            types[1..],
+            [
+                format!("Option<{interval}>"),
+                "Option<Vec<u8>>".to_owned(),
+                format!("Option<{time_tz}>"),
+            ]
+        );
     }
 
     #[test]

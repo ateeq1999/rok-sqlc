@@ -7,6 +7,18 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+### Added
+
+- `INTERVAL` maps to `sqlx::postgres::types::PgInterval`, `BYTEA` to
+  `Vec<u8>` (borrowed as `&[u8]` in key, lookup, and query parameters), and
+  `TIME WITH TIME ZONE`/`TIMETZ` to `sqlx::postgres::types::PgTimeTz`, in
+  columns, arrays, query-file casts (`$1::interval`), and result columns.
+  All three get equality filters: SQLx implements no `PartialOrd` for
+  `PgInterval` or `PgTimeTz`.
+- With `derive = ["serde"]`, a table or query that would put `PgInterval` or
+  `PgTimeTz` (which implement no serde traits) into a serde-deriving item
+  fails the run with an error naming the column or parameter.
+
 ## [0.1.0] - 2026-10-17
 
 First release on crates.io. The entries below include generated-API changes

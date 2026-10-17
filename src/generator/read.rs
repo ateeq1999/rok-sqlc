@@ -637,6 +637,21 @@ mod tests {
         assert!(rendered.contains("    after: Option<&UserKey>,\n"));
     }
 
+    /// A `BYTEA` key is borrowed as a byte slice, like text as `&str`.
+    #[test]
+    fn byte_keys_are_borrowed_as_slices() {
+        let rendered = render_alone(&table(
+            vec![column("digest", "Vec<u8>"), column("email", "String")],
+            &["digest"],
+        ));
+        assert!(rendered.contains("get_by_id<'e, E>(executor: E, digest: &[u8])"));
+        assert!(
+            rendered.contains("    after: Option<&[u8]>,\n"),
+            "{rendered}"
+        );
+        assert!(rendered.contains(".bind(digest)"));
+    }
+
     #[test]
     fn output_is_deterministic() {
         let build = || render_alone(&table(vec![column("id", "i64")], &["id"]));

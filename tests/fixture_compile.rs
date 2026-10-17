@@ -72,7 +72,19 @@ fn generate_fixture() -> Result<Vec<PathBuf>> {
         );
 
     let report = rok_sqlc::generate(&config)?;
-    Ok(report.written.into_iter().chain(report.unchanged).collect())
+    let mut files: Vec<PathBuf> = report.written.into_iter().chain(report.unchanged).collect();
+
+    // Types without serde support (`INTERVAL`, `TIME WITH TIME ZONE`)
+    // generate only without the serde derive, so they get a second `db`
+    // module of their own.
+    let mut plain = rok_sqlc::Config::default();
+    plain.schema = vec![app_dir().join("plain_schema.sql")];
+    plain.queries = vec![app_dir().join("plain_queries.sql")];
+    plain.output = app_dir().join("src/plain_db");
+    plain.force = true;
+    let report = rok_sqlc::generate(&plain)?;
+    files.extend(report.written.into_iter().chain(report.unchanged));
+    Ok(files)
 }
 
 #[test]

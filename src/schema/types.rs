@@ -284,7 +284,8 @@ pub enum FilterKind {
     Ordered,
     /// Text: equality, sets, and literal substring matching.
     Text,
-    /// Booleans, UUIDs, and enums: equality and sets.
+    /// Booleans, UUIDs, enums, byte strings, and the types SQLx gives no
+    /// `PartialOrd` (`INTERVAL`, `TIME WITH TIME ZONE`): equality and sets.
     Equality,
 }
 
@@ -301,7 +302,12 @@ impl Column {
             | BaseType::Timestamp
             | BaseType::TimestampTz => Some(FilterKind::Ordered),
             BaseType::Text => Some(FilterKind::Text),
-            BaseType::Bool | BaseType::Uuid | BaseType::Enum => Some(FilterKind::Equality),
+            BaseType::Bool
+            | BaseType::Uuid
+            | BaseType::Enum
+            | BaseType::Interval
+            | BaseType::Bytes
+            | BaseType::TimeTz => Some(FilterKind::Equality),
             BaseType::Array | BaseType::Other => None,
         }
     }
