@@ -5,8 +5,9 @@ use anyhow::{Context, Result, bail};
 use sqlparser::ast::{
     AlterTableOperation, AlterType, AlterTypeAddValue, AlterTypeAddValuePosition,
     AlterTypeOperation, ArrayElemTypeDef, ColumnDef, ColumnOption, CreateIndex, CreateTable,
-    DataType, ExactNumberInfo, Expr, Ident, IndexColumn, ObjectName, ObjectNamePart, ObjectType,
-    Spanned, Statement, TableConstraint, TimezoneInfo, UserDefinedTypeRepresentation, Value,
+    CreateTrigger, DataType, DropTrigger, ExactNumberInfo, Expr, Ident, IndexColumn, ObjectName,
+    ObjectNamePart, ObjectType, Spanned, Statement, TableConstraint, TimezoneInfo, TriggerEvent,
+    TriggerObject, TriggerPeriod, UserDefinedTypeRepresentation, Value,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -23,6 +24,33 @@ use crate::schema::{
 pub struct ParsedSchema {
     pub schema: Schema,
     pub failures: Vec<TableFailure>,
+    /// Where each table in `schema` was created (its `CREATE TABLE`), by
+    /// module name, so a later check can fail it at that location.
+    created: HashMap<String, (PathBuf, Option<usize>)>,
+}
+
+impl ParsedSchema {
+    /// Fails every table `reason` gives a reason for: the table leaves
+    /// `schema.tables` and joins `failures`, located at its `CREATE TABLE`.
+    pub fn fail_tables(&mut self, mut reason: impl FnMut(&Table) -> Option<String>) {
+        let mut failed = Vec::new();
+        self.schema.tables.retain(|table| {
+            let Some(reason) = reason(table) else {
+                return true;
+            };
+            failed.push((table.clone(), reason));
+            false
+        });
+        for (table, reason) in failed {
+            let (path, line) = self.created.remove(&table.module_name).unwrap_or_default();
+            self.failures.push(TableFailure {
+                path: Some(path).filter(|path| !path.as_os_str().is_empty()),
+                line,
+                schema: table.schema.clone(),
+                ..table_failure(&table.sql_name, reason)
+            });
+        }
+    }
 }
 
 /// Root modules rok-sqlc always generates next to the resource modules.
@@ -56,10 +84,12 @@ pub fn parse_schema(sql: &str) -> Result<ParsedSchema> {
 /// renames columns and adds primary key, unique, foreign key, and value-list
 /// check constraints, and `CREATE UNIQUE INDEX` on plain columns records a unique
 /// key. Any other `ALTER TABLE` clause on a known table fails that table.
+/// `CREATE TRIGGER` and `DROP TRIGGER` keep track of each table's row-level
+/// `BEFORE INSERT` triggers, by name; the trigger functions are not read.
 /// `DROP TABLE` removes a table, together with the foreign keys other tables
 /// hold to it (as `CASCADE` would), and `DROP TYPE` removes an enum type.
 /// Statements that leave the model unchanged (row-level security, policies,
-/// non-unique indexes, grants, triggers, comments, functions, `SELECT`
+/// non-unique indexes, grants, other triggers, comments, functions, `SELECT`
 /// calls) and statements on unknown tables are ignored on purpose.
 pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
     let dialect = PostgreSqlDialect {};
@@ -183,6 +213,14 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
                     record_unique_index(&mut tables, &index);
                     continue;
                 }
+                Statement::CreateTrigger(trigger) => {
+                    record_trigger(&mut tables, &trigger);
+                    continue;
+                }
+                Statement::DropTrigger(trigger) => {
+                    forget_trigger(&mut tables, &trigger);
+                    continue;
+                }
                 Statement::CreateType {
                     name,
                     representation: UserDefinedTypeRepresentation::Enum { labels },
@@ -248,6 +286,7 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
             enums: all_enums,
         },
         failures,
+        created,
     })
 }
 
@@ -852,6 +891,43 @@ fn add_constraint(
     Ok(())
 }
 
+/// Records a `CREATE TRIGGER` on a known table: a row-level `BEFORE` trigger
+/// that fires on `INSERT` (alone or with other events) can supply the values
+/// of the columns inserts leave out. Its function is not inspected. A
+/// `CREATE OR REPLACE` of a trigger with the same name replaces it.
+fn record_trigger(tables: &mut [Table], trigger: &CreateTrigger) {
+    let Some(index) = find_table(tables, &trigger.table_name) else {
+        return;
+    };
+    let table = &mut tables[index];
+    let name = object_leaf_name(&trigger.name);
+    table.before_insert_triggers.retain(|other| *other != name);
+    let before_insert = trigger.period == TriggerPeriod::Before
+        && trigger.trigger_object == TriggerObject::Row
+        && trigger.events.contains(&TriggerEvent::Insert);
+    if before_insert {
+        table.before_insert_triggers.push(name);
+    }
+}
+
+/// Applies a `DROP TRIGGER`: the trigger no longer supplies values. Without
+/// a table name, a trigger of that name is dropped from every table.
+fn forget_trigger(tables: &mut [Table], trigger: &DropTrigger) {
+    let name = object_leaf_name(&trigger.trigger_name);
+    let only = trigger
+        .table_name
+        .as_ref()
+        .and_then(|table| find_table(tables, table));
+    if trigger.table_name.is_some() && only.is_none() {
+        return;
+    }
+    for (index, table) in tables.iter_mut().enumerate() {
+        if only.is_none_or(|only| only == index) {
+            table.before_insert_triggers.retain(|other| *other != name);
+        }
+    }
+}
+
 /// Records a `CREATE UNIQUE INDEX` on plain columns of a known table as a
 /// unique key, keeping a partial index's condition. Expression indexes and
 /// non-unique indexes change nothing.
@@ -1000,6 +1076,7 @@ fn build_table(
         soft_delete_column: None,
         tenant_column: None,
         relationships: Vec::new(),
+        before_insert_triggers: Vec::new(),
     };
     // Like PostgreSQL, one `CREATE TABLE` makes one constraint of several
     // over the same column list: a primary key if any of them is, named by

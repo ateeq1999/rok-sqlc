@@ -71,7 +71,7 @@ pub fn check_filter_fields(table: &Table, tables: &[Table]) -> Result<(), String
         let name = super::conventions::INCLUDE_DELETED;
         fields.push((name.to_owned(), format!("`{name}` switch")));
     }
-    for column in &table.columns {
+    for column in filter_columns(table) {
         if column.filter_kind().is_some() {
             fields.push((
                 column.rust_name.clone(),
@@ -180,11 +180,19 @@ fn push_block(output: &mut String, head: &str, items: &[String], indent: usize) 
     output.push_str(&format!("{pad}}}\n"));
 }
 
-/// Columns `search` may order by: every filterable column.
-pub fn sortable(table: &Table) -> Vec<&Column> {
+/// Columns the filter may have fields for: every column but the tenant
+/// column, which the tenant parameter already scopes `search` by.
+fn filter_columns(table: &Table) -> impl Iterator<Item = &Column> {
     table
         .columns
         .iter()
+        .filter(|column| !table.is_tenant_column(column))
+}
+
+/// Columns `search` may order by: every filterable column but the tenant
+/// column.
+pub fn sortable(table: &Table) -> Vec<&Column> {
+    filter_columns(table)
         .filter(|column| column.filter_kind().is_some())
         .collect()
 }
@@ -201,9 +209,7 @@ pub fn render_filter(table: &Table, tables: &[Table]) -> Option<String> {
     }
     let filter = format!("{}Filter", table.struct_name);
     let sort_key = format!("{}SortKey", table.struct_name);
-    let filterable: Vec<(&Column, FilterKind)> = table
-        .columns
-        .iter()
+    let filterable: Vec<(&Column, FilterKind)> = filter_columns(table)
         .filter_map(|column| column.filter_kind().map(|kind| (column, kind)))
         .collect();
     let relationships = filter_relationships(table, tables);
@@ -213,7 +219,7 @@ pub fn render_filter(table: &Table, tables: &[Table]) -> Option<String> {
     let fallible = !relationships.is_empty();
 
     let mut output = format!("{HEADER}\n");
-    let has_nullable = table.columns.iter().any(|column| column.nullable);
+    let has_nullable = filter_columns(table).any(|column| column.nullable);
     let mut imports: Vec<&str> = filterable
         .iter()
         .map(|(_, kind)| kind.type_name())
@@ -295,7 +301,7 @@ pub fn render_filter(table: &Table, tables: &[Table]) -> Option<String> {
             super::conventions::INCLUDE_DELETED
         ));
     }
-    for column in &table.columns {
+    for column in filter_columns(table) {
         let name = doc_name(&column.sql_name);
         if let Some(kind) = column.filter_kind() {
             fields.push(format!("/// Conditions on the {name} column."));
@@ -425,7 +431,7 @@ const ERRORS_DOC: [&str; 5] = [
 /// Appends ` AND <column> <condition>` for every column condition of the
 /// filter, inside a function taking `self` and `query`.
 fn push_column_conditions(output: &mut String, table: &Table) {
-    for column in &table.columns {
+    for column in filter_columns(table) {
         let name = str_literal(&ident(&column.sql_name));
         if column.filter_kind().is_some() {
             output.push_str(&format!(

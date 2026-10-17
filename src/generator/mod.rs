@@ -85,6 +85,18 @@ pub struct QueryModule {
     pub queries: Vec<AnalyzedQuery>,
 }
 
+/// Resource modules an earlier run generated for tables this run skips as
+/// unsupported. Their files are kept as they are, so `mod.rs` keeps
+/// declaring them.
+#[derive(Debug, Clone, Default)]
+pub struct KeptResources {
+    /// The kept modules, sorted.
+    pub modules: Vec<String>,
+    /// Whether a kept module's `update` returns `UpdateOutcome`, which
+    /// `mod.rs` then still defines.
+    pub uses_update_outcome: bool,
+}
+
 impl QueriesModule<'_> {
     fn is_declared(self) -> bool {
         !matches!(self, QueriesModule::None)
@@ -97,8 +109,15 @@ fn plan_files(schema_sql: &str, tables: &[Table], output: &Path) -> Vec<(PathBuf
         output: output.to_path_buf(),
         ..Config::default()
     };
-    plan_files_with_queries(&config, schema_sql, tables, &[], QueriesModule::None)
-        .expect("the tables generate")
+    plan_files_with_queries(
+        &config,
+        schema_sql,
+        tables,
+        &[],
+        QueriesModule::None,
+        &KeptResources::default(),
+    )
+    .expect("the tables generate")
 }
 
 /// The model the renderers read, built in the one order the steps depend
@@ -119,7 +138,8 @@ pub fn prepare(
 
 /// Plans every generated file under `config.output`: `tables` (the ones
 /// this run generates), the shared modules, `enums` in `types.rs`, and the
-/// queries module. `schema_sql` is the schema snapshot. Uses the
+/// queries module, and declares the `kept` resource modules in `mod.rs`.
+/// `schema_sql` is the schema snapshot. Uses the
 /// configuration's conventions, derives, and relationship changes.
 pub fn plan_files_with_queries(
     config: &Config,
@@ -127,6 +147,7 @@ pub fn plan_files_with_queries(
     tables: &[Table],
     enums: &[EnumType],
     queries: QueriesModule<'_>,
+    kept: &KeptResources,
 ) -> Result<Vec<(PathBuf, String)>, String> {
     let (conventions, output) = (&config.conventions, config.output.as_path());
     let serde = config.derive.contains(&Derive::Serde);
@@ -191,7 +212,7 @@ pub fn plan_files_with_queries(
     }
     files.push((
         output.join("mod.rs"),
-        render_db_mod(tables, !enums.is_empty(), has_session, queries, serde),
+        render_db_mod(tables, !enums.is_empty(), has_session, queries, kept, serde),
     ));
     files.push((output.join("schema.rs"), render_schema_snapshot(schema_sql)));
 
@@ -534,6 +555,7 @@ pub fn render_db_mod(
     has_types: bool,
     has_session: bool,
     queries: QueriesModule<'_>,
+    kept: &KeptResources,
     serde: bool,
 ) -> String {
     let mut types: Vec<String> = tables
@@ -563,6 +585,7 @@ pub fn render_db_mod(
     let mut modules: Vec<&str> = tables
         .iter()
         .map(|table| table.module_name.as_str())
+        .chain(kept.modules.iter().map(String::as_str))
         .collect();
     modules.push("schema");
     modules.push("search");
@@ -579,7 +602,7 @@ pub fn render_db_mod(
     for module in modules {
         output.push_str(&format!("pub mod {module};\n"));
     }
-    if tables.iter().any(write::has_versioned_update) {
+    if kept.uses_update_outcome || tables.iter().any(write::has_versioned_update) {
         output.push_str(UPDATE_OUTCOME);
     }
     output
@@ -721,6 +744,7 @@ pub(crate) mod test_support {
             soft_delete_column: None,
             tenant_column: None,
             relationships: Vec::new(),
+            before_insert_triggers: Vec::new(),
         }
     }
 }
@@ -747,7 +771,14 @@ mod tests {
     #[test]
     fn db_mod_lists_modules_and_conditional_dependencies() {
         let tables = vec![table(vec![column("id", "uuid::Uuid")], &["id"])];
-        let rendered = render_db_mod(&tables, false, false, QueriesModule::None, false);
+        let rendered = render_db_mod(
+            &tables,
+            false,
+            false,
+            QueriesModule::None,
+            &KeptResources::default(),
+            false,
+        );
         assert!(rendered.contains("pub mod users;"));
         assert!(rendered.contains("pub mod schema;"));
         assert!(rendered.contains("\"uuid\""));
@@ -763,11 +794,26 @@ mod tests {
     fn db_mod_declares_queries_when_generated_or_kept() {
         let tables = vec![table(vec![column("id", "i64")], &["id"])];
         assert!(
-            !render_db_mod(&tables, false, false, QueriesModule::None, false)
-                .contains("pub mod queries;")
+            !render_db_mod(
+                &tables,
+                false,
+                false,
+                QueriesModule::None,
+                &KeptResources::default(),
+                false
+            )
+            .contains("pub mod queries;")
         );
         assert!(
-            render_db_mod(&tables, false, false, QueriesModule::Keep, false).contains(
+            render_db_mod(
+                &tables,
+                false,
+                false,
+                QueriesModule::Keep,
+                &KeptResources::default(),
+                false
+            )
+            .contains(
                 "pub mod queries;
 pub mod schema;
 pub mod search;
@@ -775,15 +821,29 @@ pub mod users;"
             )
         );
         assert!(
-            render_db_mod(&tables, false, false, QueriesModule::Generate(&[]), false)
-                .contains("pub mod queries;")
+            render_db_mod(
+                &tables,
+                false,
+                false,
+                QueriesModule::Generate(&[]),
+                &KeptResources::default(),
+                false
+            )
+            .contains("pub mod queries;")
         );
     }
 
     #[test]
     fn db_mod_hints_rust_decimal_when_used() {
         let tables = vec![table(vec![column("id", "rust_decimal::Decimal")], &["id"])];
-        let rendered = render_db_mod(&tables, false, false, QueriesModule::None, false);
+        let rendered = render_db_mod(
+            &tables,
+            false,
+            false,
+            QueriesModule::None,
+            &KeptResources::default(),
+            false,
+        );
         assert!(rendered.contains("\"rust_decimal\""));
         assert!(rendered.contains("rust_decimal = \"1\""));
         assert!(!rendered.contains("\"uuid\""));

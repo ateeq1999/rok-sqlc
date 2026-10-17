@@ -63,23 +63,28 @@ impl Project {
     }
 
     fn tree(&self) -> Result<BTreeMap<PathBuf, String>> {
-        fn walk(root: &Path, dir: &Path, files: &mut BTreeMap<PathBuf, String>) -> Result<()> {
-            for entry in fs::read_dir(dir)? {
-                let path = entry?.path();
-                if path.is_dir() {
-                    files.insert(path.strip_prefix(root)?.to_path_buf(), "<dir>".to_owned());
-                    walk(root, &path, files)?;
-                } else {
-                    let rel = path.strip_prefix(root)?.to_path_buf();
-                    files.insert(rel, fs::read_to_string(&path)?);
-                }
-            }
-            Ok(())
-        }
-        let mut files = BTreeMap::new();
-        walk(&self.out(), &self.out(), &mut files)?;
-        Ok(files)
+        read_tree(&self.out())
     }
+}
+
+/// Every file (with its contents) and directory under `root`, by relative path.
+fn read_tree(root: &Path) -> Result<BTreeMap<PathBuf, String>> {
+    fn walk(root: &Path, dir: &Path, files: &mut BTreeMap<PathBuf, String>) -> Result<()> {
+        for entry in fs::read_dir(dir)? {
+            let path = entry?.path();
+            let rel = path.strip_prefix(root)?.to_path_buf();
+            if path.is_dir() {
+                files.insert(rel, "<dir>".to_owned());
+                walk(root, &path, files)?;
+            } else {
+                files.insert(rel, fs::read_to_string(&path)?);
+            }
+        }
+        Ok(())
+    }
+    let mut files = BTreeMap::new();
+    walk(root, root, &mut files)?;
+    Ok(files)
 }
 
 fn stdout(output: &Output) -> String {
@@ -467,5 +472,169 @@ fn check_ignores_line_endings_of_generated_files() -> Result<()> {
     let run = project.binary(&["--queries", &queries]);
     assert!(run.status.success());
     assert!(!stdout(&run).contains("generated "), "{}", stdout(&run));
+    Ok(())
+}
+
+// --- lenient runs keep skipped tables' files ---------------------------------
+
+const BREAK_POSTS: &str = "ALTER TABLE posts ADD COLUMN duration INET;\n";
+
+/// A migrations directory and an output directory in a temp dir, driven
+/// through the real binary.
+struct Migrations {
+    dir: TempDir,
+}
+
+impl Migrations {
+    fn new(files: &[(&str, &str)]) -> Result<Self> {
+        let migrations = Self {
+            dir: TempDir::new()?,
+        };
+        migrations.add(files)?;
+        Ok(migrations)
+    }
+
+    fn add(&self, files: &[(&str, &str)]) -> Result<()> {
+        let dir = self.dir.path().join("migrations");
+        fs::create_dir_all(&dir)?;
+        for (name, sql) in files {
+            fs::write(dir.join(name), sql)?;
+        }
+        Ok(())
+    }
+
+    fn out(&self) -> PathBuf {
+        self.dir.path().join("out")
+    }
+
+    fn run(&self, extra: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_rok-sqlc"))
+            .arg("generate")
+            .arg("--schema")
+            .arg(self.dir.path().join("migrations"))
+            .arg("--output")
+            .arg(self.out())
+            .args(extra)
+            .output()
+            .expect("failed to spawn rok-sqlc binary")
+    }
+
+    fn tree(&self) -> Result<BTreeMap<PathBuf, String>> {
+        read_tree(&self.out())
+    }
+
+    fn resource(&self, module: &str) -> Result<BTreeMap<PathBuf, String>> {
+        Ok(self
+            .tree()?
+            .into_iter()
+            .filter(|(path, _)| path.starts_with(module))
+            .collect())
+    }
+}
+
+fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+#[test]
+fn a_table_skipped_by_lenient_keeps_its_files() -> Result<()> {
+    let project = Migrations::new(&[("0001_init.up.sql", TWO_TABLES)])?;
+    assert!(project.run(&[]).status.success());
+    let before = project.resource("posts")?;
+    assert!(before.contains_key(Path::new("posts").join("models.rs").as_path()));
+
+    project.add(&[("0002_break.up.sql", BREAK_POSTS)])?;
+    let output = project.run(&["--lenient"]);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert!(
+        stderr(&output).contains("table `posts` skipped"),
+        "{}",
+        stderr(&output)
+    );
+    assert_eq!(project.resource("posts")?, before);
+    let db_mod = fs::read_to_string(project.out().join("mod.rs"))?;
+    assert!(db_mod.contains("pub mod posts;"), "{db_mod}");
+    assert!(db_mod.contains("pub mod users;"), "{db_mod}");
+    Ok(())
+}
+
+#[test]
+fn a_lenient_check_reports_the_failure_but_no_drift_for_kept_files() -> Result<()> {
+    let project = Migrations::new(&[("0001_init.up.sql", TWO_TABLES)])?;
+    assert!(project.run(&[]).status.success());
+    project.add(&[("0002_break.up.sql", BREAK_POSTS)])?;
+    assert!(project.run(&["--lenient"]).status.success());
+    let before = project.tree()?;
+
+    let output = project.run(&["--lenient", "--check"]);
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert!(stderr(&output).contains("table `posts` skipped"));
+    assert!(!stdout(&output).contains("stale"), "{}", stdout(&output));
+    assert_eq!(project.tree()?, before);
+    Ok(())
+}
+
+#[test]
+fn a_dropped_table_is_still_removed_in_a_lenient_run() -> Result<()> {
+    let project = Migrations::new(&[("0001_init.up.sql", TWO_TABLES)])?;
+    assert!(project.run(&[]).status.success());
+    project.add(&[
+        ("0002_break.up.sql", BREAK_POSTS),
+        ("0003_drop.up.sql", "DROP TABLE posts;\n"),
+    ])?;
+
+    let output = project.run(&["--lenient"]);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert!(!project.out().join("posts").exists());
+    let db_mod = fs::read_to_string(project.out().join("mod.rs"))?;
+    assert!(!db_mod.contains("pub mod posts;"), "{db_mod}");
+    Ok(())
+}
+
+#[test]
+fn a_strict_run_that_hits_the_failure_writes_nothing() -> Result<()> {
+    let project = Migrations::new(&[("0001_init.up.sql", TWO_TABLES)])?;
+    assert!(project.run(&[]).status.success());
+    let before = project.tree()?;
+    project.add(&[("0002_break.up.sql", BREAK_POSTS)])?;
+
+    let output = project.run(&[]);
+
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    assert!(stderr(&output).contains("posts"), "{}", stderr(&output));
+    assert_eq!(project.tree()?, before);
+    Ok(())
+}
+
+#[test]
+fn a_kept_versioned_table_keeps_update_outcome_in_mod_rs() -> Result<()> {
+    let project = Migrations::new(&[(
+        "0001_init.up.sql",
+        "CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);\n\
+         CREATE TABLE posts (\n\
+             id BIGSERIAL PRIMARY KEY,\n\
+             title TEXT NOT NULL,\n\
+             row_version BIGINT NOT NULL DEFAULT 1\n\
+         );\n",
+    )])?;
+    let version = r#"{"conventions": {"version_column": "row_version"}}"#;
+    assert!(project.run(&["--json", version]).status.success());
+    let before = fs::read_to_string(project.out().join("mod.rs"))?;
+    assert!(before.contains("pub enum UpdateOutcome"), "{before}");
+
+    project.add(&[("0002_break.up.sql", BREAK_POSTS)])?;
+    let output = project.run(&["--lenient", "--json", version]);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let after = fs::read_to_string(project.out().join("mod.rs"))?;
+    assert!(after.contains("pub enum UpdateOutcome"), "{after}");
     Ok(())
 }

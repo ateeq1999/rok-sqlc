@@ -28,13 +28,14 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
     let (dry_run, force, lenient) = (config.dry_run, config.force, config.lenient);
 
     let sources = read_schema(config)?;
-    let parsed = parser::parse_sources(
+    let mut parsed = parser::parse_sources(
         &sources
             .iter()
             .map(|(path, sql)| parser::SchemaSource { path, sql })
             .collect::<Vec<_>>(),
     )
     .context("failed to parse SQL schema")?;
+    parsed.fail_tables(|table| generator::conventions::unsourced(table, &config.conventions));
     let sql = schema_snapshot(&sources);
 
     let matches_resource =
@@ -153,12 +154,14 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
         modules => generator::QueriesModule::GenerateModules(modules),
     };
 
+    let kept = kept_resources(output_dir, &parsed.failures, &selected);
     let files = generator::plan_files_with_queries(
         config,
         &sql,
         &selected,
         &parsed.schema.enums,
         queries_module,
+        &kept,
     )
     .map_err(anyhow::Error::msg)?;
 
@@ -166,11 +169,16 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
     // produce is stale. A kept queries module protects both layouts
     // (`queries.rs` and everything under `queries/`); a run with queries
     // leaves the other layout's files stale, so switching layouts cleans up.
+    // A kept resource directory is protected as a whole.
     let keep: HashSet<PathBuf> = files.iter().map(|(path, _)| path.clone()).collect();
     let mut stale = output::find_stale(output_dir, &keep)?;
     if matches!(queries_module, generator::QueriesModule::Keep) {
         let (single, dir) = (output_dir.join("queries.rs"), output_dir.join("queries"));
         stale.retain(|path| *path != single && !path.starts_with(&dir));
+    }
+    for module in &kept.modules {
+        let dir = output_dir.join(module);
+        stale.retain(|path| !path.starts_with(&dir));
     }
 
     if config.check {
@@ -207,6 +215,40 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
     report.stale = stale;
     Ok(())
 }
+
+/// The resource directories an earlier run generated for tables the schema
+/// still defines but this run skips as unsupported (`--lenient`, or a table
+/// outside `--resource`). They are kept as they are rather than removed as
+/// stale. A table the schema no longer defines (dropped, or never created)
+/// has no failure, so its directory stays stale.
+fn kept_resources(
+    output_dir: &Path,
+    failures: &[parser::TableFailure],
+    selected: &[Table],
+) -> generator::KeptResources {
+    let mut modules: Vec<String> = failures
+        .iter()
+        .filter_map(|failure| parser::naming::rust_identifier(&failure.table).ok())
+        .filter(|module| {
+            !RESERVED_MODULES.contains(&module.as_str())
+                && !selected.iter().any(|table| table.module_name == *module)
+                && is_generated_file(&output_dir.join(module).join("models.rs"))
+        })
+        .collect();
+    modules.sort();
+    modules.dedup();
+    let uses_update_outcome = modules.iter().any(|module| {
+        std::fs::read_to_string(output_dir.join(module).join("write.rs"))
+            .is_ok_and(|write| write.contains("UpdateOutcome"))
+    });
+    generator::KeptResources {
+        modules,
+        uses_update_outcome,
+    }
+}
+
+/// Modules of `db/mod.rs` that are not table resources.
+const RESERVED_MODULES: &[&str] = &["queries", "schema", "search", "session", "types"];
 
 /// Reads the schema inputs in order: a file as is, a directory as its
 /// `*.sql` files in filename order without `*.down.sql`. Returns each file's
