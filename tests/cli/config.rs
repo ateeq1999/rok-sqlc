@@ -177,7 +177,7 @@ fn config_file_schema_entry_can_be_a_migration_directory() -> Result<()> {
     // Would fail generation if the down migration were read.
     fs::write(
         migrations.join("0001_users.down.sql"),
-        "CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, duration INET NOT NULL);\n",
+        "CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, duration POINT NOT NULL);\n",
     )?;
     fs::write(
         dir.path().join("rok-sqlc.toml"),

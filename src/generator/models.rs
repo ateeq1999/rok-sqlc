@@ -132,9 +132,9 @@ fn render_insert_input(output: &mut String, table: &Table, columns: &[&Column], 
 
     // Every field defaulting to `None` is a meaningful insert: it omits every
     // defaulted column and writes NULL to every nullable one.
-    let all_optional = columns
-        .iter()
-        .all(|column| column.is_omittable_on_insert() || column.nullable);
+    let all_optional = columns.iter().all(|column| {
+        column.is_omittable_on_insert() || column.id_generation.is_some() || column.nullable
+    });
     if all_optional {
         output.push_str("#[derive(Debug, Clone, Default, PartialEq)]\n");
     } else {
@@ -155,6 +155,17 @@ fn render_insert_input(output: &mut String, table: &Table, columns: &[&Column], 
             );
         } else if column.is_omittable_on_insert() {
             push_doc(output, 4, &[&doc, "`None` applies the column default."]);
+        } else if let (Some(_), Some(id)) = (column.id_generation, &column.typed_id) {
+            push_doc(
+                output,
+                4,
+                &[
+                    &doc,
+                    &format!("`None` inserts a new id from `{}::generate`.", id.name),
+                ],
+            );
+        } else if column.id_generation.is_some() {
+            push_doc(output, 4, &[&doc, "`None` inserts a new id."]);
         } else {
             push_doc(output, 4, &[&doc]);
         }

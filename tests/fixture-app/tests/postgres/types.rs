@@ -459,3 +459,131 @@ pub(super) async fn value_list_columns_round_trip(pool: &PgPool) {
     assert_eq!(refund.status, RefundStatus::Requested);
     assert_eq!(refund.reason, Some(RefundReason::Late));
 }
+
+/// `MONEY`, the range types, `INET`, `CIDR`, and `MACADDR` round-trip
+/// through create, get, update, and search, and query-file casts to them
+/// bind and decode the mapped types.
+pub(super) async fn money_range_and_network_types_round_trip(pool: &PgPool) {
+    use chrono::{NaiveDate, TimeZone, Utc};
+    use ipnetwork::IpNetwork;
+    use mac_address::MacAddress;
+    use plain_db::ledger_entries::filter::{LedgerEntryFilter, LedgerEntrySortKey};
+    use plain_db::ledger_entries::models::{NewLedgerEntry, UpdateLedgerEntry};
+    use plain_db::ledger_entries::{read, write};
+    use plain_db::queries::{EntriesInSubnetParams, entries_in_subnet};
+    use plain_db::search::{Equality, Page, Sort};
+    use rok_sqlc_fixture_app::plain_db;
+    use sqlx::postgres::types::{PgMoney, PgRange};
+
+    let ip = |text: &str| text.parse::<IpNetwork>().unwrap();
+    let date = |day| NaiveDate::from_ymd_opt(2026, 10, day).unwrap();
+    let device = MacAddress::new([0x02, 0, 0, 0, 0, 0x2a]);
+
+    let created = write::create(
+        pool,
+        NewLedgerEntry {
+            amount: PgMoney(12_345),
+            seats: Some(PgRange::from(1..10)),
+            quota: Some(PgRange::from(100_i64..200)),
+            rates: Some(PgRange::from(Decimal::new(5, 1)..Decimal::new(15, 1))),
+            valid_on: Some(PgRange::from(date(1)..date(31))),
+            shift: Some(PgRange::from(
+                date(1).and_hms_opt(9, 0, 0).unwrap()..date(1).and_hms_opt(17, 0, 0).unwrap(),
+            )),
+            open_at: Some(PgRange::from(
+                Utc.with_ymd_and_hms(2026, 10, 1, 0, 0, 0).unwrap()
+                    ..Utc.with_ymd_and_hms(2026, 11, 1, 0, 0, 0).unwrap(),
+            )),
+            client: ip("10.0.0.7/32"),
+            subnet: Some(ip("10.0.0.0/24")),
+            device: Some(device),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(created.amount, PgMoney(12_345));
+    assert_eq!(created.seats, Some(PgRange::from(1..10)));
+    assert_eq!(created.subnet, Some(ip("10.0.0.0/24")));
+    assert_eq!(created.device, Some(device));
+    let other = write::create(
+        pool,
+        NewLedgerEntry {
+            amount: PgMoney(50),
+            seats: None,
+            quota: None,
+            rates: None,
+            valid_on: None,
+            shift: None,
+            open_at: None,
+            client: ip("192.168.1.9/32"),
+            subnet: None,
+            device: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        read::get_by_id(pool, created.id).await.unwrap().as_ref(),
+        Some(&created)
+    );
+
+    let updated = write::update(
+        pool,
+        created.id,
+        UpdateLedgerEntry {
+            amount: Some(PgMoney(20_000)),
+            seats: Some(Some(PgRange::from(2..5))),
+            ..UpdateLedgerEntry::default()
+        },
+    )
+    .await
+    .unwrap()
+    .expect("the row exists");
+    assert_eq!(updated.amount, PgMoney(20_000));
+    assert_eq!(updated.seats, Some(PgRange::from(2..5)));
+    assert_eq!(updated.client, created.client);
+
+    let found = |filter| async move {
+        read::search(pool, filter, Sort::asc(LedgerEntrySortKey::Id), Page::first(10))
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|row| row.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        found(LedgerEntryFilter {
+            client: vec![Equality::Eq(ip("192.168.1.9/32"))],
+            ..LedgerEntryFilter::default()
+        })
+        .await,
+        [other.id]
+    );
+    assert_eq!(
+        found(LedgerEntryFilter {
+            amount: vec![Equality::In(vec![PgMoney(20_000), PgMoney(1)])],
+            seats: vec![Equality::Eq(PgRange::from(2..5))],
+            device: vec![Equality::Eq(device)],
+            ..LedgerEntryFilter::default()
+        })
+        .await,
+        [created.id]
+    );
+
+    let rows = entries_in_subnet(
+        pool,
+        EntriesInSubnetParams {
+            param_1: PgRange::from(3..100),
+            param_2: ip("10.0.0.0/8"),
+            amount: PgMoney(100),
+            device: MacAddress::new([0; 6]),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, created.id);
+    assert_eq!(rows[0].amount, PgMoney(20_000));
+    // `[2,5) * [3,100)` is `[3,5)`.
+    assert_eq!(rows[0].overlap, Some(PgRange::from(3..5)));
+}

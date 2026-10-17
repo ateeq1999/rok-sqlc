@@ -1,6 +1,7 @@
 use heck::ToUpperCamelCase;
 
 use super::rust_type::{BaseType, TYPES_MODULE};
+use crate::IdGeneration;
 
 #[derive(Debug, Clone)]
 pub struct Schema {
@@ -273,6 +274,11 @@ pub struct Column {
     /// never inserted or updated by generated code but stays in rows. The
     /// parser leaves it `false`; the generator applies the conventions.
     pub is_managed: bool,
+    /// How generated code makes a new value for this column, when it is the
+    /// table's one key column and [`Conventions::primary_key_ids`]
+    /// (crate::Conventions::primary_key_ids) applies to its type. The
+    /// parser leaves it `None`; the generator applies the conventions.
+    pub id_generation: Option<IdGeneration>,
 }
 
 /// A generated typed id: `name` is defined in `<module>/models.rs`.
@@ -312,7 +318,11 @@ impl Column {
             | BaseType::Enum
             | BaseType::Interval
             | BaseType::Bytes
-            | BaseType::TimeTz => Some(FilterKind::Equality),
+            | BaseType::TimeTz
+            | BaseType::Money
+            | BaseType::Range
+            | BaseType::IpNetwork
+            | BaseType::MacAddress => Some(FilterKind::Equality),
             BaseType::Array | BaseType::Other => None,
         }
     }
@@ -344,9 +354,23 @@ impl Column {
         !self.is_generated && !self.is_managed
     }
 
-    /// The caller may omit this column on insert so the database default applies.
+    /// The caller may omit this column on insert so the database default
+    /// applies. A key column with an [`id_generation`](Self::id_generation)
+    /// is always inserted: generated code makes the value the caller omits.
     pub fn is_omittable_on_insert(&self) -> bool {
-        self.is_insertable() && self.has_default
+        self.is_insertable() && self.has_default && self.id_generation.is_none()
+    }
+
+    /// The expression making a new value of this column's plain type
+    /// (`sqlx_type`), when it has an [`id_generation`](Self::id_generation).
+    pub fn new_id_expr(&self) -> Option<&'static str> {
+        let text = self.base_type() == BaseType::Text;
+        Some(match (self.id_generation?, text) {
+            (IdGeneration::UuidV4, _) => "uuid::Uuid::new_v4()",
+            (IdGeneration::UuidV7, _) => "uuid::Uuid::now_v7()",
+            (IdGeneration::Ulid, false) => "uuid::Uuid::from(ulid::Ulid::new())",
+            (IdGeneration::Ulid, true) => "ulid::Ulid::new().to_string()",
+        })
     }
 
     /// The caller may change this column on update: it is neither generated,

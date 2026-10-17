@@ -12,6 +12,7 @@ use tempfile::TempDir;
 #[path = "../common/mod.rs"]
 mod common;
 
+mod ids;
 mod managed;
 mod sources;
 mod tenant;

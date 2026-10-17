@@ -24,6 +24,7 @@ use heck::ToSnakeCase;
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 
+use self::conflict::take_conflict_predicate;
 use self::results::result_shape;
 use super::annotations::{QueryDef, QueryFailure, ReturnMode};
 use crate::parser::TableFailure;
@@ -125,7 +126,8 @@ struct Context<'a> {
 
 fn analyze_one(def: &QueryDef, context: &Context<'_>) -> Result<AnalyzedQuery, String> {
     let fn_name = naming::rust_identifier(&def.name.to_snake_case())?;
-    let statements = Parser::parse_sql(&PostgreSqlDialect {}, &def.sql)
+    let conflict = take_conflict_predicate(&def.sql)?;
+    let statements = Parser::parse_sql(&PostgreSqlDialect {}, &conflict.sql)
         .map_err(|error| format!("invalid SQL: {error}"))?;
     let statement = match statements.as_slice() {
         [statement] => statement,
@@ -139,6 +141,7 @@ fn analyze_one(def: &QueryDef, context: &Context<'_>) -> Result<AnalyzedQuery, S
     };
 
     let mut analysis = Analysis::new(context);
+    analysis.conflict_predicate = conflict.predicate;
     let outputs = analysis.statement(statement)?;
     let params = analysis.params(statement, def)?;
     let result = result_shape(def, outputs, context)?;
@@ -227,6 +230,9 @@ struct Analysis<'a, 'c> {
     /// CTEs visible by name, in definition order.
     ctes: Vec<Rc<Table>>,
     slots: BTreeMap<usize, Slot>,
+    /// The `WHERE` of an `ON CONFLICT (cols) WHERE … DO` target, taken out of
+    /// the SQL before parsing (see [`take_conflict_predicate`]).
+    conflict_predicate: Option<sqlparser::ast::Expr>,
 }
 
 impl<'a, 'c> Analysis<'a, 'c> {
@@ -236,6 +242,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
             scope: Vec::new(),
             ctes: Vec::new(),
             slots: BTreeMap::new(),
+            conflict_predicate: None,
         }
     }
 }

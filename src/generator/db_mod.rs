@@ -2,7 +2,8 @@
 //! snapshot.
 
 use super::{HEADER, QueriesModule, queries, sql, write};
-use crate::schema::{Table, rust_type};
+use crate::IdGeneration;
+use crate::schema::{BaseType, Table, rust_type};
 
 /// What `db/mod.rs` declares besides the resource modules.
 #[derive(Debug, Clone, Copy)]
@@ -39,7 +40,12 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
         "// The generated code requires these dependencies in the consuming crate\n\
          // (SQLx 0.9 needs Rust 1.94 or newer):\n",
     );
-    output.push_str(&dependency_hints(&types, serde));
+    let ids: Vec<(IdGeneration, BaseType)> = tables
+        .iter()
+        .flat_map(|table| &table.columns)
+        .filter_map(|column| Some((column.id_generation?, column.base_type())))
+        .collect();
+    output.push_str(&dependency_hints(&types, &ids, serde));
     output.push('\n');
     // Sorted the way rustfmt sorts `mod` declarations.
     let mut modules: Vec<&str> = tables
@@ -88,7 +94,7 @@ pub enum UpdateOutcome<T> {
 
 /// The `Cargo.toml` lines the generated code needs. With `serde`, the crates
 /// whose types appear in serialized items need their `serde` feature.
-fn dependency_hints(types: &[String], serde: bool) -> String {
+fn dependency_hints(types: &[String], ids: &[(IdGeneration, BaseType)], serde: bool) -> String {
     let uses = |needle: &str| types.iter().any(|rust_type| rust_type.contains(needle));
     let uses_uuid = uses("uuid::");
     // `PgTimeTz` is encoded and decoded through SQLx's `chrono` feature, and
@@ -96,6 +102,8 @@ fn dependency_hints(types: &[String], serde: bool) -> String {
     let uses_chrono = uses("chrono::") || uses(rust_type::TIME_TZ);
     let uses_serde_json = uses("serde_json::");
     let uses_rust_decimal = uses("rust_decimal::");
+    let uses_ipnetwork = uses("ipnetwork::");
+    let uses_mac_address = uses("mac_address::");
 
     let mut features = String::from("\"runtime-tokio\", \"postgres\", \"derive\"");
     if uses_uuid {
@@ -110,20 +118,26 @@ fn dependency_hints(types: &[String], serde: bool) -> String {
     if uses_rust_decimal {
         features.push_str(", \"rust_decimal\"");
     }
+    if uses_ipnetwork {
+        features.push_str(", \"ipnetwork\"");
+    }
+    if uses_mac_address {
+        features.push_str(", \"mac_address\"");
+    }
 
-    let crate_hint = |name: &str, version: &str| {
-        if serde {
-            format!("//   {name} = {{ version = \"{version}\", features = [\"serde\"] }}\n")
-        } else {
-            format!("//   {name} = \"{version}\"\n")
-        }
-    };
+    let uses_ids = |wanted: IdGeneration| ids.iter().any(|(ids, _)| *ids == wanted);
+    let uuid_features: Vec<&str> = [(IdGeneration::UuidV4, "v4"), (IdGeneration::UuidV7, "v7")]
+        .into_iter()
+        .filter(|(ids, _)| uses_ids(*ids))
+        .map(|(_, feature)| feature)
+        .collect();
+    let crate_hint = |name: &str, version: &str| crate_hint_with(name, version, serde, &[]);
     let mut hints = format!("//   sqlx = {{ version = \"0.9\", features = [{features}] }}\n");
     if serde {
         hints.push_str("//   serde = { version = \"1\", features = [\"derive\"] }\n");
     }
     if uses_uuid {
-        hints.push_str(&crate_hint("uuid", "1"));
+        hints.push_str(&crate_hint_with("uuid", "1", serde, &uuid_features));
     }
     if uses_chrono {
         hints.push_str(&crate_hint("chrono", "0.4"));
@@ -134,7 +148,40 @@ fn dependency_hints(types: &[String], serde: bool) -> String {
     if uses_rust_decimal {
         hints.push_str(&crate_hint("rust_decimal", "1"));
     }
+    if uses_ipnetwork {
+        hints.push_str(&crate_hint("ipnetwork", "0.21"));
+    }
+    if uses_mac_address {
+        hints.push_str(&crate_hint("mac_address", "1"));
+    }
+    // ULIDs are made only in `generate()`, never serialized as such.
+    if uses_ids(IdGeneration::Ulid) {
+        let on_uuid = ids
+            .iter()
+            .any(|(ids, base)| *ids == IdGeneration::Ulid && *base == BaseType::Uuid);
+        let features: &[&str] = if on_uuid { &["uuid"] } else { &[] };
+        hints.push_str(&crate_hint_with("ulid", "1", false, features));
+    }
     hints
+}
+
+/// One crate's `Cargo.toml` line: its `features`, and `serde` too when the
+/// serde derive is on.
+fn crate_hint_with(name: &str, version: &str, serde: bool, features: &[&str]) -> String {
+    let features: Vec<String> = features
+        .iter()
+        .copied()
+        .chain(serde.then_some("serde"))
+        .map(|feature| format!("\"{feature}\""))
+        .collect();
+    if features.is_empty() {
+        format!("//   {name} = \"{version}\"\n")
+    } else {
+        format!(
+            "//   {name} = {{ version = \"{version}\", features = [{}] }}\n",
+            features.join(", ")
+        )
+    }
 }
 
 pub fn render_schema_snapshot(schema_sql: &str) -> String {

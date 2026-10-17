@@ -6,8 +6,8 @@
 //! `Table::tenant_column`) instead of each taking the configuration. Only the tables generated in a
 //! run are annotated; query files never see conventions.
 
-use crate::Conventions;
-use crate::schema::{Column, Table};
+use crate::schema::{BaseType, Column, Table};
+use crate::{Conventions, IdGeneration};
 
 /// The search filter's switch for soft-deleted rows.
 pub const INCLUDE_DELETED: &str = "include_deleted";
@@ -34,6 +34,32 @@ pub fn apply(tables: &mut [Table], conventions: &Conventions) {
         let tenant_column = present(&conventions.tenant_column);
         table.soft_delete_column = soft_delete_column;
         table.tenant_column = tenant_column;
+        if let Some(ids) = conventions.primary_key_ids {
+            mark_generated_id(table, ids);
+        }
+    }
+}
+
+/// Marks the table's one primary key column as made by `ids` when the
+/// strategy fits its type: `UUID` for every strategy, text for a ULID.
+fn mark_generated_id(table: &mut Table, ids: IdGeneration) {
+    let [key] = table.primary_key.as_slice() else {
+        return;
+    };
+    let Some(column) = table
+        .columns
+        .iter_mut()
+        .find(|column| column.sql_name == *key)
+    else {
+        return;
+    };
+    let fits = match column.base_type() {
+        BaseType::Uuid => true,
+        BaseType::Text => ids == IdGeneration::Ulid,
+        _ => false,
+    };
+    if fits && column.is_insertable() {
+        column.id_generation = Some(ids);
     }
 }
 

@@ -140,8 +140,8 @@ fn drop_type_removes_the_enum_and_cascades_to_its_columns() {
 fn drop_table_forgets_a_table_that_failed_earlier() {
     let parsed = parse(
         "CREATE TABLE users (id BIGSERIAL PRIMARY KEY);
-             CREATE TABLE app.spans (id BIGSERIAL PRIMARY KEY, length INET);
-             CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, length INET);
+             CREATE TABLE app.spans (id BIGSERIAL PRIMARY KEY, length POINT);
+             CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, length POINT);
              DROP TABLE app.spans;",
     );
     assert_eq!(parsed.failures.len(), 1, "{:?}", parsed.failures);

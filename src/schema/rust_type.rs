@@ -25,6 +25,20 @@ pub const BYTES: &str = "Vec<u8>";
 /// `time` feature is on; the generated code compiles with either.
 pub const TIME_TZ: &str = "sqlx::postgres::types::PgTimeTz";
 
+/// `MONEY`: SQLx's own type, which implements neither `PartialOrd` nor
+/// serde's traits.
+pub const MONEY: &str = "sqlx::postgres::types::PgMoney";
+
+/// A range type is `PgRange<T>`: SQLx's own type, which implements neither
+/// `PartialOrd` nor serde's traits.
+pub const RANGE: &str = "sqlx::postgres::types::PgRange";
+
+/// `INET` and `CIDR`, through SQLx's `ipnetwork` feature.
+pub const IP_NETWORK: &str = "ipnetwork::IpNetwork";
+
+/// `MACADDR`, through SQLx's `mac_address` feature.
+pub const MAC_ADDRESS: &str = "mac_address::MacAddress";
+
 /// The outer shape of a Rust type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shape<'a> {
@@ -86,6 +100,14 @@ pub enum BaseType {
     Bytes,
     /// [`TIME_TZ`].
     TimeTz,
+    /// [`MONEY`].
+    Money,
+    /// [`RANGE`]`<T>`.
+    Range,
+    /// [`IP_NETWORK`].
+    IpNetwork,
+    /// [`MAC_ADDRESS`].
+    MacAddress,
     /// A generated enum, `types::X`.
     Enum,
     /// An array, `Vec<T>`.
@@ -110,6 +132,10 @@ impl BaseType {
             INTERVAL => BaseType::Interval,
             BYTES => BaseType::Bytes,
             TIME_TZ => BaseType::TimeTz,
+            MONEY => BaseType::Money,
+            IP_NETWORK => BaseType::IpNetwork,
+            MAC_ADDRESS => BaseType::MacAddress,
+            other if generic_argument(other, RANGE).is_some() => BaseType::Range,
             other if is_enum_path(other) => BaseType::Enum,
             other => match Shape::of(other) {
                 Shape::List(_) => BaseType::Array,
@@ -150,10 +176,12 @@ fn is_enum_path(rust_type: &str) -> bool {
 }
 
 /// Whether a Rust type holds an SQLx type that implements neither
-/// `Serialize` nor `Deserialize` ([`INTERVAL`], `PgTimeTz`), possibly
-/// inside `Option<…>` or `Vec<…>`.
+/// `Serialize` nor `Deserialize` ([`INTERVAL`], [`TIME_TZ`], [`MONEY`],
+/// [`RANGE`]), possibly inside `Option<…>` or `Vec<…>`.
 pub fn lacks_serde(rust_type: &str) -> bool {
-    rust_type.contains(INTERVAL) || rust_type.contains(TIME_TZ)
+    [INTERVAL, TIME_TZ, MONEY, RANGE]
+        .iter()
+        .any(|sqlx_type| rust_type.contains(sqlx_type))
 }
 
 /// Whether a Rust type mentions a generated enum (`types::X`, possibly inside
@@ -182,5 +210,12 @@ mod tests {
             BaseType::of("chrono::DateTime<chrono::Utc>"),
             BaseType::TimestampTz
         );
+        assert_eq!(
+            BaseType::of("sqlx::postgres::types::PgRange<chrono::DateTime<chrono::Utc>>"),
+            BaseType::Range
+        );
+        assert_eq!(BaseType::of("ipnetwork::IpNetwork"), BaseType::IpNetwork);
+        assert!(lacks_serde("Option<sqlx::postgres::types::PgRange<i32>>"));
+        assert!(!lacks_serde("ipnetwork::IpNetwork"));
     }
 }

@@ -6,6 +6,7 @@ mod alter;
 mod constraints;
 mod enums;
 mod names;
+mod recover;
 mod statements;
 mod table;
 #[cfg(test)]

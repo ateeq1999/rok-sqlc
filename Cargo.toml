@@ -1,6 +1,6 @@
 [package]
 name = "rok-sqlc"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Generate SQLx Rust database modules from SQL schema files"
 license = "MIT OR Apache-2.0"

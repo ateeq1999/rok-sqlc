@@ -25,7 +25,7 @@ use common::shown;
 
 const SIMPLE_SCHEMA: &str = "CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);";
 const MIXED_SCHEMA: &str = "CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);\n\
-     CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, duration INET NOT NULL);";
+     CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, duration POINT NOT NULL);";
 
 fn run(args: &[&str]) -> Result<()> {
     let mut full: Vec<String> = vec!["rok-sqlc".to_owned()];

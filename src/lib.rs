@@ -38,7 +38,7 @@ pub mod parser;
 #[doc(hidden)]
 pub mod queries;
 
-pub use config::{Config, Conventions, Derive, RelationshipChange};
+pub use config::{Config, Conventions, Derive, IdGeneration, RelationshipChange};
 pub use report::{Error, QueryFailure, RefusedFile, Report, Result, TableFailure};
 
 /// Generates database modules as described by `config`.

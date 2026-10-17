@@ -91,6 +91,15 @@ fn custom_type_leaf(name: &ObjectName) -> std::result::Result<&'static str, Stri
         "BIGSERIAL" => Ok("i64"),
         "SMALLSERIAL" => Ok("i16"),
         "FLOAT4" => Ok("f32"),
+        "MONEY" => Ok(rust_type::MONEY),
+        "INT4RANGE" => Ok("sqlx::postgres::types::PgRange<i32>"),
+        "INT8RANGE" => Ok("sqlx::postgres::types::PgRange<i64>"),
+        "NUMRANGE" => Ok("sqlx::postgres::types::PgRange<rust_decimal::Decimal>"),
+        "DATERANGE" => Ok("sqlx::postgres::types::PgRange<chrono::NaiveDate>"),
+        "TSRANGE" => Ok("sqlx::postgres::types::PgRange<chrono::NaiveDateTime>"),
+        "TSTZRANGE" => Ok("sqlx::postgres::types::PgRange<chrono::DateTime<chrono::Utc>>"),
+        "INET" | "CIDR" => Ok(rust_type::IP_NETWORK),
+        "MACADDR" => Ok(rust_type::MAC_ADDRESS),
         other => Err(format!("type `{other}` is not supported yet")),
     }
 }

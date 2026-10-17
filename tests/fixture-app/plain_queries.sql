@@ -10,3 +10,11 @@ ORDER BY id;
 
 -- name: BadgeOpening :maybe_one
 SELECT opens FROM timed_badges WHERE opens = $1::timetz;
+
+-- Casts to `money`, the range types, `cidr` and `macaddr` infer `PgMoney`,
+-- `PgRange<T>`, `IpNetwork` and `MacAddress`.
+-- name: EntriesInSubnet :many
+SELECT id, amount, (seats * $1::int4range)::int4range AS overlap
+FROM ledger_entries
+WHERE client <<= $2::cidr AND amount >= $3::money AND device <> $4::macaddr
+ORDER BY id;

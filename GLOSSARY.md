@@ -84,6 +84,10 @@ _Avoid_: snapshot (that is the schema snapshot)
 A distinct Rust type for one table's key, used wherever that key appears, so keys of different tables cannot be mixed up.
 _Avoid_: id wrapper, newtype (in user-facing text)
 
+**Generated id**:
+A new primary key value the generated code makes itself (a UUID version 4 or 7, or a ULID) when a create input leaves the key out, under the `primary_key_ids` convention. Distinct from a generated column, whose value the database owns.
+_Avoid_: auto id, client id
+
 **Key struct**:
 A struct naming each column of a composite primary key, taken by lookups and keyset pagination in place of separate parameters.
 _Avoid_: key tuple, compound id
