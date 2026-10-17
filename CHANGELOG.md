@@ -7,6 +7,15 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+### Changed
+
+- A table that a `--lenient` run skips keeps the resource directory an
+  earlier run generated for it, byte for byte, and `db/mod.rs` keeps
+  declaring it (and `UpdateOutcome`, when its `update` uses it). Those files
+  are no longer stale: a successful run does not remove them, and a lenient
+  `--check` reports the table's warning but no drift. A table the schema no
+  longer defines (dropped, or never created) is still stale (ADR 0001).
+
 ## [0.1.0] - 2026-10-17
 
 First release on crates.io. The entries below include generated-API changes

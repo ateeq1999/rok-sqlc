@@ -73,7 +73,7 @@ A difference between the generated files on disk and what the current SQL would 
 _Avoid_: out of sync, dirty
 
 **Stale file**:
-A generated file whose source no longer exists (for example, a dropped table); generation removes it.
+A generated file whose source no longer exists (for example, a dropped table); generation removes it. A table that still exists but is skipped as unsupported is not a stale source: its files are kept.
 _Avoid_: orphan, leftover
 
 **Typed id**:
