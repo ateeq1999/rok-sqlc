@@ -5,7 +5,7 @@ use sqlparser::ast::{Expr, Ident, ObjectName};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::keywords::Keyword;
 use sqlparser::parser::Parser;
-use sqlparser::tokenizer::{Token, TokenWithSpan, Tokenizer};
+use sqlparser::tokenizer::{Location, Token, TokenWithSpan, Tokenizer};
 
 use crate::parser::postgres::{ident_name, object_leaf_name};
 use crate::schema::Table;
@@ -49,15 +49,32 @@ pub(super) fn take_conflict_predicate(sql: &str) -> Result<ConflictPredicate, St
         .with_tokens_with_locations(predicate_tokens.to_vec())
         .parse_expr()
         .map_err(|error| format!("invalid SQL in the ON CONFLICT target's WHERE: {error}"))?;
-    let sql = tokens[..start]
-        .iter()
-        .chain(&tokens[end..])
-        .map(|token| token.token.to_string())
-        .collect();
+    // Cut the original text rather than print the tokens again: a printed
+    // token loses its escaping (`'it''s'` prints as `'it's'`).
+    let (Some(cut_start), Some(cut_end)) = (
+        byte_offset(sql, tokens[start].span.start),
+        byte_offset(sql, tokens[end].span.start),
+    ) else {
+        return Ok(unchanged());
+    };
     Ok(ConflictPredicate {
-        sql,
+        sql: format!("{}{}", &sql[..cut_start], &sql[cut_end..]),
         predicate: Some(predicate),
     })
+}
+
+/// The byte offset in `sql` of a token location (1-based line and
+/// character column).
+fn byte_offset(sql: &str, location: Location) -> Option<usize> {
+    let line = usize::try_from(location.line).ok()?.checked_sub(1)?;
+    let column = usize::try_from(location.column).ok()?.checked_sub(1)?;
+    let line_start: usize = sql.split_inclusive('\n').take(line).map(str::len).sum();
+    let rest = &sql[line_start..];
+    rest.char_indices()
+        .map(|(offset, _)| offset)
+        .chain(std::iter::once(rest.len()))
+        .nth(column)
+        .map(|offset| line_start + offset)
 }
 
 /// The token range from the `WHERE` of an `ON CONFLICT (…) WHERE … DO`

@@ -132,9 +132,9 @@ fn render_insert_input(output: &mut String, table: &Table, columns: &[&Column], 
 
     // Every field defaulting to `None` is a meaningful insert: it omits every
     // defaulted column and writes NULL to every nullable one.
-    let all_optional = columns.iter().all(|column| {
-        column.is_omittable_on_insert() || column.id_generation.is_some() || column.nullable
-    });
+    let all_optional = columns
+        .iter()
+        .all(|column| column.is_optional_in_input() || column.nullable);
     if all_optional {
         output.push_str("#[derive(Debug, Clone, Default, PartialEq)]\n");
     } else {

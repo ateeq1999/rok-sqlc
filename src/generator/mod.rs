@@ -268,10 +268,10 @@ fn render_resource_mod(table: &Table, has_filter: bool, has_relationships: bool)
 
 /// The insert-input field type: columns with a database default are wrapped
 /// in `Option` so `None` can omit them. A nullable defaulted column therefore
-/// becomes `Option<Option<T>>`. A key column with an id generation is
+/// becomes `Option<Option<T>>`. A generated id is
 /// wrapped too: `None` inserts a new id.
 pub fn insert_field_type(column: &Column) -> String {
-    if column.is_omittable_on_insert() || column.id_generation.is_some() {
+    if column.is_optional_in_input() {
         format!("Option<{}>", column.field_type())
     } else {
         column.field_type()

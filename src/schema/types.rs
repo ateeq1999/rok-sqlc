@@ -275,8 +275,9 @@ pub struct Column {
     /// parser leaves it `false`; the generator applies the conventions.
     pub is_managed: bool,
     /// How generated code makes a new value for this column, when it is the
-    /// table's one key column and [`Conventions::primary_key_ids`]
-    /// (crate::Conventions::primary_key_ids) applies to its type. The
+    /// table's one key column and
+    /// [`Conventions::primary_key_ids`](crate::Conventions::primary_key_ids)
+    /// applies to its type (a generated id). The
     /// parser leaves it `None`; the generator applies the conventions.
     pub id_generation: Option<IdGeneration>,
 }
@@ -354,9 +355,15 @@ impl Column {
         !self.is_generated && !self.is_managed
     }
 
+    /// The create input may leave this column out (`None`): the database
+    /// default applies, or for a generated id, generated code makes one.
+    pub fn is_optional_in_input(&self) -> bool {
+        self.is_omittable_on_insert() || self.id_generation.is_some()
+    }
+
     /// The caller may omit this column on insert so the database default
-    /// applies. A key column with an [`id_generation`](Self::id_generation)
-    /// is always inserted: generated code makes the value the caller omits.
+    /// applies. A generated id ([`id_generation`](Self::id_generation)) is
+    /// always inserted: generated code makes the value the caller omits.
     pub fn is_omittable_on_insert(&self) -> bool {
         self.is_insertable() && self.has_default && self.id_generation.is_none()
     }

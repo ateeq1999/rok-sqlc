@@ -189,13 +189,6 @@ pub enum IdGeneration {
 }
 
 impl IdGeneration {
-    /// Every strategy, in the order the config file lists them.
-    pub const ALL: &[IdGeneration] = &[
-        IdGeneration::UuidV4,
-        IdGeneration::UuidV7,
-        IdGeneration::Ulid,
-    ];
-
     /// The name the config file and the JSON payload use.
     pub fn name(self) -> &'static str {
         match self {

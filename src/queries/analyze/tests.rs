@@ -493,3 +493,12 @@ fn partial_unique_index_targets_need_their_condition() {
             .starts_with("a placeholder in the ON CONFLICT target's WHERE is not supported"),
     );
 }
+
+/// Taking the predicate out keeps the rest of the text as written, so
+/// escaped quotes and other lines survive analysis.
+#[test]
+fn partial_index_targets_keep_escaped_quotes() {
+    one(
+        "-- name: Quoted :exec\nINSERT INTO members (email) VALUES ('it''s')\nON CONFLICT (email)\n    WHERE deleted_at IS NULL\nDO UPDATE SET email = 'O''Brien';",
+    );
+}
