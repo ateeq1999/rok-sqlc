@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.94"
 publish = false
 
-# The module fixture harness (`tests/module_fixtures.rs` in rok-sqlc)
+# The module fixture harness (`tests/module_fixtures/` in rok-sqlc)
 # generates every module fixture into `src/db/` and checks this crate.
 
 [dependencies]

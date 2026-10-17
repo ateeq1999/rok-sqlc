@@ -2,7 +2,7 @@
 //! output the way a consuming crate would see it.
 //!
 //! Set `ROK_SQLC_TEST_DATABASE_URL` to a throwaway PostgreSQL database to
-//! also execute the generated code (see `tests/fixture-app/tests/postgres.rs`).
+//! also execute the generated code (see `tests/fixture-app/tests/postgres/`).
 
 use std::path::PathBuf;
 use std::process::Command;

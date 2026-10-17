@@ -1003,7 +1003,7 @@ cargo fmt --all -- --check
 
 - **Two toolchains.** The tool builds on Rust 1.88 (so no `if let` guards in
   `match`, for example). The suites that compile generated code
-  (`tests/fixture_compile.rs`, `tests/module_fixtures.rs`, and
+  (`tests/fixture_compile.rs`, `tests/module_fixtures/`, and
   `the_examples_compile` in `tests/readme.rs`) need Rust 1.94. Below that,
   they print a skip notice and pass. CI runs 1.88, 1.94 and stable.
 - **PostgreSQL suite.** Set `ROK_SQLC_TEST_DATABASE_URL` to a throwaway
