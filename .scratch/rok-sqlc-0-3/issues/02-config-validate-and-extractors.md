@@ -10,7 +10,11 @@ The generator may ignore the new options for now. Ticket 03 uses them.
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Config-file, JSON and flag tests for both options, including precedence and the two dependency errors.
-- [ ] README drift tests pass.
+- [x] Config-file, JSON and flag tests for both options, including precedence and the two dependency errors.
+- [x] README drift tests pass.
+
+## Comments
+
+- Implemented on branch `rok-sqlc-0-3-02`; the flag also got the short alias `-e`, since every flag needs one (`tests/cli/flags.rs`).

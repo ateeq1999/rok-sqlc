@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 
 use crate::config_file::{self, FileConfig};
 use crate::report::display_path;
-use crate::{Config, Derive, Report};
+use crate::{Config, Derive, Extractor, Report};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -73,10 +73,17 @@ enum Command {
         json: Option<String>,
 
         /// Also derive this for the generated types: `serde` adds
-        /// `Serialize`/`Deserialize`; repeatable [default: `derive` from
-        /// rok-sqlc.toml]
+        /// `Serialize`/`Deserialize`, `validate` adds schema-derived
+        /// `validator::Validate` to inputs and patches (needs `serde`);
+        /// repeatable [default: `derive` from rok-sqlc.toml]
         #[arg(short, long, value_name = "NAME", value_enum)]
         derive: Vec<DeriveArg>,
+
+        /// Generate a validated-body extractor for this framework into
+        /// `http.rs` (needs `-d validate`); repeatable [default:
+        /// `extractors` from rok-sqlc.toml]
+        #[arg(short, long, value_name = "FRAMEWORK", value_enum)]
+        extractor: Vec<ExtractorArg>,
     },
 }
 
@@ -116,6 +123,7 @@ where
             config,
             json,
             derive,
+            extractor,
         } => {
             let payload = match json {
                 Some(arg) => config_file::load_json(&arg)?,
@@ -136,6 +144,8 @@ where
                 conventions: Default::default(),
                 derive: (!derive.is_empty())
                     .then(|| derive.into_iter().map(Derive::from).collect()),
+                extractors: (!extractor.is_empty())
+                    .then(|| extractor.into_iter().map(Extractor::from).collect()),
                 relationships: Default::default(),
                 modules: Default::default(),
             };
@@ -159,6 +169,7 @@ where
                 lenient,
                 conventions: merged.conventions.resolve(),
                 derive: merged.derive.unwrap_or_default(),
+                extractors: merged.extractors.unwrap_or_default(),
                 relationships: merged.relationships,
                 modules: merged.modules,
             })
@@ -171,12 +182,32 @@ where
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 enum DeriveArg {
     Serde,
+    Validate,
 }
 
 impl From<DeriveArg> for Derive {
     fn from(arg: DeriveArg) -> Self {
         match arg {
             DeriveArg::Serde => Derive::Serde,
+            DeriveArg::Validate => Derive::Validate,
+        }
+    }
+}
+
+/// An `--extractor` value, mirroring [`Extractor`] as [`DeriveArg`]
+/// mirrors [`Derive`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum ExtractorArg {
+    Axum,
+    #[value(name = "actix_web")]
+    ActixWeb,
+}
+
+impl From<ExtractorArg> for Extractor {
+    fn from(arg: ExtractorArg) -> Self {
+        match arg {
+            ExtractorArg::Axum => Extractor::Axum,
+            ExtractorArg::ActixWeb => Extractor::ActixWeb,
         }
     }
 }

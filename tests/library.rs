@@ -273,3 +273,34 @@ fn generated_code_mentions_serde_only_when_derived() -> Result<()> {
     );
     Ok(())
 }
+
+/// `Derive::Validate` needs `Derive::Serde`, and `extractors` need
+/// `Derive::Validate`; a run missing either fails before writing anything.
+#[test]
+fn validate_needs_serde_and_extractors_need_validate() -> Result<()> {
+    use rok_sqlc::{Derive, Extractor};
+    let inputs = Inputs::new()?;
+
+    let mut config = inputs.config("gen");
+    config.derive = vec![Derive::Validate];
+    let error = rok_sqlc::generate(&config).unwrap_err().to_string();
+    assert!(
+        error.contains("`validate` in `derive` needs `serde`"),
+        "{error}"
+    );
+
+    config.derive = vec![Derive::Serde];
+    config.extractors = vec![Extractor::Axum, Extractor::ActixWeb];
+    let error = rok_sqlc::generate(&config).unwrap_err().to_string();
+    assert!(
+        error.contains("`extractors` needs `validate` in `derive`"),
+        "{error}"
+    );
+    assert!(!inputs.path("gen").exists());
+
+    config.derive = vec![Derive::Serde, Derive::Validate];
+    rok_sqlc::generate(&config)?;
+    assert_eq!(Derive::Validate.name(), "validate");
+    assert_eq!(Extractor::ActixWeb.name(), "actix_web");
+    Ok(())
+}
