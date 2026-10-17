@@ -1934,6 +1934,70 @@ fn on_conflict_target_must_match_a_unique_key() -> Result<()> {
     Ok(())
 }
 
+/// `ON CONFLICT ON CONSTRAINT` must name a primary key or unique constraint:
+/// declared names, or the ones PostgreSQL gives unnamed constraints
+/// (`<table>_pkey`, `<table>_<columns>_key`). A unique index is no
+/// constraint, so PostgreSQL rejects its name there.
+#[test]
+fn on_conflict_on_constraint_must_name_a_key_constraint() -> Result<()> {
+    let dir = TempDir::new()?;
+    let schema = dir.path().join("schema.sql");
+    let queries = dir.path().join("queries.sql");
+    fs::write(
+        &schema,
+        "CREATE TABLE app.products (\n\
+         id UUID PRIMARY KEY,\n\
+         sku TEXT NOT NULL UNIQUE,\n\
+         name TEXT NOT NULL,\n\
+         code TEXT NOT NULL,\n\
+         barcode TEXT,\n\
+         CONSTRAINT uq_code UNIQUE (code)\n\
+         );\n\
+         ALTER TABLE app.products ADD UNIQUE (name, code);\n\
+         CREATE UNIQUE INDEX products_barcode_idx ON app.products (barcode);\n",
+    )?;
+    let upsert = |name: &str, target: &str| {
+        format!(
+            "-- name: {name} :exec\n\
+             INSERT INTO app.products (id, sku, name, code) VALUES ($1, $2, $3, $4)\n\
+             ON CONFLICT ON CONSTRAINT {target} DO NOTHING;\n\n"
+        )
+    };
+    fs::write(
+        &queries,
+        [
+            upsert("ByKey", "products_pkey"),
+            upsert("BySku", "products_sku_key"),
+            upsert("ByCode", "uq_code"),
+            upsert("ByNameAndCode", "products_name_code_key"),
+            upsert("ByBarcode", "products_barcode_idx"),
+        ]
+        .concat(),
+    )?;
+    let out = output_dir(&dir);
+
+    let output = run_binary(&[
+        "g",
+        "-s",
+        schema.to_str().unwrap(),
+        "-q",
+        queries.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+    ]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let path = queries.display().to_string();
+    assert!(
+        stderr.contains(&format!(
+            "{path}:17: query `ByBarcode`: ON CONFLICT ON CONSTRAINT products_barcode_idx names no primary key or unique constraint of `app.products`; its constraints are products_pkey, products_sku_key, uq_code, products_name_code_key"
+        )),
+        "{stderr}"
+    );
+    assert!(stderr.contains("1 unsupported query"), "{stderr}");
+    Ok(())
+}
+
 #[test]
 fn unique_keys_get_lookups_but_expression_and_partial_indexes_do_not() -> Result<()> {
     let dir = TempDir::new()?;

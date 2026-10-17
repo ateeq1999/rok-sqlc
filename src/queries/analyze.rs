@@ -143,6 +143,30 @@ fn check_conflict_target(table: &Table, target: &[Ident]) -> Result<(), String> 
     ))
 }
 
+/// Checks that `ON CONFLICT ON CONSTRAINT name` names one of the table's
+/// primary key or unique constraints. PostgreSQL accepts only a constraint
+/// there, never a unique index.
+fn check_conflict_constraint(table: &Table, name: &ObjectName) -> Result<(), String> {
+    let wanted = object_leaf_name(name);
+    let names: Vec<&str> = table
+        .key_constraints
+        .iter()
+        .map(|constraint| constraint.name.as_str())
+        .collect();
+    if names.contains(&wanted.as_str()) {
+        return Ok(());
+    }
+    let available = if names.is_empty() {
+        "it has none".to_owned()
+    } else {
+        format!("its constraints are {}", names.join(", "))
+    };
+    Err(format!(
+        "ON CONFLICT ON CONSTRAINT {wanted} names no primary key or unique constraint of `{}`; {available}",
+        table.display_name()
+    ))
+}
+
 struct Context<'a> {
     tables: &'a [Table],
     unsupported: &'a [TableFailure],
@@ -310,10 +334,16 @@ impl<'a, 'c> Analysis<'a, 'c> {
                     }
                 }
 
-                if let Some(OnInsert::OnConflict(on_conflict)) = &insert.on
-                    && let Some(ConflictTarget::Columns(target)) = &on_conflict.conflict_target
-                {
-                    check_conflict_target(table, target)?;
+                if let Some(OnInsert::OnConflict(on_conflict)) = &insert.on {
+                    match &on_conflict.conflict_target {
+                        Some(ConflictTarget::Columns(target)) => {
+                            check_conflict_target(table, target)?;
+                        }
+                        Some(ConflictTarget::OnConstraint(name)) => {
+                            check_conflict_constraint(table, name)?;
+                        }
+                        None => {}
+                    }
                 }
                 if let Some(OnInsert::OnConflict(on_conflict)) = &insert.on
                     && let OnConflictAction::DoUpdate(update) = &on_conflict.action
@@ -490,6 +520,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
             primary_key: Vec::new(),
             foreign_keys: Vec::new(),
             unique_keys: Vec::new(),
+            key_constraints: Vec::new(),
             version_column: None,
             soft_delete_column: None,
             tenant_column: None,

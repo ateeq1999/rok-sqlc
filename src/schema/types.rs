@@ -76,6 +76,10 @@ pub struct Table {
     /// Unique constraints and unique indexes on plain columns, in the order
     /// the migrations declare them; the primary key is not repeated here.
     pub unique_keys: Vec<UniqueKey>,
+    /// The primary key and unique constraints by name, in declaration order:
+    /// the names `ON CONFLICT ON CONSTRAINT` can use. A unique index is not a
+    /// constraint, so it is not listed.
+    pub key_constraints: Vec<KeyConstraint>,
     /// The version column (ADR 0010), as its SQL name: set only when the
     /// version convention is configured and this table has the column. The
     /// parser leaves it `None`; the generator applies the conventions.
@@ -404,6 +408,16 @@ pub struct ForeignKey {
     pub referenced_schema: Option<String>,
     pub referenced_table: String,
     pub referenced_column: String,
+}
+
+/// A primary key or unique constraint with its name: the declared one, or
+/// the one PostgreSQL gives an unnamed constraint (`<table>_pkey`,
+/// `<table>_<columns>_key`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyConstraint {
+    pub name: String,
+    /// The constrained columns (SQL names), in declaration order.
+    pub columns: Vec<String>,
 }
 
 /// Columns no two rows share, from a unique constraint or a unique index on

@@ -543,7 +543,11 @@ pub async fn search_product_names<'e, E>(
 **More rules:**
 
 - `WITH` queries work: each CTE is treated as a table.
-- An `ON CONFLICT (cols)` target must be one of the table's unique keys.
+- An `ON CONFLICT (cols)` target must be one of the table's unique keys, and
+  `ON CONFLICT ON CONSTRAINT name` must name its primary key or a unique
+  constraint: the declared name, or PostgreSQL's default for an unnamed one
+  (`products_pkey`, `products_sku_key`). A unique index is no constraint, so
+  PostgreSQL doesn't accept its name there.
 - A query is exactly one statement. To run several, call several functions
   on `&mut *tx`.
 - The SQL is embedded verbatim and bound positionally. It is not checked
@@ -881,6 +885,7 @@ fails. With `--resource`, only that table's problems count.
 | A query placeholder or result expression rok-sqlc can't type | Add a `-- param:` or `-- column:` override. |
 | Unknown tables or columns in a query, more than one statement, `WITH RECURSIVE`, data-modifying CTEs | They can't be analyzed (yet). |
 | An `ON CONFLICT (cols)` target that is not a unique key | It would fail at runtime. The error lists the table's unique keys. |
+| An `ON CONFLICT ON CONSTRAINT name` that names no primary key or unique constraint | It would fail at runtime. The error lists the table's constraint names. |
 
 ## Limitations and roadmap
 
@@ -891,11 +896,10 @@ fails. With `--resource`, only that table's problems count.
 - Casts to enum types in query files (`$1::product_status`) are rejected.
   Compare against the enum column instead (`status = $1`); that infers
   `types::ProductStatus`.
-- `ON CONFLICT ON CONSTRAINT name` targets are not validated. Partial-index
-  targets are rejected, including the soft-delete convention's
-  `WHERE deleted_at IS NULL` unique indexes, because PostgreSQL infers a
-  partial index only from a target that repeats its condition, which the
-  query parser can't read.
+- Partial-index `ON CONFLICT` targets are rejected, including the
+  soft-delete convention's `WHERE deleted_at IS NULL` unique indexes,
+  because PostgreSQL infers a partial index only from a target that repeats
+  its condition, which the query parser can't read.
 - Joined-read structs (`ProductWithCategory`, the `…With…` structs) don't get
   serde derives, and neither do filters and search types.
 - A serde-deserialized update patch can't set a column to `NULL`: `None` and

@@ -13,7 +13,9 @@ use sqlparser::parser::Parser;
 
 use super::diagnostics::TableFailure;
 use super::naming;
-use crate::schema::{Column, EnumType, EnumVariant, ForeignKey, Schema, Table, UniqueKey};
+use crate::schema::{
+    Column, EnumType, EnumVariant, ForeignKey, KeyConstraint, Schema, Table, UniqueKey,
+};
 
 pub struct ParsedSchema {
     pub schema: Schema,
@@ -696,19 +698,23 @@ fn add_column(
     {
         return Err(format!("ADD COLUMN: {}", field_taken(&built.raw)));
     }
-    if built.inline_pk {
+    if let Some(constraint) = &built.primary_key {
         if !table.primary_key.is_empty() {
             return Err(format!(
                 "ADD COLUMN: column `{name}` adds a second primary key"
             ));
         }
         table.primary_key = vec![name.clone()];
+        add_key_constraint(table, constraint.clone(), vec![name.clone()], true);
     }
-    if built.unique {
+    if let Some(constraint) = &built.unique {
         table.unique_keys.push(UniqueKey::new(vec![name.clone()]));
+        add_key_constraint(table, constraint.clone(), vec![name.clone()], false);
     }
     table.foreign_keys.extend(built.foreign_key);
-    table.columns.push(built.raw.into_column(built.inline_pk));
+    table
+        .columns
+        .push(built.raw.into_column(built.primary_key.is_some()));
     for (column, labels) in built.value_lists {
         if let Some(index) = column_index(table, &column) {
             restrict_to_values(&mut table.columns[index], labels);
@@ -735,6 +741,9 @@ fn drop_column(table: &mut Table, name: &str, if_exists: bool) -> std::result::R
     }
     table
         .unique_keys
+        .retain(|key| !key.columns.iter().any(|column| column == name));
+    table
+        .key_constraints
         .retain(|key| !key.columns.iter().any(|column| column == name));
     table.foreign_keys.retain(|key| key.column != name);
     Ok(())
@@ -770,6 +779,10 @@ fn rename_column(table: &mut Table, old: &str, new: &str) -> std::result::Result
     for key in &mut table.unique_keys {
         key.columns.iter_mut().for_each(rename);
     }
+    // PostgreSQL keeps a constraint's name when a column is renamed.
+    for key in &mut table.key_constraints {
+        key.columns.iter_mut().for_each(rename);
+    }
     for key in &mut table.foreign_keys {
         rename(&mut key.column);
     }
@@ -792,7 +805,7 @@ fn add_constraint(
         None => Ok(()),
     };
     match constraint {
-        TableConstraint::PrimaryKey { columns, .. } => {
+        TableConstraint::PrimaryKey { name, columns, .. } => {
             let keys = key_columns(columns, "PRIMARY KEY").map_err(clause)?;
             if !table.primary_key.is_empty() {
                 return Err(clause("the table already has a primary key".to_owned()));
@@ -805,11 +818,13 @@ fn add_constraint(
                     column.rust_type = rust_type(&column.sqlx_type, false);
                 }
             }
+            add_key_constraint(table, name.as_ref().map(ident_name), keys.clone(), true);
             table.primary_key = keys;
         }
-        TableConstraint::Unique { columns, .. } => {
+        TableConstraint::Unique { name, columns, .. } => {
             let keys = key_columns(columns, "UNIQUE").map_err(clause)?;
             known_columns(table, &keys)?;
+            add_key_constraint(table, name.as_ref().map(ident_name), keys.clone(), false);
             table.unique_keys.push(UniqueKey::new(keys));
         }
         TableConstraint::ForeignKey { columns, .. } => {
@@ -882,6 +897,8 @@ fn build_table(
     let mut seen_fields: HashSet<String> = HashSet::new();
     let mut foreign_keys = Vec::new();
     let mut unique_keys = Vec::new();
+    // `(name, columns, primary)`, named once every constraint is known.
+    let mut constraints: Vec<(Option<String>, Vec<String>, bool)> = Vec::new();
     let mut inline_primary_keys: Vec<String> = Vec::new();
     let mut value_lists: Vec<(String, Vec<String>)> = Vec::new();
 
@@ -890,11 +907,13 @@ fn build_table(
         if !seen_fields.insert(built.raw.rust_name.clone()) {
             return Err(fail(field_taken(&built.raw)));
         }
-        if built.inline_pk {
+        if let Some(name) = &built.primary_key {
             inline_primary_keys.push(built.raw.sql_name.clone());
+            constraints.push((name.clone(), vec![built.raw.sql_name.clone()], true));
         }
-        if built.unique {
+        if let Some(name) = &built.unique {
             unique_keys.push(UniqueKey::new(vec![built.raw.sql_name.clone()]));
+            constraints.push((name.clone(), vec![built.raw.sql_name.clone()], false));
         }
         foreign_keys.extend(built.foreign_key);
         value_lists.extend(built.value_lists);
@@ -911,12 +930,23 @@ fn build_table(
     let mut table_primary_key: Vec<String> = Vec::new();
     for constraint in &create.constraints {
         match constraint {
-            TableConstraint::PrimaryKey { columns: keys, .. } => {
+            TableConstraint::PrimaryKey {
+                name,
+                columns: keys,
+                ..
+            } => {
                 table_primary_key = key_columns(keys, "PRIMARY KEY").map_err(fail)?;
+                let name = name.as_ref().map(ident_name);
+                constraints.push((name, table_primary_key.clone(), true));
             }
-            TableConstraint::Unique { columns: keys, .. } => {
+            TableConstraint::Unique {
+                name,
+                columns: keys,
+                ..
+            } => {
                 if let Ok(keys) = key_columns(keys, "UNIQUE") {
-                    unique_keys.push(UniqueKey::new(keys));
+                    unique_keys.push(UniqueKey::new(keys.clone()));
+                    constraints.push((name.as_ref().map(ident_name), keys, false));
                 }
             }
             TableConstraint::Check { expr, .. } => value_lists.extend(value_list_check(expr)),
@@ -955,7 +985,7 @@ fn build_table(
     let module_name = naming::rust_identifier(&sql_name).map_err(fail)?;
     let struct_name = naming::struct_name(&module_name);
 
-    Ok(Table {
+    let mut table = Table {
         schema: object_schema_name(&create.name),
         sql_name,
         module_name,
@@ -964,19 +994,130 @@ fn build_table(
         primary_key,
         foreign_keys,
         unique_keys,
+        key_constraints: Vec::new(),
         version_column: None,
         soft_delete_column: None,
         tenant_column: None,
         relationships: Vec::new(),
-    })
+    };
+    // Like PostgreSQL, one `CREATE TABLE` makes one constraint of several
+    // over the same column list: a primary key if any of them is, named by
+    // the first that has a name.
+    let mut merged: Vec<(Option<String>, Vec<String>, bool)> = Vec::new();
+    for (name, columns, primary) in constraints {
+        match merged
+            .iter_mut()
+            .find(|(_, earlier, _)| *earlier == columns)
+        {
+            Some((earlier_name, _, earlier_primary)) => {
+                *earlier_primary |= primary;
+                if earlier_name.is_none() {
+                    *earlier_name = name;
+                }
+            }
+            None => merged.push((name, columns, primary)),
+        }
+    }
+    for (name, columns, primary) in merged {
+        add_key_constraint(&mut table, name, columns, primary);
+    }
+    Ok(table)
+}
+
+/// Records a primary key or unique constraint under its declared name, or
+/// under the name PostgreSQL gives an unnamed one (see
+/// [`default_constraint_name`]).
+fn add_key_constraint(
+    table: &mut Table,
+    name: Option<String>,
+    columns: Vec<String>,
+    primary: bool,
+) {
+    let name = name.unwrap_or_else(|| {
+        let taken = |candidate: &str| {
+            table
+                .key_constraints
+                .iter()
+                .any(|constraint| constraint.name == candidate)
+        };
+        default_constraint_name(&table.sql_name, &columns, primary, taken)
+    });
+    table.key_constraints.push(KeyConstraint { name, columns });
+}
+
+/// PostgreSQL's longest identifier, in bytes (`NAMEDATALEN - 1`).
+const MAX_IDENTIFIER_BYTES: usize = 63;
+
+/// The name PostgreSQL gives an unnamed primary key (`<table>_pkey`) or
+/// unique constraint (`<table>_<col>_<col>_key`), as its `ChooseRelationName`
+/// does: the table and column parts are shortened, the longer one first,
+/// until the name fits in 63 bytes, and a name already taken gets a number
+/// after the label (`_key1`). Only this table's constraints count as taken
+/// here; PostgreSQL also avoids every other relation name in the schema.
+fn default_constraint_name(
+    table: &str,
+    columns: &[String],
+    primary: bool,
+    taken: impl Fn(&str) -> bool,
+) -> String {
+    let (addition, label) = if primary {
+        (None, "pkey")
+    } else {
+        (Some(columns.join("_")), "key")
+    };
+    let mut pass = 0;
+    loop {
+        let label = if pass == 0 {
+            label.to_owned()
+        } else {
+            format!("{label}{pass}")
+        };
+        let name = object_name(table, addition.as_deref(), &label);
+        if !taken(&name) {
+            return name;
+        }
+        pass += 1;
+    }
+}
+
+/// PostgreSQL's `makeObjectName`: `name1[_name2]_label`, with `name1` and
+/// `name2` shortened (the longer one first, on character boundaries) so the
+/// whole fits in [`MAX_IDENTIFIER_BYTES`].
+fn object_name(name1: &str, name2: Option<&str>, label: &str) -> String {
+    let overhead = label.len() + 1 + usize::from(name2.is_some());
+    let available = MAX_IDENTIFIER_BYTES.saturating_sub(overhead);
+    let (mut len1, mut len2) = (name1.len(), name2.map_or(0, str::len));
+    while len1 + len2 > available {
+        if len1 > len2 {
+            len1 -= 1;
+        } else {
+            len2 -= 1;
+        }
+    }
+    let clip = |name: &str, mut len: usize| {
+        while !name.is_char_boundary(len) {
+            len -= 1;
+        }
+        name[..len].to_owned()
+    };
+    let mut name = clip(name1, len1);
+    if let Some(name2) = name2 {
+        name.push('_');
+        name.push_str(&clip(name2, len2));
+    }
+    name.push('_');
+    name.push_str(label);
+    name
 }
 
 /// A column definition from `CREATE TABLE` or `ALTER TABLE … ADD COLUMN`,
 /// with the constraints declared inline on it.
 struct BuiltColumn {
     raw: RawColumn,
-    inline_pk: bool,
-    unique: bool,
+    /// `Some` for an inline `PRIMARY KEY`, holding its declared name.
+    primary_key: Option<Option<String>>,
+    /// `Some` for an inline `UNIQUE`, holding its declared name.
+    unique: Option<Option<String>>,
     foreign_key: Option<ForeignKey>,
     /// Value-list `CHECK`s declared inline, by the column they name (usually
     /// this one, but PostgreSQL lets a column check name any column).
@@ -991,8 +1132,8 @@ fn build_column(
     let column_fail = |reason: String| format!("column `{column_name}`: {reason}");
 
     let mut nullable = true;
-    let mut inline_pk = false;
-    let mut unique = false;
+    let mut primary_key = None;
+    let mut unique = None;
     let mut foreign_key = None;
     let mut value_lists = Vec::new();
     let mut is_generated = is_serial_type(&column_def.data_type);
@@ -1001,10 +1142,11 @@ fn build_column(
         match &option.option {
             ColumnOption::NotNull => nullable = false,
             ColumnOption::Unique { is_primary, .. } => {
+                let name = Some(option.name.as_ref().map(ident_name));
                 if *is_primary {
-                    inline_pk = true;
+                    primary_key = name;
                 } else {
-                    unique = true;
+                    unique = name;
                 }
             }
             ColumnOption::ForeignKey {
@@ -1042,7 +1184,7 @@ fn build_column(
             has_default,
             is_generated,
         },
-        inline_pk,
+        primary_key,
         unique,
         foreign_key,
         value_lists,
@@ -1915,6 +2057,40 @@ mod tests {
                 .contains("ADD COLUMN: column `span`: type `INTERVAL` is not supported yet"),
             "{:?}",
             parsed.failures
+        );
+    }
+
+    /// Expected names are the ones PostgreSQL 17 chose for the same DDL.
+    #[test]
+    fn key_constraints_get_postgres_default_names() {
+        let names = |sql: &str| -> Vec<String> {
+            one_table(sql)
+                .key_constraints
+                .into_iter()
+                .map(|constraint| constraint.name)
+                .collect()
+        };
+        assert_eq!(
+            names(
+                "CREATE TABLE t (id BIGINT PRIMARY KEY, a TEXT UNIQUE, b TEXT, c TEXT, d TEXT,
+                     CONSTRAINT named_bc UNIQUE (b, c));
+                 ALTER TABLE t ADD UNIQUE (c, d);
+                 CREATE UNIQUE INDEX t_d_idx ON t (d);"
+            ),
+            ["t_pkey", "t_a_key", "named_bc", "t_c_d_key"]
+        );
+        assert_eq!(
+            names(
+                "CREATE TABLE averyveryveryveryveryverylongtablenamethatgoesonandonandon (
+                     abcdefghijklmnopqrstuvwxyzabcdefghij TEXT UNIQUE, x TEXT)"
+            ),
+            ["averyveryveryveryveryverylong_abcdefghijklmnopqrstuvwxyzabc_key"]
+        );
+        assert_eq!(
+            names(
+                "CREATE TABLE u (a TEXT UNIQUE, b TEXT, UNIQUE (a)); ALTER TABLE u ADD UNIQUE (a)"
+            ),
+            ["u_a_key", "u_a_key1"]
         );
     }
 

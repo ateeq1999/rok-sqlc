@@ -88,7 +88,10 @@ against earlier development snapshots.
 - A query file's `ON CONFLICT (cols)` target must be a unique key of the
   table (the primary key, a unique constraint, or a full unique index, in
   any column order); otherwise generation fails with a `path:line`
-  diagnostic listing the table's unique keys.
+  diagnostic listing the table's unique keys. `ON CONFLICT ON CONSTRAINT
+  name` must name the table's primary key or a unique constraint, by its
+  declared name or PostgreSQL's default (`<table>_pkey`,
+  `<table>_<columns>_key`); otherwise the diagnostic lists the valid names.
 - `--schema` accepts files or migration directories and can be repeated;
   `ALTER TABLE` statements in later migrations change earlier tables.
   Diagnostics print `path:line:`.
