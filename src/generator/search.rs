@@ -144,8 +144,8 @@ impl FilterKind {
 }
 
 /// Appends `callee(args);` at `indent`, one argument per line when the
-/// arguments exceed rustfmt's `fn_call_width` (60) or the line its
-/// `max_width` (100).
+/// arguments exceed rustfmt's `fn_call_width` ([`FN_CALL_WIDTH`](super::FN_CALL_WIDTH)) or
+/// the line its `max_width` ([`MAX_WIDTH`](super::MAX_WIDTH)).
 fn push_call(output: &mut String, indent: usize, callee: &str, args: &[String]) {
     push_call_ending(output, indent, callee, args, ";");
 }
@@ -155,7 +155,7 @@ fn push_call_ending(output: &mut String, indent: usize, callee: &str, args: &[St
     let pad = " ".repeat(indent);
     let joined = args.join(", ");
     let one_line = format!("{pad}{callee}({joined}){end}");
-    if joined.len() <= 60 && one_line.len() <= super::MAX_WIDTH {
+    if joined.len() <= super::FN_CALL_WIDTH && one_line.len() <= super::MAX_WIDTH {
         output.push_str(&one_line);
         output.push('\n');
         return;
@@ -453,11 +453,13 @@ pub fn render_filter(table: &Table, tables: &[Table], serde: bool) -> Option<Str
     let arms: Vec<String> = sortable
         .iter()
         .map(|column| {
+            // The arms sit inside `fn column` and its `match`.
+            const ARM_INDENT: usize = 12;
             let variant = column.sort_variant();
             let literal = str_literal(&ident(&column.sql_name));
             let arm = format!("Self::{variant} => {literal},");
             // An arm too long for its line goes in a block, as rustfmt puts it.
-            if 12 + arm.len() <= super::MAX_WIDTH {
+            if ARM_INDENT + arm.len() <= super::MAX_WIDTH {
                 arm
             } else {
                 format!("Self::{variant} => {{\n                {literal}\n            }}")
@@ -677,29 +679,21 @@ fn push_join_exists(
 /// clamping.
 pub fn render_shared(serde: bool) -> String {
     let mut output = format!("{HEADER}\n");
-    let mut lines = SHARED.lines().peekable();
-    while let Some(line) = lines.next() {
-        output.push_str(line);
-        output.push('\n');
-        let next = lines.peek().copied().unwrap_or_default();
-        if line.starts_with("#[derive(") && SERDE_SHARED.contains(&next) {
-            push_serde_derive(&mut output, serde);
-        }
+    let (last, deriving) = SHARED.split_last().expect("the shared module has parts");
+    for part in deriving {
+        output.push_str(part);
+        push_serde_derive(&mut output, serde);
     }
+    output.push_str(last);
     output
 }
 
-/// The declarations in `db/search.rs` that derive serde with `serde`; each
-/// follows its `#[derive(...)]` line.
-const SERDE_SHARED: [&str; 5] = [
-    "pub enum Direction {",
-    "pub struct Sort<K> {",
-    "pub enum Ordered<T> {",
-    "pub enum Equality<T> {",
-    "pub enum Text {",
-];
-
-const SHARED: &str = r#"//! Types shared by every resource's `search`: pages, sorting, and typed
+/// The text of `db/search.rs`, in parts: every part but the last ends with
+/// the `#[derive(...)]` line of a type that derives serde with `serde`
+/// (`Direction`, `Sort`, `Ordered`, `Equality`, and `Text`), so the serde
+/// derives join exactly those lists.
+const SHARED: [&str; 6] = [
+    r#"//! Types shared by every resource's `search`: pages, sorting, and typed
 //! filter conditions.
 
 use sqlx::{Postgres, QueryBuilder};
@@ -769,7 +763,8 @@ impl Page {
 
 /// Sort direction.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Direction {
+"#,
+    r#"pub enum Direction {
     /// Ascending: smallest first.
     #[default]
     Asc,
@@ -790,7 +785,8 @@ impl Direction {
 
 /// Sorts by one allowlisted key; `search` breaks ties by primary key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Sort<K> {
+"#,
+    r#"pub struct Sort<K> {
     /// The column to sort by.
     pub key: K,
     /// Ascending or descending.
@@ -817,7 +813,8 @@ impl<K> Sort<K> {
 
 /// A condition on a number, decimal, date, or time column.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Ordered<T> {
+"#,
+    r#"pub enum Ordered<T> {
     /// Equal to the value.
     Eq(T),
     /// Not equal to the value.
@@ -868,7 +865,8 @@ impl<T> Ordered<T> {
 
 /// A condition on a boolean or UUID column.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Equality<T> {
+"#,
+    r#"pub enum Equality<T> {
     /// Equal to the value.
     Eq(T),
     /// Not equal to the value.
@@ -988,7 +986,8 @@ pub fn correlate(
 /// A condition on a text column. The substring variants match their
 /// argument literally: `%`, `_`, and `\` in it are escaped.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Text {
+"#,
+    r#"pub enum Text {
     /// Equal to the text.
     Eq(String),
     /// Not equal to the text.
@@ -1052,7 +1051,8 @@ where
     query.push_bind(values);
     query.push(")");
 }
-"#;
+"#,
+];
 
 #[cfg(test)]
 mod tests {

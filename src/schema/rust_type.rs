@@ -153,7 +153,7 @@ fn is_enum_path(rust_type: &str) -> bool {
 /// `Serialize` nor `Deserialize` ([`INTERVAL`], `PgTimeTz`), possibly
 /// inside `Option<…>` or `Vec<…>`.
 pub fn lacks_serde(rust_type: &str) -> bool {
-    rust_type.contains(INTERVAL) || rust_type.contains("sqlx::postgres::types::PgTimeTz")
+    rust_type.contains(INTERVAL) || rust_type.contains(TIME_TZ)
 }
 
 /// Whether a Rust type mentions a generated enum (`types::X`, possibly inside

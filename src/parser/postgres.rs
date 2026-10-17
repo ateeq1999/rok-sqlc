@@ -139,7 +139,14 @@ pub fn parse_schema(sql: &str) -> Result<ParsedSchema> {
 /// hold to it (as `CASCADE` would), and `DROP TYPE` removes an enum type.
 /// Statements that leave the model unchanged (row-level security, policies,
 /// non-unique indexes, grants, other triggers, comments, functions, `SELECT`
-/// calls) and statements on unknown tables are ignored on purpose.
+/// calls) and statements on unknown tables are ignored on purpose. Index,
+/// sequence, and view names are tracked for default constraint names, and
+/// an `ALTER TABLE` the SQL parser cannot read fails its table (see
+/// `parse_statements`).
+///
+/// A thin wrapper over [`parse_sources_with_modules`] with no module
+/// renames, kept for callers without a configuration: [`parse_schema`] and
+/// the integration tests that parse the module corpus.
 pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
     parse_sources_with_modules(sources, &BTreeMap::new())
 }
@@ -1254,15 +1261,9 @@ fn set_nullable(column: &mut Column, nullable: bool) {
     if column.nullable == nullable {
         return;
     }
-    let base_type = if column.nullable {
-        column
-            .rust_type
-            .strip_prefix("Option<")
-            .and_then(|inner| inner.strip_suffix('>'))
-            .unwrap_or(&column.rust_type)
-            .to_owned()
-    } else {
-        column.rust_type.clone()
+    let base_type = match Shape::of(&column.rust_type) {
+        Shape::Optional(inner) if column.nullable => inner.to_owned(),
+        Shape::Optional(_) | Shape::List(_) | Shape::Value(_) => column.rust_type.clone(),
     };
     column.rust_type = rust_type(&base_type, nullable);
     column.nullable = nullable;

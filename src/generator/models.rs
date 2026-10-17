@@ -1,8 +1,8 @@
 use crate::schema::{Column, Table, mentions_generated_type};
 
 use super::{
-    HEADER, doc_name, insert_field_type, keys, push_and_chain, push_doc, push_serde_derive,
-    update_field_type, use_paths,
+    CHAIN_WIDTH, HEADER, doc_name, insert_field_type, keys, push_and_chain, push_chain, push_doc,
+    push_serde_derive, update_field_type, use_paths,
 };
 
 /// The doc line of a row, input, or patch field: the column it holds.
@@ -225,20 +225,20 @@ fn render_update_patch(output: &mut String, table: &Table, columns: &[&Column], 
         .iter()
         .map(|column| format!("self.{}.is_none()", column.rust_name))
         .collect();
-    // rustfmt splits a call chain longer than its `chain_width` of 60 one
-    // call per line: a field name near PostgreSQL's 63-byte limit is that
-    // long on its own.
-    if terms.iter().any(|term| term.len() > 60) {
-        for (index, (term, column)) in terms.iter().zip(columns).enumerate() {
+    // rustfmt splits a call chain longer than its `chain_width` one call per
+    // line: a field name near PostgreSQL's 63-byte limit is that long on its
+    // own. The first term keeps `self.field` together; after `&&`, `self`
+    // stands alone.
+    if terms.iter().any(|term| term.len() > CHAIN_WIDTH) {
+        let is_none = [".is_none()".to_owned()];
+        for (index, column) in columns.iter().enumerate() {
             let name = &column.rust_name;
-            output.push_str(&match (index, term.len() > 60) {
-                (0, false) => format!("        {term}\n"),
-                (0, true) => format!("        self.{name}\n            .is_none()\n"),
-                (_, false) => format!("            && {term}\n"),
-                (_, true) => format!(
-                    "            && self\n                .{name}\n                .is_none()\n"
-                ),
-            });
+            if index == 0 {
+                push_chain(output, 8, "", &format!("self.{name}"), &is_none);
+            } else {
+                let calls = [format!(".{name}"), is_none[0].clone()];
+                push_chain(output, 12, "&& ", "self", &calls);
+            }
         }
     } else {
         push_and_chain(output, 8, "", &terms, "");
