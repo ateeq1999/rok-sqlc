@@ -20,6 +20,7 @@ mod migrations;
 mod modules;
 mod queries;
 mod runs;
+mod validate;
 
 use common::shown;
 

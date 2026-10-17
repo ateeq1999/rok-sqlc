@@ -494,6 +494,13 @@ condition, direction, and sort-key variants are snake_case
 filter), or a query row or parameter struct holding one, fails the run with
 an error naming it.
 
+**Validation.** `derive = ["serde", "validate"]` (or `-d serde -d validate`)
+adds `validator::Validate` to create inputs and update patches, with rules
+taken from the schema, and `extractors = ["axum", "actix_web"]` (or
+`-e axum`) generates a `ValidatedJson<T>` extractor per framework
+(see [ADR 0015](docs/adr/0015-validated-bodies-and-http-extractors.md)).
+`validate` without `serde`, or `extractors` without `validate`, fails the run.
+
 ## Writing query files
 
 A query file holds SQL statements, each starting with a `-- name:` line:
@@ -737,7 +744,7 @@ relationship.
 
 Options come from four layers. The most specific wins:
 **flags > JSON payload (`-j`) > `rok-sqlc.toml` > defaults**. A list (such as
-`schema`, `queries` or `derive`) replaces the lower layer's list whole and is
+`schema`, `queries`, `derive` or `extractors`) replaces the lower layer's list whole and is
 never appended to. `[conventions]` keys, `[relationships]` entries and
 `[modules]` entries merge one by one.
 
@@ -754,7 +761,8 @@ schema   = ["migrations/"]   # a path or a list: SQL files or migration director
 queries  = ["queries/"]      # a path or a list: query files or directories
 output   = "src/db"          # the default
 resource = "products"        # add this table to the generated ones; rarely useful in a file
-derive   = ["serde"]         # extra derives for generated types; "serde" is the only one
+derive   = ["serde", "validate"]  # extra derives for generated types; "validate" needs "serde"
+extractors = ["axum", "actix_web"]  # validated-body extractors to generate; need "validate"
 
 [conventions]                # all off unless set; see "Conventions"
 preset             = "rok"
@@ -796,7 +804,8 @@ layers over `rok-sqlc.toml` and doesn't turn discovery off.
 {
   "schema": ["migrations/"],
   "output": "src/db",
-  "derive": ["serde"],
+  "derive": ["serde", "validate"],
+  "extractors": ["axum"],
   "conventions": { "preset": "rok", "version_column": "" }
 }
 ```
@@ -814,7 +823,8 @@ command prints the help (`rok-sqlc help generate`).
 | `-r`, `--resource <TABLE>` | Generate this table (SQL or module name) and regenerate every resource already generated in the output directory, so they and `db/mod.rs` stay current. Tables not generated yet stay ungenerated. |
 | `-c`, `--config <FILE>` | Read this config file instead of discovering `rok-sqlc.toml`. |
 | `-j`, `--json <PAYLOAD>` | The JSON payload: inline, `@FILE`, or `-` for stdin. |
-| `-d`, `--derive <NAME>` | Add a derive to generated types (`serde`). Repeatable. |
+| `-d`, `--derive <NAME>` | Add a derive to generated types (`serde`, or `validate`, which needs `serde`). Repeatable. |
+| `-e`, `--extractor <FRAMEWORK>` | Generate a validated-body extractor for `axum` or `actix_web` (needs `validate`). Repeatable. |
 | `-n`, `--dry-run` | Print what would be written, removed or refused, and touch nothing. |
 | `-k`, `--check` | Write nothing. List missing, changed and stale files, and exit 1 if there are any. |
 | `-f`, `--force` | Overwrite existing files that rok-sqlc did not generate. |
@@ -862,7 +872,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 The library never reads `rok-sqlc.toml` and never prints: a build script gets
 exactly the `Config` it built. Set `config.conventions`
 (`rok_sqlc::Conventions::rok()`), `config.derive`
-(`rok_sqlc::Derive::Serde`), `config.relationships`
+(`rok_sqlc::Derive::Serde`), `config.extractors` (`rok_sqlc::Extractor`),
+`config.relationships`
 (`rok_sqlc::RelationshipChange`) and `config.modules` to match the config
 file's sections.
 `Config` is `#[non_exhaustive]`, so start from `Config::default()` and set
@@ -870,7 +881,7 @@ fields. The `Report` lists written, unchanged, refused and stale files and
 any skipped tables or queries.
 
 The stable library API is `generate`, `Config`, `Conventions`, `Derive`,
-`IdGeneration`, `RelationshipChange`, `Report` (with `RefusedFile`, `TableFailure` and
+`Extractor`, `IdGeneration`, `RelationshipChange`, `Report` (with `RefusedFile`, `TableFailure` and
 `QueryFailure`), and `Error`. Changing the *generated* API counts as a
 breaking change too (see [ADR 0012](docs/adr/0012-library-api-and-stability.md)).
 

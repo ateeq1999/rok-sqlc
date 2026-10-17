@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, bail};
 use heck::ToSnakeCase;
 
-use crate::config::Config;
+use crate::config::{Config, Derive};
 use crate::output::is_generated_file;
 use crate::queries::AnalyzedQuery;
 use crate::report::{Error, QueryFailure, RefusedFile, Report, Result, TableFailure, display_path};
@@ -27,6 +27,7 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
     let resource = config.resource.as_deref();
     let (dry_run, force, lenient) = (config.dry_run, config.force, config.lenient);
 
+    check_options(config)?;
     for (key, module) in &config.modules {
         if parser::naming::rust_identifier(module).as_deref() != Ok(module.as_str()) {
             bail!(
@@ -255,6 +256,23 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
 /// shape (it failed at its `CREATE TABLE`, or its value lists cannot be
 /// generated), or whose last good shape uses an enum that no longer
 /// generates: the files kept for it could not compile.
+/// Fails a run whose options need ones it doesn't set (ADR 0015):
+/// `validate` needs `serde`, and extractors need `validate`.
+fn check_options(config: &Config) -> anyhow::Result<()> {
+    let validate = config.derive.contains(&Derive::Validate);
+    if validate && !config.derive.contains(&Derive::Serde) {
+        bail!(
+            "`validate` in `derive` needs `serde`, since validated inputs and patches are deserialized: add `serde` to `derive`"
+        );
+    }
+    if !config.extractors.is_empty() && !validate {
+        bail!(
+            "`extractors` needs `validate` in `derive`, since the extractors validate the bodies they take: add `serde` and `validate` to `derive`"
+        );
+    }
+    Ok(())
+}
+
 fn kept_resources(
     output_dir: &Path,
     failures: &[parser::TableFailure],

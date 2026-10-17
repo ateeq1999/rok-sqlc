@@ -18,7 +18,7 @@ use serde::Deserialize;
 use serde::de::{self, Deserializer, Visitor};
 
 use crate::report::display_path;
-use crate::{Conventions, Derive, IdGeneration, RelationshipChange};
+use crate::{Conventions, Derive, Extractor, IdGeneration, RelationshipChange};
 
 /// The file name looked for during discovery.
 pub(crate) const FILE_NAME: &str = "rok-sqlc.toml";
@@ -36,6 +36,9 @@ pub(crate) struct FileConfig {
     /// `None` leaves `derive` to the sources below; a list (even an empty
     /// one) replaces theirs.
     pub(crate) derive: Option<Vec<Derive>>,
+    /// Like `derive`: `None` leaves `extractors` to the sources below; a
+    /// list (even an empty one) replaces theirs.
+    pub(crate) extractors: Option<Vec<Extractor>>,
     pub(crate) relationships: RelationshipKeys,
     /// The `[modules]` renames, by table.
     pub(crate) modules: BTreeMap<String, String>,
@@ -59,6 +62,7 @@ impl FileConfig {
             resource: self.resource.or(lower.resource),
             conventions: self.conventions.over(lower.conventions),
             derive: self.derive.or(lower.derive),
+            extractors: self.extractors.or(lower.extractors),
             relationships: relationships_over(self.relationships, lower.relationships),
             modules: modules_over(self.modules, lower.modules),
         }
@@ -96,6 +100,7 @@ struct RawFile {
     #[serde(default)]
     conventions: ConventionKeys,
     derive: Option<Vec<DeriveName>>,
+    extractors: Option<Vec<ExtractorName>>,
     #[serde(default)]
     relationships: BTreeMap<String, BTreeMap<String, ChangeValue>>,
     #[serde(default)]
@@ -158,6 +163,9 @@ impl RawFile {
             derive: self
                 .derive
                 .map(|names| names.into_iter().map(DeriveName::derive).collect()),
+            extractors: self
+                .extractors
+                .map(|names| names.into_iter().map(ExtractorName::extractor).collect()),
             relationships: self
                 .relationships
                 .into_iter()
@@ -218,12 +226,32 @@ impl IdGenerationName {
 #[serde(rename_all = "lowercase")]
 enum DeriveName {
     Serde,
+    Validate,
 }
 
 impl DeriveName {
     fn derive(self) -> Derive {
         match self {
             DeriveName::Serde => Derive::Serde,
+            DeriveName::Validate => Derive::Validate,
+        }
+    }
+}
+
+/// An `extractors` entry. Deserializing an unknown name fails with the list
+/// of known ones.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ExtractorName {
+    Axum,
+    ActixWeb,
+}
+
+impl ExtractorName {
+    fn extractor(self) -> Extractor {
+        match self {
+            ExtractorName::Axum => Extractor::Axum,
+            ExtractorName::ActixWeb => Extractor::ActixWeb,
         }
     }
 }
