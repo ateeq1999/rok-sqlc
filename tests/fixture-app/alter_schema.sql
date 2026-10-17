@@ -13,6 +13,9 @@ COMMENT ON TABLE revised_notes IS 'Notes whose shape migrations changed';
 -- A value added to an enum type created earlier.
 ALTER TYPE app.ticket_state ADD VALUE 'Archived' AFTER 'CLOSED';
 
+-- An enum type renamed after a table started using it.
+ALTER TYPE ticket_channel RENAME TO contact_channel;
+
 -- A value-list column added by a later migration.
 ALTER TABLE refunds ADD COLUMN reason TEXT;
 ALTER TABLE refunds ADD CONSTRAINT refunds_reason_known CHECK (reason IN ('damaged', 'late'));

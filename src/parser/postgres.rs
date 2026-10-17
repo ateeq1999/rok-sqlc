@@ -231,8 +231,15 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
                 Statement::AlterType(alter) => {
                     // sqlparser gives `ALTER TYPE` no span of its own; its name has one.
                     let line = usize::try_from(alter.name.span().start.line).ok();
-                    let Some(reason) = enums.alter(&alter) else {
-                        continue;
+                    let reason = match enums.alter(&alter) {
+                        Ok(None) => continue,
+                        Ok(Some(renamed)) => {
+                            for table in &mut tables {
+                                retype_columns(table, &renamed);
+                            }
+                            continue;
+                        }
+                        Err(reason) => reason,
                     };
                     // Tables already using the type cannot be generated against it.
                     let (failed, kept) = std::mem::take(&mut tables)
@@ -414,6 +421,13 @@ impl EnumEntry {
     }
 }
 
+/// An `ALTER TYPE … RENAME TO`: the columns of the enum type at `from` now
+/// have the type at `to`.
+struct RenamedEnum {
+    from: String,
+    to: String,
+}
+
 /// An `ALTER TYPE` that broke an enum: every table using it fails.
 struct BrokenEnum {
     rust_path: String,
@@ -440,9 +454,42 @@ impl EnumRegistry {
         self.position(name).map(|index| &self.entries[index])
     }
 
-    /// Registers a `CREATE TYPE … AS ENUM`. The Rust name is the type name in
-    /// UpperCamelCase, prefixed with the schema when another enum already
-    /// took that name.
+    /// The Rust name of the enum type `schema.sql_name`: the type name in
+    /// UpperCamelCase, prefixed with the schema when another enum (other
+    /// than the one at `except`) already took that name. Also returns why
+    /// the name cannot be generated.
+    fn rust_name_for(
+        &self,
+        schema: Option<&str>,
+        sql_name: &str,
+        except: Option<usize>,
+    ) -> (String, Option<String>) {
+        let taken = |rust_name: &str| {
+            self.entries.iter().enumerate().any(|(index, entry)| {
+                Some(index) != except && entry.enum_type.rust_name == rust_name
+            })
+        };
+        let mut rust_name = naming::type_name(sql_name);
+        if taken(&rust_name)
+            && let Some(schema) = schema
+        {
+            rust_name = naming::type_name(&format!("{schema}_{sql_name}"));
+        }
+        let broken = if rust_name.is_empty() {
+            Some(format!(
+                "`{sql_name}` does not contain any characters usable in a Rust identifier"
+            ))
+        } else if taken(&rust_name) {
+            Some(format!(
+                "its Rust name `{rust_name}` is already used by another enum type"
+            ))
+        } else {
+            None
+        };
+        (rust_name, broken)
+    }
+
+    /// Registers a `CREATE TYPE … AS ENUM`, named by [`Self::rust_name_for`].
     fn define(&mut self, name: &ObjectName, labels: impl Iterator<Item = String>) {
         if let Some(index) = self.position(name) {
             self.entries[index].broken = Some("the type is defined more than once".to_owned());
@@ -450,27 +497,7 @@ impl EnumRegistry {
         }
         let schema = normalize_schema(object_schema_name(name));
         let sql_name = object_leaf_name(name);
-        let taken = |rust_name: &str| {
-            self.entries
-                .iter()
-                .any(|entry| entry.enum_type.rust_name == rust_name)
-        };
-        let mut broken = None;
-        let mut rust_name = naming::type_name(&sql_name);
-        if taken(&rust_name)
-            && let Some(schema) = &schema
-        {
-            rust_name = naming::type_name(&format!("{schema}_{sql_name}"));
-        }
-        if rust_name.is_empty() {
-            broken = Some(format!(
-                "`{sql_name}` does not contain any characters usable in a Rust identifier"
-            ));
-        } else if taken(&rust_name) {
-            broken = Some(format!(
-                "its Rust name `{rust_name}` is already used by another enum type"
-            ));
-        }
+        let (rust_name, broken) = self.rust_name_for(schema.as_deref(), &sql_name, None);
         let mut entry = EnumEntry {
             enum_type: EnumType {
                 schema,
@@ -485,16 +512,19 @@ impl EnumRegistry {
         self.entries.push(entry);
     }
 
-    /// Applies an `ALTER TYPE` to a known enum. Returns the enum's path and
-    /// the reason when the alteration breaks a generatable enum; unknown and
-    /// already broken types are left alone.
-    fn alter(&mut self, alter: &AlterType) -> Option<BrokenEnum> {
-        let index = self.position(&alter.name)?;
-        let entry = &mut self.entries[index];
-        if entry.broken.is_some() {
-            return None;
+    /// Applies an `ALTER TYPE` to a known enum. A `RENAME TO` returns the
+    /// enum's old and new paths, for the columns using it to follow. An
+    /// alteration that breaks a generatable enum returns its path and the
+    /// reason. Unknown and already broken types are left alone.
+    fn alter(&mut self, alter: &AlterType) -> std::result::Result<Option<RenamedEnum>, BrokenEnum> {
+        let Some(index) = self.position(&alter.name) else {
+            return Ok(None);
+        };
+        if self.entries[index].broken.is_some() {
+            return Ok(None);
         }
-        let mut labels = entry.labels();
+        let mut labels = self.entries[index].labels();
+        let mut renamed = None;
         let applied = match &alter.operation {
             AlterTypeOperation::AddValue(add) => add_enum_value(&mut labels, add),
             AlterTypeOperation::RenameValue(rename) => {
@@ -510,17 +540,50 @@ impl EnumRegistry {
                     None => Err(format!("RENAME VALUE: label `{from}` does not exist")),
                 }
             }
-            other => Err(format!("unsupported ALTER TYPE clause `{other}`")),
+            AlterTypeOperation::Rename(rename) => {
+                let sql_name = ident_name(&rename.new_name);
+                let schema = self.entries[index].enum_type.schema.clone();
+                let exists = self.entries.iter().any(|entry| {
+                    entry.enum_type.sql_name == sql_name && entry.enum_type.schema == schema
+                });
+                let (rust_name, broken) =
+                    self.rust_name_for(schema.as_deref(), &sql_name, Some(index));
+                match (exists, broken) {
+                    (true, _) => {
+                        let name = match &schema {
+                            Some(schema) => format!("{schema}.{sql_name}"),
+                            None => sql_name,
+                        };
+                        Err(format!("RENAME TO: type `{name}` already exists"))
+                    }
+                    (false, Some(reason)) => Err(format!("RENAME TO: {reason}")),
+                    (false, None) => {
+                        let enum_type = &mut self.entries[index].enum_type;
+                        let from = enum_type.rust_path();
+                        enum_type.sql_name = sql_name;
+                        enum_type.rust_name = rust_name;
+                        renamed = Some(RenamedEnum {
+                            from,
+                            to: enum_type.rust_path(),
+                        });
+                        Ok(())
+                    }
+                }
+            }
         };
+        let entry = &mut self.entries[index];
         let reason = match applied {
             Ok(()) => {
                 entry.set_labels(labels);
-                entry.broken.clone()?
+                match entry.broken.clone() {
+                    None => return Ok(renamed),
+                    Some(reason) => reason,
+                }
             }
             Err(reason) => reason,
         };
         entry.broken = Some(reason.clone());
-        Some(BrokenEnum {
+        Err(BrokenEnum {
             rust_path: entry.enum_type.rust_path(),
             reason: format!("ALTER TYPE `{}`: {reason}", entry.enum_type.display_name()),
         })
@@ -645,6 +708,21 @@ fn drop_table(
             key.referenced_table != leaf
                 || normalize_schema(key.referenced_schema.clone()) != schema
         });
+    }
+}
+
+/// Moves every column of a renamed enum type (or an array of it) to the
+/// enum's new path.
+fn retype_columns(table: &mut Table, renamed: &RenamedEnum) {
+    for column in &mut table.columns {
+        if column.sqlx_type == renamed.from {
+            column.sqlx_type.clone_from(&renamed.to);
+        } else if Shape::of(&column.sqlx_type) == Shape::List(&renamed.from) {
+            column.sqlx_type = format!("Vec<{}>", renamed.to);
+        } else {
+            continue;
+        }
+        column.rust_type = rust_type(&column.sqlx_type, column.nullable);
     }
 }
 
@@ -1567,9 +1645,24 @@ fn index_column_name(column: &IndexColumn) -> Option<String> {
     }
 }
 
-/// Maps a SQL type to its Rust type, without enum types (query-file casts).
-pub(crate) fn map_type(data_type: &DataType) -> std::result::Result<(String, String), String> {
-    map_type_in(data_type, &EnumRegistry::default())
+/// Maps a query-file cast's SQL type to its Rust type, resolving the
+/// database enum types among the generated `enums` (a value-list enum names
+/// no database type).
+pub(crate) fn map_type(
+    data_type: &DataType,
+    enums: &[EnumType],
+) -> std::result::Result<(String, String), String> {
+    let registry = EnumRegistry {
+        entries: enums
+            .iter()
+            .filter(|enum_type| enum_type.column.is_none())
+            .map(|enum_type| EnumEntry {
+                enum_type: enum_type.clone(),
+                broken: None,
+            })
+            .collect(),
+    };
+    map_type_in(data_type, &registry)
 }
 
 /// Maps a SQL type to `(Rust type, base type)`, resolving enum types defined
@@ -2515,16 +2608,67 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_alter_type_clauses_fail_tables_using_the_type() {
+    fn alter_type_rename_renames_the_enum_and_its_columns_follow() {
         let parsed = parse(
             "CREATE TYPE mood AS ENUM ('a');
+             CREATE TABLE people (id BIGSERIAL PRIMARY KEY, mood mood NOT NULL, past mood[], next mood);
+             ALTER TYPE mood RENAME TO feeling;
+             CREATE TABLE later (id BIGSERIAL PRIMARY KEY, feeling feeling NOT NULL);",
+        );
+        assert!(parsed.failures.is_empty(), "{:?}", parsed.failures);
+        let feeling = &parsed.schema.enums[0];
+        assert_eq!(
+            (feeling.sql_name.as_str(), feeling.rust_name.as_str()),
+            ("feeling", "Feeling")
+        );
+        let types: Vec<(&str, &str)> = parsed
+            .schema
+            .tables
+            .iter()
+            .flat_map(|table| &table.columns[1..])
+            .map(|column| (column.sqlx_type.as_str(), column.rust_type.as_str()))
+            .collect();
+        assert_eq!(
+            types,
+            [
+                ("types::Feeling", "types::Feeling"),
+                ("Vec<types::Feeling>", "Option<Vec<types::Feeling>>"),
+                ("types::Feeling", "Option<types::Feeling>"),
+                ("types::Feeling", "types::Feeling"),
+            ]
+        );
+    }
+
+    #[test]
+    fn alter_type_rename_keeps_the_schema_and_avoids_taken_rust_names() {
+        let parsed = parse(
+            "CREATE TYPE status AS ENUM ('a');
+             CREATE TYPE app.mood AS ENUM ('b');
+             CREATE TABLE app.people (id BIGSERIAL PRIMARY KEY, mood app.mood);
+             ALTER TYPE app.mood RENAME TO status;",
+        );
+        assert!(parsed.failures.is_empty(), "{:?}", parsed.failures);
+        let renamed = &parsed.schema.enums[1];
+        assert_eq!(renamed.display_name(), "app.status");
+        assert_eq!(renamed.rust_name, "AppStatus");
+        assert_eq!(
+            parsed.schema.tables[0].columns[1].sqlx_type,
+            "types::AppStatus"
+        );
+    }
+
+    #[test]
+    fn alter_type_rename_to_a_taken_name_fails_tables_using_the_type() {
+        let parsed = parse(
+            "CREATE TYPE mood AS ENUM ('a');
+             CREATE TYPE feeling AS ENUM ('b');
              CREATE TABLE people (id BIGSERIAL PRIMARY KEY, mood mood);
              ALTER TYPE mood RENAME TO feeling;",
         );
         assert!(parsed.schema.tables.is_empty());
         assert_eq!(
             parsed.failures[0].reason,
-            "ALTER TYPE `mood`: unsupported ALTER TYPE clause `RENAME TO feeling`"
+            "ALTER TYPE `mood`: RENAME TO: type `feeling` already exists"
         );
     }
 

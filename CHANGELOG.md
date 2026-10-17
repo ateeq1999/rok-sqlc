@@ -35,6 +35,13 @@ the *generated* API count as breaking (see ADR 0012).
 - With `derive = ["serde"]`, a table or query that would put `PgInterval` or
   `PgTimeTz` (which implement no serde traits) into a serde-deriving item
   fails the run with an error naming the column or parameter.
+- In query files, a cast to an enum type infers the generated enum:
+  `$1::product_status` and `$1::app.ticket_state` take `types::X`, and
+  `$1::product_status[]` takes `&[types::X]`. Such casts were rejected.
+- `ALTER TYPE x RENAME TO y` renames the enum: its Rust name follows the new
+  name (schema-prefixed only on a clash, as for `CREATE TYPE`), its
+  `sqlx(type_name)` becomes `y`, and the columns using it keep working. The
+  clause used to fail every table using the type.
 
 ### Changed
 
