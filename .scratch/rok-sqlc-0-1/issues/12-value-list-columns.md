@@ -4,9 +4,13 @@
 
 **Blocked by:** 11
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] A value-list column round-trips through create, get, and search against PostgreSQL, and an invalid value can't be constructed in Rust (PostgreSQL seam).
-- [ ] A nullable value-list column becomes `Option<Enum>`.
-- [ ] Two tables with the same column name and different value lists get distinct enum types.
-- [ ] Corpus columns such as `business_type` generate enums, and the module fixture harness still compiles and runs.
+- [x] A value-list column round-trips through create, get, and search against PostgreSQL, and an invalid value can't be constructed in Rust (PostgreSQL seam).
+- [x] A nullable value-list column becomes `Option<Enum>`.
+- [x] Two tables with the same column name and different value lists get distinct enum types.
+- [x] Corpus columns such as `business_type` generate enums, and the module fixture harness still compiles and runs.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-1` (final tip b865371). Final code review fixes landed in 8dab99f..b865371. See CHANGELOG.md (Unreleased) and the ADRs for design decisions.

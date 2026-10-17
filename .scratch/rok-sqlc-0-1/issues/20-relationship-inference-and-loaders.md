@@ -10,11 +10,15 @@ Each resource gets a relationships module of **loaders**. Each loader takes a sl
 
 **Blocked by:** 15, 17, 18
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Loading `category` for 50 products issues one query and maps each product's `category_id` to its category (PostgreSQL seam; verify the query count through the database's statement statistics or a counting executor in the test).
-- [ ] Loading `comments` for posts returns each post's comments, including empty lists, and excludes soft-deleted comments and other tenants' rows.
-- [ ] Two foreign keys from `invoices` to `users` yield distinct, predictable relationship names.
-- [ ] A self-referencing table loads `parent` and `children`.
-- [ ] The module fixture harness compiles with relationships for the whole corpus.
-- [ ] ADR 0014 is written.
+- [x] Loading `category` for 50 products issues one query and maps each product's `category_id` to its category (PostgreSQL seam; verify the query count through the database's statement statistics or a counting executor in the test).
+- [x] Loading `comments` for posts returns each post's comments, including empty lists, and excludes soft-deleted comments and other tenants' rows.
+- [x] Two foreign keys from `invoices` to `users` yield distinct, predictable relationship names.
+- [x] A self-referencing table loads `parent` and `children`.
+- [x] The module fixture harness compiles with relationships for the whole corpus.
+- [x] ADR 0014 is written.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-1` (final tip b865371). Final code review fixes landed in 8dab99f..b865371. See CHANGELOG.md (Unreleased) and the ADRs for design decisions.

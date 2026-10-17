@@ -4,10 +4,14 @@
 
 **Blocked by:** 04, 13, 27
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] With `managed_columns = ["updated_at", "row_version"]`, a table using a `touch_row`-style trigger can be created and updated from the fixture crate without supplying those columns, and the row reflects the trigger's values (PostgreSQL seam).
-- [ ] Without conventions configured, generated code is identical to before (CLI seam: no diff).
-- [ ] `preset = "rok"` plus an explicit `soft_delete_column` override uses the override.
-- [ ] An unknown preset or convention key fails with an actionable error.
-- [ ] ADR 0010 is written.
+- [x] With `managed_columns = ["updated_at", "row_version"]`, a table using a `touch_row`-style trigger can be created and updated from the fixture crate without supplying those columns, and the row reflects the trigger's values (PostgreSQL seam).
+- [x] Without conventions configured, generated code is identical to before (CLI seam: no diff).
+- [x] `preset = "rok"` plus an explicit `soft_delete_column` override uses the override.
+- [x] An unknown preset or convention key fails with an actionable error.
+- [x] ADR 0010 is written.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-1` (final tip b865371). Final code review fixes landed in 8dab99f..b865371. See CHANGELOG.md (Unreleased) and the ADRs for design decisions.

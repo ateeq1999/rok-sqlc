@@ -4,8 +4,12 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] A query using a CTE to pre-aggregate stock per category, then joining it to categories, generates a typed row struct and returns correct rows against PostgreSQL (PostgreSQL seam).
-- [ ] A placeholder inside the CTE is inferred from the column it is compared with.
-- [ ] A recursive CTE and a data-modifying CTE fail with `path:line` diagnostics that say they are unsupported.
+- [x] A query using a CTE to pre-aggregate stock per category, then joining it to categories, generates a typed row struct and returns correct rows against PostgreSQL (PostgreSQL seam).
+- [x] A placeholder inside the CTE is inferred from the column it is compared with.
+- [x] A recursive CTE and a data-modifying CTE fail with `path:line` diagnostics that say they are unsupported.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-1` (final tip b865371). Final code review fixes landed in 8dab99f..b865371. See CHANGELOG.md (Unreleased) and the ADRs for design decisions.

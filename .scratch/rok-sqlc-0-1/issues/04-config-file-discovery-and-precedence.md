@@ -4,10 +4,14 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] With a `rok-sqlc.toml` in a parent directory, `rok-sqlc g` run from a subdirectory generates using the file's inputs, resolved against the file's directory (CLI seam).
-- [ ] `-c path/to/other.toml` uses that file instead of discovery.
-- [ ] A flag overrides the same key from the file.
-- [ ] An unknown key fails with an error naming the key and the file.
-- [ ] ADR 0011 is written.
+- [x] With a `rok-sqlc.toml` in a parent directory, `rok-sqlc g` run from a subdirectory generates using the file's inputs, resolved against the file's directory (CLI seam).
+- [x] `-c path/to/other.toml` uses that file instead of discovery.
+- [x] A flag overrides the same key from the file.
+- [x] An unknown key fails with an error naming the key and the file.
+- [x] ADR 0011 is written.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-1` (final tip b865371). Final code review fixes landed in 8dab99f..b865371. See CHANGELOG.md (Unreleased) and the ADRs for design decisions.

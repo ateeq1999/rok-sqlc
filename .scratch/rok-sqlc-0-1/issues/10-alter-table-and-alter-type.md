@@ -8,10 +8,14 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] A migration that adds a column, renames another, and drops a third produces a model the fixture crate can create and read back against PostgreSQL with the final columns (PostgreSQL seam).
-- [ ] A foreign key added by `ALTER TABLE … ADD CONSTRAINT` is recorded like an inline one.
-- [ ] RLS, policy, index, grant, trigger, comment, and function statements generate without warnings.
-- [ ] An unsupported `ALTER TABLE` (for example `ALTER COLUMN … TYPE`) on a known table fails with a `path:line` diagnostic (parser diagnostics seam); on an unknown table it is ignored.
-- [ ] The module fixture harness still passes; the corpus's `ALTER TABLE … ADD CONSTRAINT` foreign key is now recorded.
+- [x] A migration that adds a column, renames another, and drops a third produces a model the fixture crate can create and read back against PostgreSQL with the final columns (PostgreSQL seam).
+- [x] A foreign key added by `ALTER TABLE … ADD CONSTRAINT` is recorded like an inline one.
+- [x] RLS, policy, index, grant, trigger, comment, and function statements generate without warnings.
+- [x] An unsupported `ALTER TABLE` (for example `ALTER COLUMN … TYPE`) on a known table fails with a `path:line` diagnostic (parser diagnostics seam); on an unknown table it is ignored.
+- [x] The module fixture harness still passes; the corpus's `ALTER TABLE … ADD CONSTRAINT` foreign key is now recorded.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-1` (final tip b865371). Final code review fixes landed in 8dab99f..b865371. See CHANGELOG.md (Unreleased) and the ADRs for design decisions.

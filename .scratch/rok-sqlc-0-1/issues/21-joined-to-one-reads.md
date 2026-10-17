@@ -4,9 +4,13 @@
 
 **Blocked by:** 20
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `get_with_category` returns the product with its category in one round trip (PostgreSQL seam).
-- [ ] A nullable foreign key with no parent yields the row with `None` as the related row.
-- [ ] A soft-deleted parent yields the child with no related row; a soft-deleted child yields `None`.
-- [ ] Result columns from both tables are decoded unambiguously even when the tables share column names.
+- [x] `get_with_category` returns the product with its category in one round trip (PostgreSQL seam).
+- [x] A nullable foreign key with no parent yields the row with `None` as the related row.
+- [x] A soft-deleted parent yields the child with no related row; a soft-deleted child yields `None`.
+- [x] Result columns from both tables are decoded unambiguously even when the tables share column names.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-1` (final tip b865371). Final code review fixes landed in 8dab99f..b865371. See CHANGELOG.md (Unreleased) and the ADRs for design decisions.

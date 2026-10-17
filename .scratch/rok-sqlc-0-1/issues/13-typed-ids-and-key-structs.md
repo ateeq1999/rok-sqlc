@@ -4,10 +4,14 @@
 
 **Blocked by:** 10
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Fixture code passing a `CategoryId` where a `ProductId` is expected fails to compile (verify with a compile-fail check or by documented negative test), and the positive paths compile and run against PostgreSQL (PostgreSQL seam).
-- [ ] A foreign key field (`products.category_id`) has type `CategoryId`, and a value read from a category can be used directly to filter products.
-- [ ] Composite-key lookups and keyset pagination take and return the key struct.
-- [ ] Two same-named tables in different schemas are referenced correctly by foreign keys.
-- [ ] Existing PostgreSQL scenarios are updated to the new signatures and still pass; the module fixture harness passes.
+- [x] Fixture code passing a `CategoryId` where a `ProductId` is expected fails to compile (verify with a compile-fail check or by documented negative test), and the positive paths compile and run against PostgreSQL (PostgreSQL seam).
+- [x] A foreign key field (`products.category_id`) has type `CategoryId`, and a value read from a category can be used directly to filter products.
+- [x] Composite-key lookups and keyset pagination take and return the key struct.
+- [x] Two same-named tables in different schemas are referenced correctly by foreign keys.
+- [x] Existing PostgreSQL scenarios are updated to the new signatures and still pass; the module fixture harness passes.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-1` (final tip b865371). Final code review fixes landed in 8dab99f..b865371. See CHANGELOG.md (Unreleased) and the ADRs for design decisions.

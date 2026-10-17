@@ -9,10 +9,14 @@
 
 **Blocked by:** 16, 15
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Delete, then every read misses the row; restore, then they find it again; permanent delete removes it (PostgreSQL seam).
-- [ ] `delete` on an already-deleted row returns `false`, and `update` on it returns not-found.
-- [ ] `include_deleted: true` returns deleted rows through `search`.
-- [ ] A soft-delete-scoped partial unique index allows a deleted and a live row with the same key, and `get_by_<key>` returns the live one.
-- [ ] A wrongly typed soft-delete column fails generation with a diagnostic.
+- [x] Delete, then every read misses the row; restore, then they find it again; permanent delete removes it (PostgreSQL seam).
+- [x] `delete` on an already-deleted row returns `false`, and `update` on it returns not-found.
+- [x] `include_deleted: true` returns deleted rows through `search`.
+- [x] A soft-delete-scoped partial unique index allows a deleted and a live row with the same key, and `get_by_<key>` returns the live one.
+- [x] A wrongly typed soft-delete column fails generation with a diagnostic.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-1` (final tip b865371). Final code review fixes landed in 8dab99f..b865371. See CHANGELOG.md (Unreleased) and the ADRs for design decisions.

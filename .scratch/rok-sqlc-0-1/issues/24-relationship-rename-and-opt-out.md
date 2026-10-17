@@ -4,8 +4,12 @@
 
 **Blocked by:** 20, 04
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Renaming `invoices.created_by_user` to `author` changes the loader, joined read, and filter names, and they work against PostgreSQL (PostgreSQL seam).
-- [ ] An opted-out relationship generates nothing on either side.
-- [ ] Unknown relationships and colliding renames fail with errors naming the config location (CLI seam).
+- [x] Renaming `invoices.created_by_user` to `author` changes the loader, joined read, and filter names, and they work against PostgreSQL (PostgreSQL seam).
+- [x] An opted-out relationship generates nothing on either side.
+- [x] Unknown relationships and colliding renames fail with errors naming the config location (CLI seam).
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-1` (final tip b865371). Final code review fixes landed in 8dab99f..b865371. See CHANGELOG.md (Unreleased) and the ADRs for design decisions.

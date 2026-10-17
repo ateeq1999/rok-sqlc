@@ -4,9 +4,13 @@
 
 **Blocked by:** 13, 10, 27
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `get_by_sku` and a composite `get_by_organization_id_and_code` return the right row, or `None`, against PostgreSQL (PostgreSQL seam).
-- [ ] An expression index (`lower(name)`) and a non-soft-delete partial index generate no lookup.
-- [ ] A query-file upsert whose `ON CONFLICT` target isn't a unique key fails generation with a `path:line` diagnostic listing the available keys (CLI seam).
-- [ ] The inventory fixture's `UpsertProduct` is now rejected unless `sku` is unique; corpus expectations are updated.
+- [x] `get_by_sku` and a composite `get_by_organization_id_and_code` return the right row, or `None`, against PostgreSQL (PostgreSQL seam).
+- [x] An expression index (`lower(name)`) and a non-soft-delete partial index generate no lookup.
+- [x] A query-file upsert whose `ON CONFLICT` target isn't a unique key fails generation with a `path:line` diagnostic listing the available keys (CLI seam).
+- [x] The inventory fixture's `UpsertProduct` is now rejected unless `sku` is unique; corpus expectations are updated.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-1` (final tip b865371). Final code review fixes landed in 8dab99f..b865371. See CHANGELOG.md (Unreleased) and the ADRs for design decisions.

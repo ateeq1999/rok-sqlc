@@ -4,12 +4,12 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] After a table is dropped from the schema, regenerating removes its resource directory (CLI seam).
-- [ ] A hand-written file in the output directory survives regeneration.
-- [ ] `--check` exits 0 on a freshly generated tree, and exits 1 listing the file after a schema change, a hand edit to a generated file, or a dropped table.
-- [ ] `--check` never modifies the filesystem.
+- [x] After a table is dropped from the schema, regenerating removes its resource directory (CLI seam).
+- [x] A hand-written file in the output directory survives regeneration.
+- [x] `--check` exits 0 on a freshly generated tree, and exits 1 listing the file after a schema change, a hand edit to a generated file, or a dropped table.
+- [x] `--check` never modifies the filesystem.
 
 ## Decisions
 
@@ -17,3 +17,7 @@
 - A kept `queries.rs` (previous run used `--queries`, this one doesn't) counts as planned and is not stale.
 - Library: `Config::check`; drift fails `generate` with an `Error` whose report lists `missing`, `changed`, `stale` (same failure as the CLI, per ADR 0012). `Report::stale` lists removed files (dry run: files that would be removed).
 - In check mode a planned path holding a hand-written file is reported as `changed`. Only the generated header marks a file as removable; symlinks are never followed or removed; the output directory itself is never removed.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-1` (final tip b865371). Final code review fixes landed in 8dab99f..b865371. See CHANGELOG.md (Unreleased) and the ADRs for design decisions.

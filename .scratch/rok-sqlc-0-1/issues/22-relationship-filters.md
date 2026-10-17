@@ -4,9 +4,13 @@
 
 **Blocked by:** 20
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Searching products by their category's name returns exactly the matching products, each once (PostgreSQL seam).
-- [ ] Searching posts that have at least one comment by a given author returns each post once, even with several matching comments.
-- [ ] Soft-deleted or other-tenant related rows never satisfy a relationship filter.
-- [ ] An empty related filter means "has a related row" (for to-many) or "has a non-null, live parent" (for to-one), as documented.
+- [x] Searching products by their category's name returns exactly the matching products, each once (PostgreSQL seam).
+- [x] Searching posts that have at least one comment by a given author returns each post once, even with several matching comments.
+- [x] Soft-deleted or other-tenant related rows never satisfy a relationship filter.
+- [x] An empty related filter means "has a related row" (for to-many) or "has a non-null, live parent" (for to-one), as documented.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-1` (final tip b865371). Final code review fixes landed in 8dab99f..b865371. See CHANGELOG.md (Unreleased) and the ADRs for design decisions.

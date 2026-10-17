@@ -4,10 +4,14 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] A test outside the crate (an integration test or the fixture crate) calls `rok_sqlc::generate` with a `Config` and gets the same files the CLI writes for the same inputs.
-- [ ] The returned report lists written, unchanged, and refused files, plus table and query failures.
-- [ ] Internal modules no longer appear as part of the documented public API (they are `pub(crate)` or `#[doc(hidden)]`); existing tests keep compiling, through test-only access where needed.
-- [ ] All existing CLI, corpus, and fixture tests pass unchanged in behavior.
-- [ ] ADR 0012 is written.
+- [x] A test outside the crate (an integration test or the fixture crate) calls `rok_sqlc::generate` with a `Config` and gets the same files the CLI writes for the same inputs.
+- [x] The returned report lists written, unchanged, and refused files, plus table and query failures.
+- [x] Internal modules no longer appear as part of the documented public API (they are `pub(crate)` or `#[doc(hidden)]`); existing tests keep compiling, through test-only access where needed.
+- [x] All existing CLI, corpus, and fixture tests pass unchanged in behavior.
+- [x] ADR 0012 is written.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-1` (final tip b865371). Final code review fixes landed in 8dab99f..b865371. See CHANGELOG.md (Unreleased) and the ADRs for design decisions.

@@ -4,9 +4,13 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] The harness generates all migration-based module fixtures into `db/modules/<module>/` and the crate compiles with no warnings.
-- [ ] rustfmt reports no differences across the generated tree (run per module to stay within command-line limits).
-- [ ] With a database configured, every generated table's reads run successfully against the migrated corpus; without one, the database part is skipped with a message.
-- [ ] Expected rejections are asserted, not silently skipped.
+- [x] The harness generates all migration-based module fixtures into `db/modules/<module>/` and the crate compiles with no warnings.
+- [x] rustfmt reports no differences across the generated tree (run per module to stay within command-line limits).
+- [x] With a database configured, every generated table's reads run successfully against the migrated corpus; without one, the database part is skipped with a message.
+- [x] Expected rejections are asserted, not silently skipped.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-1` (final tip b865371). Final code review fixes landed in 8dab99f..b865371. See CHANGELOG.md (Unreleased) and the ADRs for design decisions.

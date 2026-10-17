@@ -4,9 +4,13 @@
 
 **Blocked by:** 16
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Rows created under tenant A are invisible to every read, update, and delete made with tenant B (PostgreSQL seam).
-- [ ] A table with a row-level security policy reading the tenant setting works when `session::set_tenant` is called in the transaction, and returns nothing when it isn't.
-- [ ] A composite primary key that includes the tenant column takes the tenant only once.
-- [ ] Without the convention, generated signatures are unchanged.
+- [x] Rows created under tenant A are invisible to every read, update, and delete made with tenant B (PostgreSQL seam).
+- [x] A table with a row-level security policy reading the tenant setting works when `session::set_tenant` is called in the transaction, and returns nothing when it isn't.
+- [x] A composite primary key that includes the tenant column takes the tenant only once.
+- [x] Without the convention, generated signatures are unchanged.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-1` (final tip b865371). Final code review fixes landed in 8dab99f..b865371. See CHANGELOG.md (Unreleased) and the ADRs for design decisions.

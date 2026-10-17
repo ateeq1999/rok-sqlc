@@ -9,9 +9,13 @@ Record the generated-code quality bar, with typed ids, as ADR 0013.
 
 **Blocked by:** 13, 04, 27
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] The fixture crate compiles under the lint gate, including the chosen pedantic lints, and the module fixture harness does too.
-- [ ] With `serde` enabled, the fixture crate serializes a row to JSON and back (PostgreSQL seam or fixture test).
-- [ ] Generated code without `serde` enabled doesn't mention `serde`.
-- [ ] ADR 0013 is written.
+- [x] The fixture crate compiles under the lint gate, including the chosen pedantic lints, and the module fixture harness does too.
+- [x] With `serde` enabled, the fixture crate serializes a row to JSON and back (PostgreSQL seam or fixture test).
+- [x] Generated code without `serde` enabled doesn't mention `serde`.
+- [x] ADR 0013 is written.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-1` (final tip b865371). Final code review fixes landed in 8dab99f..b865371. See CHANGELOG.md (Unreleased) and the ADRs for design decisions.
