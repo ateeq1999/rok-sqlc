@@ -445,12 +445,17 @@ and it is rustfmt-clean. It never forces your crate to relax its lints.
 
 **Serde.** With `derive = ["serde"]` (or `-d serde`), rows, typed ids
 (transparent), key structs, enums (by database label), inputs, patches,
-joined-read structs (`ProductWithCategory`), and query rows and parameters
-derive `Serialize` and `Deserialize`. Without it, generated code doesn't
-mention serde. SQLx's `PgInterval` and `PgTimeTz` implement no serde traits,
-so with serde a table with an `INTERVAL` or `TIME WITH TIME ZONE` column, or
-a query row or parameter struct holding one, fails the run with an error
-naming it.
+joined-read structs (`ProductWithCategory`), query rows and parameters,
+filters (`ProductFilter`), sort keys, and the `db::search` conditions and
+`Sort` derive `Serialize` and `Deserialize`, so an API can take a search as
+JSON. In a patch, an absent field leaves the column alone and `null` sets it
+to `NULL` (`{"note": null}` is `note: Some(None)`); serializing skips the
+absent fields. A filter field left out of the JSON adds no condition. Without
+`derive`, generated code doesn't mention serde. SQLx's `PgInterval` and
+`PgTimeTz` implement no serde traits, so with serde a table with an
+`INTERVAL` or `TIME WITH TIME ZONE` column (which would also reach its
+filter), or a query row or parameter struct holding one, fails the run with
+an error naming it.
 
 ## Writing query files
 
@@ -920,9 +925,6 @@ problems count.
   soft-delete convention's `WHERE deleted_at IS NULL` unique indexes,
   because PostgreSQL infers a partial index only from a target that repeats
   its condition, which the query parser can't read.
-- Filters and search types don't get serde derives.
-- A serde-deserialized update patch can't set a column to `NULL`: `None` and
-  `Some(None)` both serialize to `null`.
 - Relationship filters nest at most `MAX_RELATIONSHIP_DEPTH` (4) deep. Deeper
   filters make `search` fail with `sqlx::Error::InvalidArgument`.
 - Keyset pagination (`search_after`) follows primary-key order only. Array

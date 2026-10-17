@@ -54,7 +54,7 @@ impl ParsedSchema {
 }
 
 /// Root modules rok-sqlc always generates next to the resource modules.
-const GENERATED_MODULES: &[&str] = &["schema", "search", "session", "types"];
+const GENERATED_MODULES: &[&str] = &["nullable", "schema", "search", "session", "types"];
 
 /// One schema input: a migration file's path and its SQL.
 pub struct SchemaSource<'a> {
@@ -2026,10 +2026,15 @@ mod tests {
     #[test]
     fn rejects_tables_named_after_generated_modules() {
         let parsed = parse(
-            "CREATE TABLE search (id BIGSERIAL PRIMARY KEY); CREATE TABLE schema (id BIGSERIAL PRIMARY KEY); CREATE TABLE session (id BIGSERIAL PRIMARY KEY);",
+            "CREATE TABLE search (id BIGSERIAL PRIMARY KEY); CREATE TABLE schema (id BIGSERIAL PRIMARY KEY); CREATE TABLE session (id BIGSERIAL PRIMARY KEY); CREATE TABLE nullable (id BIGSERIAL PRIMARY KEY);",
         );
         assert!(parsed.schema.tables.is_empty());
-        assert_eq!(parsed.failures.len(), 3);
+        assert_eq!(parsed.failures.len(), 4);
+        assert!(
+            parsed.failures[3]
+                .reason
+                .contains("reserved for the generated `db/nullable.rs`")
+        );
         assert!(
             parsed.failures[0]
                 .reason

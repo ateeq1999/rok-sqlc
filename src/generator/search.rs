@@ -17,7 +17,7 @@
 use crate::schema::{Column, FilterKind, Relationship, Table, Through, mentions_generated_type};
 
 use super::sql::{ident, live_condition, str_literal, table_ref};
-use super::{HEADER, doc_name, push_doc, relationships};
+use super::{HEADER, doc_name, push_doc, push_serde_derive, relationships};
 
 /// A relationship `{Struct}Filter` can follow, resolved against its target.
 pub struct FilterRelationship<'a> {
@@ -202,7 +202,8 @@ const QUERY_PARAM: &str = "query: &mut sqlx::QueryBuilder<sqlx::Postgres>";
 
 /// Renders the resource's `filter.rs`, or `None` when the resource has no
 /// search function to use it. `tables` holds every table generated with it.
-pub fn render_filter(table: &Table, tables: &[Table]) -> Option<String> {
+/// With `serde`, the filter and the sort key derive serde (ADR 0013).
+pub fn render_filter(table: &Table, tables: &[Table], serde: bool) -> Option<String> {
     let api = SearchApi::for_table(table);
     if !api.any() {
         return None;
@@ -291,8 +292,18 @@ pub fn render_filter(table: &Table, tables: &[Table]) -> Option<String> {
             "tenant. Relationship filters nest at most `MAX_RELATIONSHIP_DEPTH` deep.",
         ]);
     }
+    if serde {
+        doc.extend([
+            "",
+            "From JSON, an absent field keeps its default: no condition.",
+        ]);
+    }
     push_doc(&mut output, 0, &doc);
     output.push_str("#[derive(Debug, Clone, Default, PartialEq)]\n");
+    push_serde_derive(&mut output, serde);
+    if serde {
+        output.push_str("#[serde(default)]\n");
+    }
     let mut fields = Vec::new();
     if live.is_some() {
         fields.push("/// Whether soft-deleted rows match too.".to_owned());
@@ -389,6 +400,7 @@ pub fn render_filter(table: &Table, tables: &[Table]) -> Option<String> {
     output.push('\n');
     push_doc(&mut output, 0, &["Columns `search` may sort by."]);
     output.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
+    push_serde_derive(&mut output, serde);
     let sortable = sortable(table);
     let variants: Vec<String> = sortable
         .iter()
@@ -621,10 +633,33 @@ fn push_join_exists(
     ));
 }
 
-/// Renders the shared `db/search.rs`.
-pub fn render_shared() -> String {
-    format!("{HEADER}\n{SHARED}")
+/// Renders the shared `db/search.rs`. With `serde`, the types an API layer
+/// takes a search from (`Direction`, `Sort`, and the condition enums) derive
+/// serde; `Page` and `Limit` do not, since deserializing would skip their
+/// clamping.
+pub fn render_shared(serde: bool) -> String {
+    let mut output = format!("{HEADER}\n");
+    let mut lines = SHARED.lines().peekable();
+    while let Some(line) = lines.next() {
+        output.push_str(line);
+        output.push('\n');
+        let next = lines.peek().copied().unwrap_or_default();
+        if line.starts_with("#[derive(") && SERDE_SHARED.contains(&next) {
+            push_serde_derive(&mut output, serde);
+        }
+    }
+    output
 }
+
+/// The declarations in `db/search.rs` that derive serde with `serde`; each
+/// follows its `#[derive(...)]` line.
+const SERDE_SHARED: [&str; 5] = [
+    "pub enum Direction {",
+    "pub struct Sort<K> {",
+    "pub enum Ordered<T> {",
+    "pub enum Equality<T> {",
+    "pub enum Text {",
+];
 
 const SHARED: &str = r#"//! Types shared by every resource's `search`: pages, sorting, and typed
 //! filter conditions.
@@ -989,11 +1024,49 @@ mod tests {
     /// SQLx 0.9's `QueryBuilder` takes no lifetime parameter.
     #[test]
     fn search_code_names_query_builder_without_a_lifetime() {
-        let filter = render_filter(&table(vec![column("id", "i64")], &["id"]), &[])
+        let filter = render_filter(&table(vec![column("id", "i64")], &["id"]), &[], false)
             .expect("an i64 column is filterable");
-        for rendered in [render_shared(), filter] {
+        for rendered in [render_shared(false), filter] {
             assert!(rendered.contains("QueryBuilder<"), "{rendered}");
             assert!(!rendered.contains("QueryBuilder<'"), "{rendered}");
         }
+    }
+
+    #[test]
+    fn serde_derives_filters_and_sort_keys_on_request() {
+        let users = table(vec![column("id", "i64")], &["id"]);
+        assert!(!render_filter(&users, &[], false).unwrap().contains("serde"));
+        let rendered = render_filter(&users, &[], true).unwrap();
+        assert!(rendered.contains(
+            "#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]\n#[serde(default)]\npub struct UserFilter {"
+        ), "{rendered}");
+        assert!(rendered.contains(
+            "#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]\npub enum UserSortKey {"
+        ), "{rendered}");
+    }
+
+    #[test]
+    fn serde_derives_shared_conditions_and_sorting_but_not_pages() {
+        assert!(!render_shared(false).contains("serde"));
+        let rendered = render_shared(true);
+        for item in [
+            "pub enum Direction {",
+            "pub struct Sort<K> {",
+            "pub enum Ordered<T> {",
+            "pub enum Equality<T> {",
+            "pub enum Text {",
+        ] {
+            assert!(
+                rendered.contains(&format!("serde::Deserialize)]\n{item}")),
+                "{item}:\n{rendered}"
+            );
+        }
+        for item in ["pub struct Page {", "pub struct Limit(i64);"] {
+            assert!(
+                rendered.contains(&format!("PartialEq, Eq)]\n{item}")),
+                "{item}:\n{rendered}"
+            );
+        }
+        assert_eq!(rendered.matches("serde::Serialize").count(), 5);
     }
 }
