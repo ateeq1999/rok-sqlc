@@ -7,6 +7,17 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+### Added
+
+- Prebuilt binaries. Pushing a `vX.Y.Z` tag runs the Release workflow, which
+  builds rok-sqlc for Linux (x86_64 and aarch64, static musl), macOS (x86_64
+  and Apple silicon), and Windows (x86_64 and ARM64) and publishes the
+  archives, each with a `.sha256` file and a combined `SHA256SUMS`, as a
+  GitHub release whose notes are this file's section for the version.
+- `install.sh` (Linux, macOS) and `install.ps1` (Windows) install the binary
+  for the current platform from a GitHub release and verify its checksum.
+- Release builds strip debug symbols, which shrinks the binary.
+
 ## [0.2.0] - 2026-10-17
 
 ### Breaking changes to the generated API

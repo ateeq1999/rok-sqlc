@@ -73,6 +73,32 @@ sync.
 
 ## Install
 
+Prebuilt binaries for Linux, macOS, and Windows (x86_64 and ARM64) are
+attached to every [GitHub release](https://github.com/ateeq1999/rok-sqlc/releases).
+The install scripts pick the right one, check its SHA-256 checksum, and put
+`rok-sqlc` on your machine.
+
+**Linux and macOS** (installs to `~/.local/bin`):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ateeq1999/rok-sqlc/main/install.sh | sh
+```
+
+**Windows** (PowerShell; installs to `~\.rok-sqlc\bin` and adds it to your
+user `PATH`):
+
+```powershell
+irm https://raw.githubusercontent.com/ateeq1999/rok-sqlc/main/install.ps1 | iex
+```
+
+To pin a release or choose the directory, pass
+`sh -s -- --version v0.2.0 --to /usr/local/bin` to `install.sh`, or set
+`ROK_SQLC_VERSION` and `ROK_SQLC_INSTALL_DIR` (both scripts read them).
+The Linux binaries are statically linked against musl, so they run on any
+distribution.
+
+**From source** with Cargo:
+
 ```sh
 cargo install rok-sqlc
 ```
@@ -1028,6 +1054,13 @@ cargo fmt --all -- --check
   file, return mode, query override, convention, and so on.
 - **Changes** go in [`CHANGELOG.md`](CHANGELOG.md). Changes to the generated
   API count as breaking.
+- **Releases.** Bump `version` in `Cargo.toml`, move CHANGELOG's Unreleased
+  entries under `## [X.Y.Z]`, and push the tag `vX.Y.Z`. The
+  [Release workflow](.github/workflows/release.yml) checks the tag matches
+  `Cargo.toml`, builds the binaries, publishes the GitHub release with that
+  CHANGELOG section as its notes, and then installs it with both install
+  scripts. To build a tag that predates the workflow, run it by hand with the
+  tag. Publishing to crates.io stays a manual `cargo publish`.
 
 ## License
 
