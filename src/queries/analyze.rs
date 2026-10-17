@@ -522,6 +522,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
             soft_delete_column: None,
             tenant_column: None,
             relationships: Vec::new(),
+            before_insert_triggers: Vec::new(),
         }));
         Ok(())
     }

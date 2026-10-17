@@ -657,7 +657,12 @@ pub async fn update<'e, E>(
 
 The database keeps managed columns up to date: in the example, a
 [trigger](docs/examples/conventions/migrations/0002_touch_row.sql) sets
-`updated_at` and bumps `row_version`. A unique key that includes the tenant
+`updated_at` and bumps `row_version`. A managed column that is `NOT NULL` with
+no `DEFAULT` (and not identity or generated) needs a `BEFORE INSERT` trigger
+on its table, since inserts leave it out; without one, the table fails with a
+`path:line` error. Trigger function bodies are not read.
+
+A unique key that includes the tenant
 column drops it from the lookup's name, so `UNIQUE (organization_id, number)`
 gives `get_by_number`. A tenant column's foreign key is never treated as a
 relationship.

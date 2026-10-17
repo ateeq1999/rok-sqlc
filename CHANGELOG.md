@@ -7,6 +7,16 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+### Changed
+
+- A managed column with no source of values fails its table with a
+  `path:line` diagnostic: one that is `NOT NULL`, has no `DEFAULT`, is not
+  serial, identity, or `GENERATED`, on a table with no row-level
+  `BEFORE INSERT` trigger. Inserts leave managed columns out, so such a
+  table could never be inserted into. `CREATE TRIGGER` and `DROP TRIGGER`
+  are now read to find those triggers (per table; function bodies are not
+  inspected). Nullable managed columns are unaffected.
+
 ## [0.1.0] - 2026-10-17
 
 First release on crates.io. The entries below include generated-API changes

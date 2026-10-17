@@ -28,13 +28,14 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
     let (dry_run, force, lenient) = (config.dry_run, config.force, config.lenient);
 
     let sources = read_schema(config)?;
-    let parsed = parser::parse_sources(
+    let mut parsed = parser::parse_sources(
         &sources
             .iter()
             .map(|(path, sql)| parser::SchemaSource { path, sql })
             .collect::<Vec<_>>(),
     )
     .context("failed to parse SQL schema")?;
+    parsed.fail_tables(|table| generator::conventions::unsourced(table, &config.conventions));
     let sql = schema_snapshot(&sources);
 
     let matches_resource =
