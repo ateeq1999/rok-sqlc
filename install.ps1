@@ -4,7 +4,7 @@
 #
 # To pick a release or directory, set the environment variables first:
 #
-#   $env:ROK_SQLC_VERSION = "v0.2.1"                      # default: latest
+#   $env:ROK_SQLC_VERSION = "v0.3.0"                      # default: latest
 #   $env:ROK_SQLC_INSTALL_DIR = "$HOME\.rok-sqlc\bin"     # the default
 #   $env:ROK_SQLC_NO_MODIFY_PATH = "1"                    # leave the user PATH alone
 #

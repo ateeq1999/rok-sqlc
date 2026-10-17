@@ -1,6 +1,6 @@
 # Library API and stability: one stable door
 
-The crate's only stable library API is `rok_sqlc::generate(&Config) -> Result<Report>` and the types it takes and returns, re-exported at the crate root: `Config` (with `Conventions` and its `IdGeneration`, ADR 0010; `Derive`, ADR 0013; and `RelationshipChange`, ADR 0014), `Report` (with `RefusedFile`, `TableFailure`, `QueryFailure`), `Error` (with `Error::report()`), and the `Result<T, E = Error>` alias `generate` returns. It does exactly what `rok-sqlc generate` does, because the CLI is a thin layer over it: the CLI parses flags into a `Config`, calls `generate`, and prints the `Report`. A `build.rs` therefore gets the same files and the same failures as the command line.
+The crate's only stable library API is `rok_sqlc::generate(&Config) -> Result<Report>` and the types it takes and returns, re-exported at the crate root: `Config` (with `Conventions` and its `IdGeneration`, ADR 0010; `Derive`, ADR 0013; `RelationshipChange`, ADR 0014; and `Extractor`, ADR 0015), `Report` (with `RefusedFile`, `TableFailure`, `QueryFailure`), `Error` (with `Error::report()`), and the `Result<T, E = Error>` alias `generate` returns. It does exactly what `rok-sqlc generate` does, because the CLI is a thin layer over it: the CLI parses flags into a `Config`, calls `generate`, and prints the `Report`. A `build.rs` therefore gets the same files and the same failures as the command line.
 
 ```rust
 // build.rs

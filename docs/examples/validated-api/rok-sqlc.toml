@@ -1,0 +1,4 @@
+schema = "migrations/"
+output = "src/db"
+derive = ["serde", "validate"]
+extractors = ["axum", "actix_web"]

@@ -11,7 +11,11 @@ Do NOT publish or tag. The maintainer does that.
 
 **Blocked by:** 01, 02, 03, 04, 05
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] The full suite, including PostgreSQL and the README drift tests, passes on the integration branch.
-- [ ] `cargo publish --dry-run` passes.
+- [x] The full suite, including PostgreSQL and the README drift tests, passes on the integration branch.
+- [x] `cargo publish --dry-run` passes.
+
+## Comments
+
+- Implemented on branch `rok-sqlc-0-3-06`. The README samples come from the new example crate `docs/examples/validated-api`, whose `tests/envelope.rs` checks the envelope the README shows; ADR 0015 now describes the built behavior.

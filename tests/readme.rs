@@ -26,8 +26,9 @@ use common::manifest_dir;
 
 /// The example crates the README's samples come from, each generated from
 /// its own SQL by `rok-sqlc g` with its `rok-sqlc.toml`.
-fn example_dirs() -> [PathBuf; 2] {
-    ["quickstart", "conventions"].map(|name| manifest_dir().join("docs/examples").join(name))
+fn example_dirs() -> [PathBuf; 3] {
+    ["quickstart", "conventions", "validated-api"]
+        .map(|name| manifest_dir().join("docs/examples").join(name))
 }
 
 /// Reads a text file with line endings normalized to `\n`.
