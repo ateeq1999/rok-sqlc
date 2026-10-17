@@ -734,6 +734,24 @@ BEGIN NEW.updated_at := now(); RETURN NEW; END $$;
             "{sql}\n{stderr}"
         );
     }
+
+    // Dropping the last trigger in a later migration fails the table there.
+    let dir = TempDir::new()?;
+    let created = format!(
+        "{UNSOURCED}{STAMP}CREATE TRIGGER stamp BEFORE INSERT ON audits FOR EACH ROW EXECUTE FUNCTION stamp();\n"
+    );
+    let (success, stderr) = generate_migrations(
+        &dir,
+        &[&created, "\n\nDROP TRIGGER stamp ON audits;\n"],
+        false,
+    )?;
+    assert!(!success, "{stderr}");
+    assert!(
+        stderr.contains(
+            "error: migrations/0002_step.sql:3: table `audits`: managed column `updated_at`"
+        ),
+        "{stderr}"
+    );
     Ok(())
 }
 
@@ -749,13 +767,14 @@ fn alter_column_changes_whether_a_managed_column_has_a_source_of_values() -> Res
         &dir,
         &[
             AUDITS,
-            "ALTER TABLE audits ALTER COLUMN updated_at DROP DEFAULT;",
+            "-- Stop stamping rows.\nALTER TABLE audits ALTER COLUMN updated_at DROP DEFAULT;",
         ],
         false,
     )?;
 
     assert!(!success, "{stderr}");
-    let located = "error: migrations/0001_step.sql:1: table `audits`: managed column `updated_at` is NOT NULL with no DEFAULT";
+    // The diagnostic points at the statement that took the source away.
+    let located = "error: migrations/0002_step.sql:2: table `audits`: managed column `updated_at` is NOT NULL with no DEFAULT";
     assert!(stderr.contains(located), "{stderr}");
 
     // A serial column is NOT NULL, so dropping its sequence default leaves

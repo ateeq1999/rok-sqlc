@@ -29,29 +29,69 @@ pub struct ParsedSchema {
     /// Where each table in `schema` was created (its `CREATE TABLE`), by
     /// module name, so a later check can fail it at that location.
     created: HashMap<String, (PathBuf, Option<usize>)>,
+    /// The last statement that took a source of values away, by module name
+    /// and column: a `DROP DEFAULT` of the column, or (with no column) the
+    /// statement that left the table with no `BEFORE INSERT` trigger.
+    source_removed: HashMap<(String, Option<String>), StatementLocation>,
     /// The `[modules]` keys that named no `CREATE TABLE` of the schema.
     pub unmatched_modules: Vec<String>,
 }
 
+/// Where a statement is: its file, its line there, and its position among
+/// all statements, so the later of two statements can be told.
+#[derive(Debug, Clone)]
+struct StatementLocation {
+    order: usize,
+    path: PathBuf,
+    line: Option<usize>,
+}
+
+/// Why a parsed table cannot be generated, found by a check after parsing.
+#[derive(Debug, Clone)]
+pub struct Rejection {
+    pub reason: String,
+    /// The managed column with no source of values, when that is the reason:
+    /// the failure is then located at the statement that took the column's
+    /// last source away, when a later statement did.
+    pub unsourced_column: Option<String>,
+}
+
 impl ParsedSchema {
-    /// Fails every table `reason` gives a reason for: the table leaves
-    /// `schema.tables` and joins `failures`, located at its `CREATE TABLE`.
-    pub fn fail_tables(&mut self, mut reason: impl FnMut(&Table) -> Option<String>) {
+    /// Fails every table `check` rejects: the table leaves `schema.tables`
+    /// and joins `failures`, located at its `CREATE TABLE`, or, for a managed
+    /// column with no source of values, at the later of the `DROP DEFAULT`
+    /// of that column and the statement that dropped the table's last
+    /// `BEFORE INSERT` trigger.
+    pub fn fail_tables(&mut self, mut check: impl FnMut(&Table) -> Option<Rejection>) {
         let mut failed = Vec::new();
         self.schema.tables.retain(|table| {
-            let Some(reason) = reason(table) else {
+            let Some(rejection) = check(table) else {
                 return true;
             };
-            failed.push((table.clone(), reason));
+            failed.push((table.clone(), rejection));
             false
         });
-        for (table, reason) in failed {
-            let (path, line) = self.created.remove(&table.module_name).unwrap_or_default();
+        for (table, rejection) in failed {
+            let (mut path, mut line) = self.created.remove(&table.module_name).unwrap_or_default();
+            if let Some(column) = &rejection.unsourced_column {
+                let removed = |column: Option<String>| {
+                    self.source_removed
+                        .get(&(table.module_name.clone(), column))
+                };
+                let latest = [removed(Some(column.clone())), removed(None)]
+                    .into_iter()
+                    .flatten()
+                    .max_by_key(|location| location.order);
+                if let Some(location) = latest {
+                    path.clone_from(&location.path);
+                    line = location.line;
+                }
+            }
             self.failures.push(TableFailure {
                 path: Some(path).filter(|path| !path.as_os_str().is_empty()),
                 line,
                 schema: table.schema.clone(),
-                ..table_failure(&table.sql_name, reason)
+                ..table_failure(&table.sql_name, rejection.reason)
             });
         }
     }
@@ -126,9 +166,12 @@ pub fn parse_sources_with_modules(
     let mut others = OtherRelations::default();
     // Where each table was created, for failures found after every statement.
     let mut created: HashMap<String, (PathBuf, Option<usize>)> = HashMap::new();
+    let mut source_removed: HashMap<(String, Option<String>), StatementLocation> = HashMap::new();
+    let mut order = 0;
 
     for source in sources {
         for statement in parse_statements(&dialect, source)? {
+            order += 1;
             let statement = match statement {
                 Ok(statement) => statement,
                 Err(unparsed) => {
@@ -255,7 +298,28 @@ pub fn parse_sources_with_modules(
                     });
                     others.create_sequences(&name, added, &mut taken);
                     match apply_alter(&mut tables[index], &operations, &enums, &taken) {
-                        Ok(()) => continue,
+                        Ok(()) => {
+                            for operation in &operations {
+                                if let AlterTableOperation::AlterColumn {
+                                    column_name,
+                                    op: AlterColumnOperation::DropDefault,
+                                } = operation
+                                {
+                                    source_removed.insert(
+                                        (
+                                            tables[index].module_name.clone(),
+                                            Some(ident_name(column_name)),
+                                        ),
+                                        StatementLocation {
+                                            order,
+                                            path: source.path.to_path_buf(),
+                                            line,
+                                        },
+                                    );
+                                }
+                            }
+                            continue;
+                        }
                         Err(reason) => {
                             let table = tables.remove(index);
                             TableFailure {
@@ -291,11 +355,28 @@ pub fn parse_sources_with_modules(
                     continue;
                 }
                 Statement::CreateTrigger(trigger) => {
+                    let triggered = has_before_insert_trigger(&tables);
                     record_trigger(&mut tables, &trigger);
+                    let here = StatementLocation {
+                        order,
+                        path: source.path.to_path_buf(),
+                        line: line
+                            .filter(|line| *line > 0)
+                            .or_else(|| usize::try_from(trigger.name.span().start.line).ok()),
+                    };
+                    record_lost_triggers(&tables, &triggered, &mut source_removed, &here);
                     continue;
                 }
                 Statement::DropTrigger(trigger) => {
+                    let triggered = has_before_insert_trigger(&tables);
                     forget_trigger(&mut tables, &trigger);
+                    let here = StatementLocation {
+                        order,
+                        path: source.path.to_path_buf(),
+                        // sqlparser gives `DROP TRIGGER` no span of its own; its name has one.
+                        line: usize::try_from(trigger.trigger_name.span().start.line).ok(),
+                    };
+                    record_lost_triggers(&tables, &triggered, &mut source_removed, &here);
                     continue;
                 }
                 Statement::CreateType {
@@ -371,6 +452,7 @@ pub fn parse_sources_with_modules(
         },
         failures,
         created,
+        source_removed,
         unmatched_modules: unmatched_modules.into_iter().cloned().collect(),
     })
 }
@@ -1352,6 +1434,30 @@ fn add_constraint(
         other => return Err(format!("unsupported ALTER TABLE clause `ADD {other}`")),
     }
     Ok(())
+}
+
+/// Whether each of `tables` has a `BEFORE INSERT` trigger, in table order.
+fn has_before_insert_trigger(tables: &[Table]) -> Vec<bool> {
+    tables
+        .iter()
+        .map(|table| !table.before_insert_triggers.is_empty())
+        .collect()
+}
+
+/// Records `here` as where each table that had a `BEFORE INSERT` trigger
+/// (`triggered`, by [`has_before_insert_trigger`] before the statement) and
+/// now has none lost that source of values.
+fn record_lost_triggers(
+    tables: &[Table],
+    triggered: &[bool],
+    source_removed: &mut HashMap<(String, Option<String>), StatementLocation>,
+    here: &StatementLocation,
+) {
+    for (table, had) in tables.iter().zip(triggered) {
+        if *had && table.before_insert_triggers.is_empty() {
+            source_removed.insert((table.module_name.clone(), None), here.clone());
+        }
+    }
 }
 
 /// Records a `CREATE TRIGGER` on a known table: a row-level `BEFORE` trigger

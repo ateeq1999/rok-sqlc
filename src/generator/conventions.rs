@@ -47,25 +47,23 @@ fn is_managed(name: &str, conventions: &Conventions) -> bool {
         || conventions.version_column.as_deref() == Some(name)
 }
 
-/// Why `table` cannot be generated under `conventions`, if a managed column
-/// has no source of values: inserts leave a managed column out, so the
+/// The first managed column of `table` (as [`apply`] marked it) with no
+/// source of values, and why: inserts leave a managed column out, so the
 /// database must supply it, and a `NOT NULL` column with no `DEFAULT` (and
 /// not serial, identity, or `GENERATED`) gets a value only from a
-/// `BEFORE INSERT` trigger. Names the first such column and how to fix it.
-pub fn unsourced(table: &Table, conventions: &Conventions) -> Option<String> {
+/// `BEFORE INSERT` trigger. The reason says how to fix it.
+pub fn unsourced(table: &Table) -> Option<(&Column, String)> {
     if !table.before_insert_triggers.is_empty() {
         return None;
     }
     let column = table.columns.iter().find(|column| {
-        is_managed(&column.sql_name, conventions)
-            && !column.nullable
-            && !column.has_default
-            && !column.is_generated
+        column.is_managed && !column.nullable && !column.has_default && !column.is_generated
     })?;
-    Some(format!(
+    let reason = format!(
         "managed column `{}` is NOT NULL with no DEFAULT, and no BEFORE INSERT trigger is defined on the table, so inserts, which leave it out, have no value for it; add a DEFAULT, make the column nullable, or create a BEFORE INSERT trigger that sets it",
         column.sql_name
-    ))
+    );
+    Some((column, reason))
 }
 
 /// Checks that each of `tables` can follow `conventions`: a soft-delete

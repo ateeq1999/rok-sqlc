@@ -86,7 +86,10 @@ the *generated* API count as breaking (see ADR 0012).
   `BEFORE INSERT` trigger. Inserts leave managed columns out, so such a
   table could never be inserted into. `CREATE TRIGGER` and `DROP TRIGGER`
   are now read to find those triggers (per table; function bodies are not
-  inspected). Nullable managed columns are unaffected.
+  inspected). Nullable managed columns are unaffected. When a later
+  migration takes the source away (`ALTER COLUMN … DROP DEFAULT`, or
+  `DROP TRIGGER` of the last `BEFORE INSERT` trigger), the diagnostic
+  points at that statement.
 - `--resource` (and the `resource` key) is described as what it does: it
   generates the named table and regenerates every resource already
   generated in the output directory; tables not generated yet stay

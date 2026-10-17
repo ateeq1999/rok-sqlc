@@ -15,6 +15,7 @@ pub mod write;
 use std::path::Path;
 use std::path::PathBuf;
 
+use crate::parser::Rejection;
 use crate::queries::AnalyzedQuery;
 use crate::schema::{
     BaseType, Column, EnumType, Table, lacks_serde, mentions_generated_type, rust_type,
@@ -136,6 +137,26 @@ pub fn prepare(
     keys::check_names(&prepared)?;
     relationships::infer(&mut prepared, changes, scope)?;
     Ok(prepared)
+}
+
+/// Why `table` cannot be generated under `config`'s conventions, found on
+/// its model with the conventions [applied](conventions::apply) once: a
+/// managed column with no source of values ([`conventions::unsourced`]), or
+/// search names that collide ([`search::name_clash`]).
+pub fn table_failures(table: &Table, config: &Config) -> Option<Rejection> {
+    let mut applied = [table.clone()];
+    conventions::apply(&mut applied, &config.conventions);
+    let [table] = &applied;
+    if let Some((column, reason)) = conventions::unsourced(table) {
+        return Some(Rejection {
+            reason,
+            unsourced_column: Some(column.sql_name.clone()),
+        });
+    }
+    search::name_clash(table).map(|reason| Rejection {
+        reason,
+        unsourced_column: None,
+    })
 }
 
 /// Plans every generated file under `config.output`: `tables` (the ones

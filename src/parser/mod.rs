@@ -4,5 +4,5 @@ pub mod postgres;
 
 pub use diagnostics::TableFailure;
 pub use postgres::{
-    ParsedSchema, SchemaSource, parse_schema, parse_sources, parse_sources_with_modules,
+    ParsedSchema, Rejection, SchemaSource, parse_schema, parse_sources, parse_sources_with_modules,
 };
