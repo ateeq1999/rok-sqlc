@@ -8,6 +8,10 @@ use std::process::{Command, Output};
 use anyhow::Result;
 use tempfile::TempDir;
 
+mod common;
+
+use common::shown;
+
 const TWO_TABLES: &str = "CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);\n\
      CREATE TABLE posts (id BIGSERIAL PRIMARY KEY, title TEXT NOT NULL);";
 const USERS_ONLY: &str = "CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);";
@@ -108,7 +112,7 @@ fn removal_is_reported_and_dry_run_only_lists_it() -> Result<()> {
     assert!(dry.status.success());
     let posts_models = project.out().join("posts").join("models.rs");
     assert!(
-        stdout(&dry).contains(&format!("would remove {}", posts_models.display())),
+        stdout(&dry).contains(&format!("would remove {}", shown(&posts_models))),
         "{}",
         stdout(&dry)
     );
@@ -116,7 +120,7 @@ fn removal_is_reported_and_dry_run_only_lists_it() -> Result<()> {
 
     let real = project.binary(&[]);
     assert!(real.status.success());
-    assert!(stdout(&real).contains(&format!("removed {}", posts_models.display())));
+    assert!(stdout(&real).contains(&format!("removed {}", shown(&posts_models))));
     assert!(!posts_models.exists());
     Ok(())
 }
@@ -218,7 +222,7 @@ fn switching_from_a_query_file_to_a_directory_removes_queries_rs() -> Result<()>
     assert!(out.join("queries/emails.rs").is_file());
     let removed = out.join("queries.rs");
     assert!(
-        stdout(&output).contains(&format!("removed {}", removed.display())),
+        stdout(&output).contains(&format!("removed {}", shown(&removed))),
         "{}",
         stdout(&output)
     );
@@ -281,7 +285,7 @@ fn check_reports_a_schema_change() -> Result<()> {
         .set_schema("CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL, name TEXT);")?;
 
     let models = project.out().join("users").join("models.rs");
-    assert_check_reports(&project, &format!("changed {}", models.display()))
+    assert_check_reports(&project, &format!("changed {}", shown(&models)))
 }
 
 #[test]
@@ -292,7 +296,7 @@ fn check_reports_a_hand_edit_to_a_generated_file() -> Result<()> {
     let edited = fs::read_to_string(&read)? + "\n// tweak\n";
     fs::write(&read, edited)?;
 
-    assert_check_reports(&project, &format!("changed {}", read.display()))
+    assert_check_reports(&project, &format!("changed {}", shown(&read)))
 }
 
 #[test]
@@ -302,7 +306,7 @@ fn check_reports_a_dropped_table_as_stale() -> Result<()> {
     project.set_schema(USERS_ONLY)?;
 
     let models = project.out().join("posts").join("models.rs");
-    assert_check_reports(&project, &format!("stale {}", models.display()))
+    assert_check_reports(&project, &format!("stale {}", shown(&models)))
 }
 
 #[test]
@@ -312,7 +316,7 @@ fn check_reports_a_new_table_as_missing() -> Result<()> {
     project.set_schema(TWO_TABLES)?;
 
     let models = project.out().join("posts").join("models.rs");
-    assert_check_reports(&project, &format!("missing {}", models.display()))
+    assert_check_reports(&project, &format!("missing {}", shown(&models)))
 }
 
 #[test]

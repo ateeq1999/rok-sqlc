@@ -17,6 +17,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde::de::{self, Deserializer, Visitor};
 
+use crate::report::display_path;
 use crate::{Conventions, Derive, RelationshipChange};
 
 /// The file name looked for during discovery.
@@ -264,9 +265,9 @@ pub(crate) fn discover(start: &Path) -> Option<PathBuf> {
 /// naming the key and the file.
 pub(crate) fn load(path: &Path) -> Result<FileConfig> {
     let text = fs::read_to_string(path)
-        .with_context(|| format!("failed to read config file {}", path.display()))?;
-    let raw: RawFile =
-        toml::from_str(&text).with_context(|| format!("invalid config file {}", path.display()))?;
+        .with_context(|| format!("failed to read config file {}", display_path(path)))?;
+    let raw: RawFile = toml::from_str(&text)
+        .with_context(|| format!("invalid config file {}", display_path(path)))?;
     Ok(raw.resolve(path.parent().unwrap_or(Path::new(""))))
 }
 

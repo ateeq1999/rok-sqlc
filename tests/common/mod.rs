@@ -1,7 +1,15 @@
-//! Helpers shared by the suites that compile generated code.
+//! Helpers shared by the integration suites. Each suite uses only some of
+//! them.
+#![allow(dead_code)]
 
 use std::path::Path;
 use std::process::Command;
+
+/// A path the way rok-sqlc prints one outside the current directory: `/`
+/// as the separator on every platform.
+pub fn shown(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
 
 /// Generated code targets SQLx 0.9, whose minimum Rust version is above the
 /// tool's own. Returns why a suite that builds a fixture crate must skip on

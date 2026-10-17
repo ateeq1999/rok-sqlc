@@ -1,6 +1,8 @@
 use std::fmt;
 use std::path::PathBuf;
 
+use crate::report::display_path;
+
 #[derive(Debug, Clone)]
 pub struct TableFailure {
     pub table: String,
@@ -19,7 +21,7 @@ pub struct TableFailure {
 impl fmt::Display for TableFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let (Some(path), Some(line)) = (&self.path, self.line) {
-            write!(f, "{}:{line}: ", path.display())?;
+            write!(f, "{}:{line}: ", display_path(path))?;
         }
         write!(f, "table `{}`: {}", self.table, self.reason)
     }

@@ -234,3 +234,6 @@ against earlier development snapshots.
   the test suites that compile generated code print a skip notice instead
   of running.
 - Usage errors print clap's message once and exit 1.
+- Diagnostics and file lists print paths with `/` on every platform, and
+  paths under the current directory relative to it (also when they come
+  from `rok-sqlc.toml`).

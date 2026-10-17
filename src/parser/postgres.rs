@@ -13,6 +13,7 @@ use sqlparser::parser::Parser;
 
 use super::diagnostics::TableFailure;
 use super::naming;
+use crate::report::display_path;
 use crate::schema::{
     Column, EnumType, EnumVariant, ForeignKey, KeyConstraint, Schema, Table, UniqueKey,
 };
@@ -74,7 +75,7 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
             } else {
                 format!(
                     "invalid PostgreSQL SQL syntax in `{}`",
-                    source.path.display()
+                    display_path(source.path)
                 )
             }
         })?;

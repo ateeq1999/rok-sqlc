@@ -9,6 +9,10 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tempfile::TempDir;
 
+mod common;
+
+use common::shown;
+
 /// A table maintained by a `touch_row`-style trigger, one without any
 /// convention column, and two with an `organization_id` tenant column (one
 /// with it in the primary key).
@@ -227,7 +231,7 @@ fn unknown_preset_names_the_known_presets_and_the_file() -> Result<()> {
 
     assert!(message.contains("rokk"), "{message}");
     assert!(message.contains("`rok`"), "{message}");
-    assert!(message.contains(&config.display().to_string()), "{message}");
+    assert!(message.contains(&shown(&config)), "{message}");
     assert!(!dir.path().join("out").exists());
     Ok(())
 }
@@ -242,7 +246,7 @@ fn unknown_convention_key_names_the_key_and_the_source() -> Result<()> {
         "{message}"
     );
     assert!(message.contains("soft_delete_column"), "{message}");
-    assert!(message.contains(&config.display().to_string()), "{message}");
+    assert!(message.contains(&shown(&config)), "{message}");
 
     let message = format!(
         "{:#}",

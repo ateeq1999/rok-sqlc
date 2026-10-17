@@ -10,7 +10,7 @@ use heck::ToSnakeCase;
 use crate::config::Config;
 use crate::output::is_generated_file;
 use crate::queries::AnalyzedQuery;
-use crate::report::{Error, QueryFailure, RefusedFile, Report, Result, TableFailure};
+use crate::report::{Error, QueryFailure, RefusedFile, Report, Result, TableFailure, display_path};
 use crate::schema::Table;
 use crate::{generator, output, parser, queries};
 
@@ -124,7 +124,7 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
     for input in &query_inputs {
         let (queries, failures) = analyze_query_file(&input.path, &parsed, &selected)?;
         if !failures.is_empty() {
-            failed_files.push(format!("`{}`", input.path.display()));
+            failed_files.push(format!("`{}`", display_path(&input.path)));
         }
         report.query_failures.extend(failures);
         analyzed.push(generator::QueryModule {
@@ -226,7 +226,7 @@ fn read_schema(config: &Config) -> anyhow::Result<Vec<(PathBuf, String)>> {
             if migrations.is_empty() {
                 bail!(
                     "schema directory `{}` contains no `*.sql` migrations",
-                    input.display()
+                    display_path(input)
                 );
             }
             files.extend(migrations);
@@ -238,7 +238,7 @@ fn read_schema(config: &Config) -> anyhow::Result<Vec<(PathBuf, String)>> {
         .into_iter()
         .map(|path| {
             let sql = read_text(&path)
-                .with_context(|| format!("failed to read schema `{}`", path.display()))?;
+                .with_context(|| format!("failed to read schema `{}`", display_path(&path)))?;
             Ok((path, sql))
         })
         .collect()
@@ -256,7 +256,7 @@ fn read_text(path: &Path) -> std::io::Result<String> {
 
 /// The up migrations in `dir` (not its subdirectories), in filename order.
 fn migration_files(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
-    let read_error = || format!("failed to read schema directory `{}`", dir.display());
+    let read_error = || format!("failed to read schema directory `{}`", display_path(dir));
     let mut files = Vec::new();
     for entry in std::fs::read_dir(dir).with_context(read_error)? {
         let entry = entry.with_context(read_error)?;
@@ -309,7 +309,7 @@ fn query_inputs(inputs: &[PathBuf]) -> anyhow::Result<Vec<QueryInput>> {
             files.push(input.clone());
             continue;
         }
-        let read_error = || format!("failed to read query directory `{}`", input.display());
+        let read_error = || format!("failed to read query directory `{}`", display_path(input));
         let mut found = std::fs::read_dir(input)
             .with_context(read_error)?
             .map(|entry| entry.map(|entry| entry.path()))
@@ -319,7 +319,7 @@ fn query_inputs(inputs: &[PathBuf]) -> anyhow::Result<Vec<QueryInput>> {
         if found.is_empty() {
             bail!(
                 "query directory `{}` contains no `.sql` files",
-                input.display()
+                display_path(input)
             );
         }
         found.sort();
@@ -333,8 +333,8 @@ fn query_inputs(inputs: &[PathBuf]) -> anyhow::Result<Vec<QueryInput>> {
         if let Some(first) = seen.insert(module.clone(), path.clone()) {
             bail!(
                 "query files `{}` and `{}` would both generate module `{module}`; rename one of them",
-                first.display(),
-                path.display()
+                display_path(&first),
+                display_path(&path)
             );
         }
         modules.push(QueryInput {
@@ -361,7 +361,7 @@ fn query_module_name(path: &Path) -> anyhow::Result<String> {
             };
             bail!(
                 "query file `{}`: `{stem}` is not a valid Rust module name (use lowercase letters, digits and underscores, not starting with a digit or naming a keyword){hint}",
-                path.display()
+                display_path(path)
             )
         }
     }
@@ -375,13 +375,13 @@ fn analyze_query_file(
     selected: &[Table],
 ) -> anyhow::Result<(Vec<AnalyzedQuery>, Vec<QueryFailure>)> {
     let text = read_text(path)
-        .with_context(|| format!("failed to read query file `{}`", path.display()))?;
+        .with_context(|| format!("failed to read query file `{}`", display_path(path)))?;
 
     let (defs, mut failures) = queries::parse_query_file(&text);
     if defs.is_empty() && failures.is_empty() {
         bail!(
             "query file `{}` contains no `-- name:` annotated queries",
-            path.display()
+            display_path(path)
         );
     }
     let generated_modules: HashSet<String> = selected

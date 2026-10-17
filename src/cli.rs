@@ -8,6 +8,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use crate::config_file::{self, FileConfig};
+use crate::report::display_path;
 use crate::{Config, Derive, Report};
 
 #[derive(Debug, Parser)]
@@ -238,31 +239,31 @@ fn print_report(config: &Config, report: &Report) {
     }
     for path in &report.written {
         if config.dry_run {
-            println!("would write {}", path.display());
+            println!("would write {}", display_path(path));
         } else {
-            println!("generated {}", path.display());
+            println!("generated {}", display_path(path));
         }
     }
     for path in &report.unchanged {
-        println!("unchanged {}", path.display());
+        println!("unchanged {}", display_path(path));
     }
     for path in &report.missing {
-        println!("missing {}", path.display());
+        println!("missing {}", display_path(path));
     }
     for path in &report.changed {
-        println!("changed {}", path.display());
+        println!("changed {}", display_path(path));
     }
     for path in &report.stale {
         if config.check {
-            println!("stale {}", path.display());
+            println!("stale {}", display_path(path));
         } else if config.dry_run {
-            println!("would remove {}", path.display());
+            println!("would remove {}", display_path(path));
         } else {
-            println!("removed {}", path.display());
+            println!("removed {}", display_path(path));
         }
     }
     for refused in &report.refused {
-        let (path, reason) = (refused.path.display(), &refused.reason);
+        let (path, reason) = (display_path(&refused.path), &refused.reason);
         if config.dry_run {
             println!("would refuse {path} ({reason})");
         } else {

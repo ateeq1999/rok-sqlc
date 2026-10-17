@@ -71,10 +71,30 @@ impl fmt::Display for TableFailure {
     }
 }
 
+/// A path as rok-sqlc prints it: relative to the current directory when it
+/// lies under it, without a leading `./`, and with `/` as the separator on
+/// every platform, so diagnostics and file lists read the same everywhere.
+pub(crate) fn display_path(path: &Path) -> String {
+    let current = std::env::current_dir().ok();
+    let shown = current
+        .as_deref()
+        .and_then(|current| path.strip_prefix(current).ok())
+        .filter(|relative| !relative.as_os_str().is_empty())
+        .unwrap_or(path);
+    let mut text = shown.display().to_string();
+    if std::path::MAIN_SEPARATOR == '\\' {
+        text = text.replace('\\', "/");
+    }
+    while let Some(rest) = text.strip_prefix("./") {
+        text = rest.to_owned();
+    }
+    text
+}
+
 /// The `path:line: ` prefix of a located diagnostic.
 fn location(path: Option<&Path>, line: Option<usize>) -> String {
     match (path, line) {
-        (Some(path), Some(line)) => format!("{}:{line}: ", path.display()),
+        (Some(path), Some(line)) => format!("{}:{line}: ", display_path(path)),
         _ => String::new(),
     }
 }

@@ -6,6 +6,10 @@ use std::process::{Command, Output};
 use anyhow::Result;
 use tempfile::TempDir;
 
+mod common;
+
+use common::shown;
+
 const SIMPLE_SCHEMA: &str = "CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);";
 const MIXED_SCHEMA: &str = "CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);\n\
      CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, duration INTERVAL NOT NULL);";
@@ -872,6 +876,50 @@ fn repeated_query_files_each_become_a_module() -> Result<()> {
     Ok(())
 }
 
+/// Printed paths use `/` on every platform, and a path under the current
+/// directory is printed relative to it, even when a config file resolved it.
+#[test]
+fn printed_paths_use_slashes_and_stay_relative() -> Result<()> {
+    let dir = TempDir::new()?;
+    let migrations = dir.path().join("migrations");
+    fs::create_dir(&migrations)?;
+    fs::write(
+        migrations.join("0001_init.up.sql"),
+        "CREATE TABLE users (id UUID PRIMARY KEY);\nCREATE TABLE spans (id UUID PRIMARY KEY, length INTERVAL);\n",
+    )?;
+    fs::write(
+        dir.path().join("rok-sqlc.toml"),
+        "schema = [\"migrations\"]\noutput = \"src/db\"\n",
+    )?;
+    let rok_sqlc = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_rok-sqlc"))
+            .args(args)
+            .current_dir(dir.path())
+            .output()
+            .expect("failed to spawn rok-sqlc binary")
+    };
+
+    let output = rok_sqlc(&["g", "-l"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("generated src/db/users/models.rs\n"),
+        "{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("migrations/0001_init.up.sql:2: table `spans`"),
+        "{stderr}"
+    );
+
+    // A flag's relative path prints as given.
+    let output = rok_sqlc(&["g", "-k", "-l", "-o", "./src/db"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("unchanged src/db/mod.rs\n"), "{stdout}");
+    Ok(())
+}
+
 #[test]
 fn query_file_stem_must_be_a_rust_module_name() -> Result<()> {
     let dir = TempDir::new()?;
@@ -1314,7 +1362,7 @@ fn unknown_config_key_names_the_key_and_the_file() -> Result<()> {
 
     let message = format!("{err:#}");
     assert!(message.contains("resorce"), "{message}");
-    assert!(message.contains(&config.display().to_string()), "{message}");
+    assert!(message.contains(&shown(&config)), "{message}");
     assert!(!dir.path().join("gen").exists());
     Ok(())
 }
@@ -1497,7 +1545,7 @@ fn unsupported_ctes_fail_with_path_and_line_diagnostics() -> Result<()> {
     ]);
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let path = queries.display().to_string();
+    let path = shown(&queries);
     assert!(
         stderr.contains(&format!(
             "{path}:4: query `Countdown`: WITH RECURSIVE is not supported"
@@ -1632,7 +1680,7 @@ fn unsupported_table_in_a_migration_cites_its_file_and_line() -> Result<()> {
         }
         run_binary(&args)
     };
-    let located = format!("{}:5: table `spans`", third.display());
+    let located = format!("{}:5: table `spans`", shown(&third));
 
     let strict = args(false);
     assert!(!strict.status.success());
@@ -1678,7 +1726,7 @@ fn query_failures_cite_the_query_file_and_annotation_line() -> Result<()> {
         }
         run_binary(&args)
     };
-    let path = queries.display().to_string();
+    let path = shown(&queries);
 
     let strict = args(false);
     assert!(!strict.status.success());
@@ -1914,7 +1962,7 @@ fn on_conflict_target_must_match_a_unique_key() -> Result<()> {
     ]);
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let path = queries.display().to_string();
+    let path = shown(&queries);
     let keys = "unique keys of `products`: (id), (sku), (organization_id, code)";
     assert!(
         stderr.contains(&format!(
@@ -1987,7 +2035,7 @@ fn on_conflict_on_constraint_must_name_a_key_constraint() -> Result<()> {
     ]);
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let path = queries.display().to_string();
+    let path = shown(&queries);
     assert!(
         stderr.contains(&format!(
             "{path}:17: query `ByBarcode`: ON CONFLICT ON CONSTRAINT products_barcode_idx names no primary key or unique constraint of `app.products`; its constraints are products_pkey, products_sku_key, uq_code, products_name_code_key"
