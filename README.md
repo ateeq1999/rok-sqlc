@@ -479,7 +479,9 @@ are:
 - an `INSERT … VALUES` position, an `UPDATE … SET` target, or
   `ON CONFLICT … DO UPDATE SET`;
 - `LIMIT`/`OFFSET` (`i64`);
-- an explicit cast to a supported type.
+- an explicit cast to a supported type, including an enum type
+  (`$1::product_status` takes `types::ProductStatus`, and
+  `$1::product_status[]` a slice of them).
 
 A placeholder anywhere else fails generation. The error names the fix, a
 `-- param:` override.
@@ -851,7 +853,9 @@ typed id.
 - `CREATE UNIQUE INDEX` on plain columns, which becomes a unique key with a
   lookup. A partial index over live rows (`WHERE deleted_at IS NULL`) counts
   under the soft-delete convention. Expression indexes are ignored.
-- `CREATE TYPE … AS ENUM`, and `ALTER TYPE … ADD VALUE`/`RENAME VALUE`.
+- `CREATE TYPE … AS ENUM`, and `ALTER TYPE … ADD VALUE`/`RENAME VALUE`/
+  `RENAME TO`. A renamed enum takes the Rust name of its new name, and the
+  columns using it follow.
 - `DROP TABLE`, which removes the table, so its generated files become stale
   and are removed. Foreign keys other tables hold to it go too, as with
   `CASCADE`: those columns keep their raw type and lose the relationship.
@@ -878,7 +882,7 @@ problems count.
 | Column types not in the table above (`INTERVAL`, `BYTEA`, `TIME WITH TIME ZONE`, network types, …) | There is no chosen Rust mapping yet, and rok-sqlc doesn't guess one. |
 | `NUMERIC(p, s)` with `p` > 28 | `rust_decimal` holds 28 significant digits, so the value would fail to decode at runtime. |
 | Other `ALTER TABLE` clauses (`ALTER COLUMN … TYPE`/`SET NOT NULL`, `RENAME TO`, …) | The table's shape after the change is unknown, so the table fails. |
-| Other `ALTER TYPE` clauses | The tables that use the type fail. |
+| An `ALTER TYPE` that can't be applied (an existing label or type name, an unknown label) | The tables that use the type fail. |
 | A table whose module name is reserved or already taken | Its module would collide with a generated one. |
 | Columns whose filter or sort-key names collide (`weight` next to `weight_is_null`) | The generated code wouldn't compile. |
 | Two relationships of one table with the same name, or a relationship named like a filter field | Rename one in `[relationships]`. |
@@ -894,9 +898,6 @@ problems count.
 
 - `INTERVAL`, `BYTEA`, `TIME WITH TIME ZONE` and other unmapped types are
   unsupported, in tables and in query casts (`$1::interval`).
-- Casts to enum types in query files (`$1::product_status`) are rejected.
-  Compare against the enum column instead (`status = $1`); that infers
-  `types::ProductStatus`.
 - Partial-index `ON CONFLICT` targets are rejected, including the
   soft-delete convention's `WHERE deleted_at IS NULL` unique indexes,
   because PostgreSQL infers a partial index only from a target that repeats

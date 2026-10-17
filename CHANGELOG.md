@@ -14,6 +14,16 @@ the *generated* API count as breaking (see ADR 0012).
   for it. `search` is already scoped to the tenant parameter, so these could
   only repeat the scope or match nothing. Relationship filters are unchanged.
 
+### Added
+
+- In query files, a cast to an enum type infers the generated enum:
+  `$1::product_status` and `$1::app.ticket_state` take `types::X`, and
+  `$1::product_status[]` takes `&[types::X]`. Such casts were rejected.
+- `ALTER TYPE x RENAME TO y` renames the enum: its Rust name follows the new
+  name (schema-prefixed only on a clash, as for `CREATE TYPE`), its
+  `sqlx(type_name)` becomes `y`, and the columns using it keep working. The
+  clause used to fail every table using the type.
+
 ### Changed
 
 - A table that a `--lenient` run skips keeps the resource directory an

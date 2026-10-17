@@ -63,6 +63,7 @@ async fn generated_crud_against_postgres() {
     search_filters_and_pages(&pool).await;
     altered_table_has_its_final_columns(&pool).await;
     enums_keep_their_exact_labels(&pool).await;
+    renamed_enum_types_use_their_new_name(&pool).await;
     value_list_columns_round_trip(&pool).await;
     typed_ids_flow_from_rows_to_foreign_keys(&pool).await;
     foreign_keys_resolve_to_the_table_in_their_schema(&pool).await;
@@ -1175,7 +1176,7 @@ async fn altered_table_has_its_final_columns(pool: &PgPool) {
 /// are database enums; their columns use the generated `db::types` enums in
 /// rows, inputs, patches, filters, sort keys, arrays, and query files.
 async fn enums_keep_their_exact_labels(pool: &PgPool) {
-    use db::queries::tickets::tickets_with_priority;
+    use db::queries::tickets::{tickets_in_states, tickets_with_priority};
     use db::search::{Equality, Page, Sort};
     use db::tickets::filter::{TicketFilter, TicketSortKey};
     use db::tickets::models::{NewTicket, Ticket, UpdateTicket};
@@ -1293,6 +1294,72 @@ async fn enums_keep_their_exact_labels(pool: &PgPool) {
     assert_eq!(found[0].id, routine.id);
     assert_eq!(found[0].priority, TicketPriority::High);
     assert_eq!(found[0].state, None);
+
+    // Casts to enum types (`$1::app.ticket_state[]`, `$2::ticket_priority`)
+    // type the parameters and the cast result column.
+    let in_states = tickets_in_states(
+        pool,
+        &[TicketState::Archived, TicketState::Open],
+        TicketPriority::Low,
+    )
+    .await
+    .unwrap();
+    assert_eq!(in_states.len(), 1);
+    assert_eq!(in_states[0].id, urgent.id);
+    assert_eq!(in_states[0].state, Some(TicketState::Archived));
+    assert_eq!(in_states[0].wanted, Some(TicketPriority::Low));
+}
+
+/// `ticket_channel` is renamed to `contact_channel` by alter_schema.sql: the
+/// enum is `ContactChannel`, bound and decoded under its new database name.
+async fn renamed_enum_types_use_their_new_name(pool: &PgPool) {
+    use db::queries::tickets::contacts_on_channel;
+    use db::ticket_contacts::models::{NewTicketContact, TicketContact};
+    use db::ticket_contacts::{read, write};
+    use db::types::ContactChannel;
+
+    let phone = write::create(
+        pool,
+        NewTicketContact {
+            channel: ContactChannel::Phone,
+            fallbacks: Some(vec![ContactChannel::Email]),
+        },
+    )
+    .await
+    .unwrap();
+    let email = write::create(
+        pool,
+        NewTicketContact {
+            channel: ContactChannel::Email,
+            fallbacks: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        read::get_by_id(pool, phone.id).await.unwrap(),
+        Some(TicketContact {
+            id: phone.id,
+            channel: ContactChannel::Phone,
+            fallbacks: Some(vec![ContactChannel::Email]),
+        })
+    );
+    let label: String =
+        sqlx::query_scalar("SELECT channel::text FROM ticket_contacts WHERE id = $1")
+            .bind(phone.id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(label, "Phone");
+
+    let reachable = contacts_on_channel(pool, ContactChannel::Email)
+        .await
+        .unwrap();
+    assert_eq!(reachable, [phone.id, email.id]);
+    let by_phone = contacts_on_channel(pool, ContactChannel::Phone)
+        .await
+        .unwrap();
+    assert_eq!(by_phone, [phone.id]);
 }
 
 /// `app.shipments.status`, `app.shipments.carrier`, `refunds.status`, and

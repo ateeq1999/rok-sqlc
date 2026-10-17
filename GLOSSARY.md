@@ -93,7 +93,7 @@ A column the database advances on every update, letting an update proceed only w
 _Avoid_: revision, lock column
 
 **Enum type**:
-A PostgreSQL type declared by `CREATE TYPE … AS ENUM` (and extended by `ALTER TYPE … ADD VALUE`), generated as a Rust enum in the shared `types` module. Each variant keeps its exact database **label**.
+A PostgreSQL type declared by `CREATE TYPE … AS ENUM` (and changed by `ALTER TYPE … ADD VALUE`, `RENAME VALUE`, and `RENAME TO`), generated as a Rust enum in the shared `types` module. Each variant keeps its exact database **label**.
 _Avoid_: enumeration, domain
 
 **Value-list column**:

@@ -94,6 +94,16 @@ CREATE TABLE priority_notes (
     note TEXT NOT NULL
 );
 
+-- Renamed to `contact_channel` by alter_schema.sql, so the enum is
+-- `ContactChannel` and both columns use it.
+CREATE TYPE ticket_channel AS ENUM ('email', 'Phone');
+
+CREATE TABLE ticket_contacts (
+    id BIGSERIAL PRIMARY KEY,
+    channel ticket_channel NOT NULL,
+    fallbacks ticket_channel[]
+);
+
 -- Value-list columns: text columns a CHECK restricts to fixed values become
 -- enums named after table and column, encoded as text with each exact value.
 -- Both tables have a `status` column, and each gets its own enum.
