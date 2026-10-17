@@ -4,10 +4,11 @@ use std::collections::HashSet;
 
 use sqlparser::ast::{ColumnDef, ColumnOption, CreateTable, TableConstraint};
 
+use super::checks::{RangeCheck, apply_range_check, range_check};
 use super::constraints::{add_key_constraint, constraint_foreign_key, key_columns};
 use super::enums::{EnumRegistry, restrict_to_values, value_list_check};
 use super::names::{ident_name, object_leaf_name, object_schema_name};
-use super::types::{is_serial_type, map_type_in};
+use super::types::{declared_length, is_serial_type, map_type_in};
 use crate::parser::diagnostics::TableFailure;
 use crate::parser::naming;
 use crate::schema::{Column, ForeignKey, Table, UniqueKey};
@@ -32,6 +33,7 @@ pub(super) fn build_table(
     let mut constraints: Vec<(Option<String>, Vec<String>, bool)> = Vec::new();
     let mut inline_primary_keys: Vec<String> = Vec::new();
     let mut value_lists: Vec<(String, Vec<String>)> = Vec::new();
+    let mut range_checks: Vec<RangeCheck> = Vec::new();
 
     for column_def in &create.columns {
         let built = build_column(column_def, enums).map_err(fail)?;
@@ -48,6 +50,7 @@ pub(super) fn build_table(
         }
         foreign_keys.extend(built.foreign_key);
         value_lists.extend(built.value_lists);
+        range_checks.extend(built.range_checks);
         raw_columns.push(built.raw);
     }
 
@@ -80,7 +83,10 @@ pub(super) fn build_table(
                     constraints.push((name.as_ref().map(ident_name), keys, false));
                 }
             }
-            TableConstraint::Check { expr, .. } => value_lists.extend(value_list_check(expr)),
+            TableConstraint::Check { expr, .. } => {
+                value_lists.extend(value_list_check(expr));
+                range_checks.extend(range_check(expr));
+            }
             other => foreign_keys.extend(constraint_foreign_key(other)),
         }
     }
@@ -109,6 +115,14 @@ pub(super) fn build_table(
     for (name, labels) in value_lists {
         if let Some(column) = columns.iter_mut().find(|column| column.sql_name == name) {
             restrict_to_values(column, labels);
+        }
+    }
+    for check in range_checks {
+        if let Some(column) = columns
+            .iter_mut()
+            .find(|column| column.sql_name == check.column)
+        {
+            apply_range_check(column, check);
         }
     }
 
@@ -167,6 +181,8 @@ pub(super) struct BuiltColumn {
     /// Value-list `CHECK`s declared inline, by the column they name (usually
     /// this one, but PostgreSQL lets a column check name any column).
     pub(super) value_lists: Vec<(String, Vec<String>)>,
+    /// Range `CHECK`s declared inline, which may also name any column.
+    pub(super) range_checks: Vec<RangeCheck>,
 }
 
 pub(super) fn build_column(
@@ -185,6 +201,7 @@ pub(super) fn build_column(
     let mut unique = None;
     let mut foreign_key = None;
     let mut value_lists = Vec::new();
+    let mut range_checks = Vec::new();
     for option in &column_def.options {
         match &option.option {
             ColumnOption::NotNull => nullable = false,
@@ -209,7 +226,10 @@ pub(super) fn build_column(
                 });
             }
             ColumnOption::Default(_) => has_default = true,
-            ColumnOption::Check(expr) => value_lists.extend(value_list_check(expr)),
+            ColumnOption::Check(expr) => {
+                value_lists.extend(value_list_check(expr));
+                range_checks.extend(range_check(expr));
+            }
             ColumnOption::Generated { .. } | ColumnOption::Identity(_) => {
                 has_default = true;
                 is_generated = true;
@@ -227,6 +247,7 @@ pub(super) fn build_column(
             rust_name,
             base_type,
             sqlx_type,
+            declared_length: declared_length(&column_def.data_type),
             nullable,
             has_default,
             is_generated,
@@ -235,6 +256,7 @@ pub(super) fn build_column(
         unique,
         foreign_key,
         value_lists,
+        range_checks,
     })
 }
 
@@ -261,6 +283,7 @@ pub(super) struct RawColumn {
     pub(super) rust_name: String,
     base_type: String,
     sqlx_type: String,
+    declared_length: Option<u32>,
     nullable: bool,
     has_default: bool,
     is_generated: bool,
@@ -281,6 +304,9 @@ impl RawColumn {
             has_default: self.has_default,
             is_generated: self.is_generated,
             value_list: None,
+            declared_length: self.declared_length,
+            value_range: None,
+            length_range: None,
             typed_id: None,
             is_managed: false,
             id_generation: None,

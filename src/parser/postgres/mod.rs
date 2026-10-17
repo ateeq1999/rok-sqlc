@@ -3,6 +3,7 @@
 //! statement it applies has a module of its own.
 
 mod alter;
+mod checks;
 mod constraints;
 mod enums;
 mod names;
@@ -134,8 +135,8 @@ pub fn parse_schema(sql: &str) -> Result<ParsedSchema> {
 /// it could not apply.
 ///
 /// Later statements change earlier tables: `ALTER TABLE` adds, drops, and
-/// renames columns and adds primary key, unique, foreign key, and value-list
-/// check constraints, and `CREATE UNIQUE INDEX` on plain columns records a unique
+/// renames columns and adds primary key, unique, foreign key, value-list
+/// check, and range check constraints, and `CREATE UNIQUE INDEX` on plain columns records a unique
 /// key. Any other `ALTER TABLE` clause on a known table fails that table.
 /// `CREATE TRIGGER` and `DROP TRIGGER` keep track of each table's row-level
 /// `BEFORE INSERT` triggers, by name; the trigger functions are not read.

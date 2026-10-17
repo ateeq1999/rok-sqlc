@@ -265,6 +265,18 @@ pub struct Column {
     /// deduplicated in list order. The parser turns such a column into a
     /// value-list enum; `None` for other columns.
     pub value_list: Option<Vec<String>>,
+    /// The length, in characters, a `VARCHAR(n)` or `CHAR(n)` declares (1
+    /// for a bare `CHAR`). `None` for other types and for `VARCHAR` without
+    /// a length.
+    pub declared_length: Option<u32>,
+    /// The values single-column `CHECK`s against literals allow this numeric
+    /// column (`col > 0`, `col BETWEEN 1 AND 9`, …), the tightest bounds
+    /// when several apply. `None` when no such check bounds it.
+    pub value_range: Option<ValueRange>,
+    /// The lengths, in characters, `CHECK`s such as `char_length(col) <= 80`
+    /// allow this text column, the tightest bounds when several apply.
+    /// `None` when no such check bounds it.
+    pub length_range: Option<LengthRange>,
     /// The typed id the generated code uses in place of `sqlx_type`: the
     /// table's own id for a single-column primary key, or the referenced
     /// table's id for a foreign key to it. The parser leaves it `None`; the
@@ -280,6 +292,31 @@ pub struct Column {
     /// applies to its type (a generated id). The
     /// parser leaves it `None`; the generator applies the conventions.
     pub id_generation: Option<IdGeneration>,
+}
+
+/// The values a column's `CHECK`s allow. At least one bound is set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValueRange {
+    pub min: Option<NumberBound>,
+    pub max: Option<NumberBound>,
+}
+
+/// One end of a [`ValueRange`]: a number literal, written as SQL writes it
+/// (`-5`, `0.25`), that fits the column's type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NumberBound {
+    pub value: String,
+    /// The bound itself is not allowed (`col > 0.5`). Bounds on integer
+    /// columns are always inclusive.
+    pub exclusive: bool,
+}
+
+/// The lengths, in characters, a column's `CHECK`s allow, both ends
+/// inclusive. At least one bound is set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LengthRange {
+    pub min: Option<u32>,
+    pub max: Option<u32>,
 }
 
 /// A generated typed id: `name` is defined in `<module>/models.rs`.

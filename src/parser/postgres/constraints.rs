@@ -1,11 +1,12 @@
-//! Primary key, unique, foreign key, and value-list check constraints, and
-//! unique indexes.
+//! Primary key, unique, foreign key, value-list check, and range check
+//! constraints, and unique indexes.
 
 use std::collections::HashSet;
 
 use sqlparser::ast::{CreateIndex, IndexColumn, TableConstraint};
 
 use super::alter::column_index;
+use super::checks::{apply_range_check, range_check};
 use super::enums::{restrict_to_values, value_list_check};
 use super::names::{
     default_constraint_name, find_table, ident_name, index_column_name, object_leaf_name,
@@ -15,7 +16,8 @@ use super::table::rust_type;
 use crate::schema::{ForeignKey, KeyConstraint, Table, UniqueKey};
 
 /// Adds a primary key, unique, or foreign key constraint, or a value-list
-/// check. Like in `CREATE TABLE`, any other check leaves the model unchanged.
+/// or range check. Like in `CREATE TABLE`, any other check leaves the model
+/// unchanged.
 /// Other constraint kinds fail, so a constraint that might change the model
 /// is never dropped silently.
 pub(super) fn add_constraint(
@@ -74,12 +76,18 @@ pub(super) fn add_constraint(
                 .extend(constraint_foreign_key(constraint));
         }
         // Like in `CREATE TABLE`, a value list on a text column restricts it,
-        // and any other check leaves the model unchanged.
+        // a range check narrows its column's ranges, and any other check
+        // leaves the model unchanged.
         TableConstraint::Check { expr, .. } => {
             if let Some((name, labels)) = value_list_check(expr)
                 && let Some(index) = column_index(table, &name)
             {
                 restrict_to_values(&mut table.columns[index], labels);
+            }
+            if let Some(check) = range_check(expr)
+                && let Some(index) = column_index(table, &check.column)
+            {
+                apply_range_check(&mut table.columns[index], check);
             }
         }
         other => return Err(format!("unsupported ALTER TABLE clause `ADD {other}`")),

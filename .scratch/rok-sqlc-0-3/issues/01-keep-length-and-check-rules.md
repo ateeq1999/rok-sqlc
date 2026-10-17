@@ -16,7 +16,11 @@ This adds no generated output on its own: output without the 0.3 keys must be un
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Parser unit tests cover each shape, including ALTER paths, plus shapes that must stay ignored (two columns, a function other than the length ones, `OR`).
-- [ ] The whole existing suite passes unchanged.
+- [x] Parser unit tests cover each shape, including ALTER paths, plus shapes that must stay ignored (two columns, a function other than the length ones, `OR`).
+- [x] The whole existing suite passes unchanged.
+
+## Comments
+
+- Implemented on branch `rok-sqlc-0-3-01`.
