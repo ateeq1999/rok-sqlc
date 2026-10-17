@@ -23,8 +23,7 @@ pub fn apply(tables: &mut [Table], conventions: &Conventions) {
             .filter(|name| table.columns.iter().any(|column| column.sql_name == *name))
             .map(str::to_owned);
         for column in &mut table.columns {
-            column.is_managed = conventions.managed_columns.contains(&column.sql_name)
-                || Some(column.sql_name.as_str()) == version;
+            column.is_managed = is_managed(&column.sql_name, conventions);
         }
         let present = |name: &Option<String>| {
             name.as_ref()
@@ -36,6 +35,37 @@ pub fn apply(tables: &mut [Table], conventions: &Conventions) {
         table.soft_delete_column = soft_delete_column;
         table.tenant_column = tenant_column;
     }
+}
+
+/// Whether `conventions` make the column named `name` managed: it is one of
+/// the managed columns or the version column.
+fn is_managed(name: &str, conventions: &Conventions) -> bool {
+    conventions
+        .managed_columns
+        .iter()
+        .any(|managed| managed == name)
+        || conventions.version_column.as_deref() == Some(name)
+}
+
+/// Why `table` cannot be generated under `conventions`, if a managed column
+/// has no source of values: inserts leave a managed column out, so the
+/// database must supply it, and a `NOT NULL` column with no `DEFAULT` (and
+/// not serial, identity, or `GENERATED`) gets a value only from a
+/// `BEFORE INSERT` trigger. Names the first such column and how to fix it.
+pub fn unsourced(table: &Table, conventions: &Conventions) -> Option<String> {
+    if !table.before_insert_triggers.is_empty() {
+        return None;
+    }
+    let column = table.columns.iter().find(|column| {
+        is_managed(&column.sql_name, conventions)
+            && !column.nullable
+            && !column.has_default
+            && !column.is_generated
+    })?;
+    Some(format!(
+        "managed column `{}` is NOT NULL with no DEFAULT, and no BEFORE INSERT trigger is defined on the table, so inserts, which leave it out, have no value for it; add a DEFAULT, make the column nullable, or create a BEFORE INSERT trigger that sets it",
+        column.sql_name
+    ))
 }
 
 /// Checks that each of `tables` can follow `conventions`: a soft-delete
