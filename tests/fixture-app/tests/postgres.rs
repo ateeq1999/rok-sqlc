@@ -601,6 +601,7 @@ async fn text_filters_escape_like_wildcards(pool: &PgPool, category: CategoryId)
 }
 
 async fn annotated_queries(pool: &PgPool) {
+    use db::products::models::ProductId;
     use db::queries::inventory::{self as queries, CreateProductsParams};
 
     let category = queries::create_category(pool, "query-cat", None)
@@ -625,15 +626,15 @@ async fn annotated_queries(pool: &PgPool) {
     let inserted = queries::create_products(
         pool,
         CreateProductsParams {
-            id: uuid::Uuid::from_u128(101),
+            id: ProductId::from(uuid::Uuid::from_u128(101)),
             sku: "Q-1".to_owned(),
             name: "Query hammer".to_owned(),
-            category_id: category.id.into(),
-            supplier_id: Some(supplier.id.into()),
-            id_2: uuid::Uuid::from_u128(102),
+            category_id: category.id,
+            supplier_id: Some(supplier.id),
+            id_2: ProductId::from(uuid::Uuid::from_u128(102)),
             sku_2: "Q-2".to_owned(),
             name_2: "Query anvil".to_owned(),
-            category_id_2: category.id.into(),
+            category_id_2: category.id,
             supplier_id_2: None,
         },
     )
@@ -648,17 +649,17 @@ async fn annotated_queries(pool: &PgPool) {
         .await
         .unwrap()
         .expect("Q-1 exists");
-    assert_eq!(hammer.id, uuid::Uuid::from_u128(101));
+    assert_eq!(hammer.id, ProductId::from(uuid::Uuid::from_u128(101)));
     assert_eq!(hammer.name, "Query hammer");
     assert_eq!(
         queries::get_product_by_sku(pool, "missing").await.unwrap(),
         None
     );
 
-    queries::update_product_stock(pool, uuid::Uuid::from_u128(101), 50)
+    queries::update_product_stock(pool, ProductId::from(uuid::Uuid::from_u128(101)), 50)
         .await
         .unwrap();
-    let low_stock: Vec<String> = queries::list_products_by_category(pool, category.id.into(), 10)
+    let low_stock: Vec<String> = queries::list_products_by_category(pool, category.id, 10)
         .await
         .unwrap()
         .into_iter()
@@ -678,7 +679,7 @@ async fn annotated_queries(pool: &PgPool) {
     );
 
     assert_eq!(
-        queries::count_products_in_category(pool, category.id.into())
+        queries::count_products_in_category(pool, category.id)
             .await
             .unwrap(),
         2
@@ -686,15 +687,15 @@ async fn annotated_queries(pool: &PgPool) {
     let stock = queries::category_stock(pool).await.unwrap();
     let ours = stock
         .iter()
-        .find(|row| row.category_id == i64::from(category.id))
+        .find(|row| row.category_id == category.id)
         .expect("category has stock");
     assert_eq!(ours.total_stock, 50);
 
-    let stocked = queries::stocked_categories(pool, 1, category.id.into())
+    let stocked = queries::stocked_categories(pool, 1, category.id)
         .await
         .unwrap();
     assert_eq!(stocked.len(), 1, "the CTE pre-aggregates per category");
-    assert_eq!(stocked[0].id, i64::from(category.id));
+    assert_eq!(stocked[0].id, category.id);
     assert_eq!(stocked[0].category_name, "query-cat");
     assert_eq!(
         stocked[0].product_count, 1,
@@ -702,7 +703,7 @@ async fn annotated_queries(pool: &PgPool) {
     );
     assert_eq!(stocked[0].total_stock, Some(50));
     assert!(
-        queries::stocked_categories(pool, 51, category.id.into())
+        queries::stocked_categories(pool, 51, category.id)
             .await
             .unwrap()
             .is_empty(),
@@ -727,7 +728,8 @@ async fn annotated_queries(pool: &PgPool) {
 async fn query_modules_per_file(pool: &PgPool) {
     use db::queries::{inventory, suppliers};
 
-    let globex = suppliers::create_supplier(pool, uuid::Uuid::from_u128(901), "Globex")
+    let globex_id = db::suppliers::models::SupplierId::from(uuid::Uuid::from_u128(901));
+    let globex = suppliers::create_supplier(pool, globex_id, "Globex")
         .await
         .unwrap();
     assert_eq!(globex.name, "Globex");
@@ -1288,7 +1290,7 @@ async fn enums_keep_their_exact_labels(pool: &PgPool) {
         .await
         .unwrap();
     assert_eq!(found.len(), 1);
-    assert_eq!(found[0].id, i64::from(routine.id));
+    assert_eq!(found[0].id, routine.id);
     assert_eq!(found[0].priority, TicketPriority::High);
     assert_eq!(found[0].state, None);
 }
@@ -1760,6 +1762,17 @@ async fn text_keys_are_borrowed(pool: &PgPool) {
     )
     .await
     .unwrap();
+    // Query files take and return the typed id too.
+    let name = db::queries::currencies::currency_name(pool, &eur)
+        .await
+        .unwrap();
+    assert_eq!(name.as_deref(), Some("Euro"));
+    let rates = db::queries::currencies::rates_for_currencies(pool, std::slice::from_ref(&eur))
+        .await
+        .unwrap();
+    assert_eq!(rates, std::slice::from_ref(&rate));
+    assert_eq!(rates[0].currency_code, eur);
+
     let key: CurrencyRateKey = rate.key();
     let fetched = db::currency_rates::read::get_by_id(pool, &key)
         .await

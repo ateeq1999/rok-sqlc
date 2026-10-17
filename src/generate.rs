@@ -373,16 +373,24 @@ fn analyze_query_file(
             path.display()
         );
     }
-    let generated_modules = selected
+    let generated_modules: HashSet<String> = selected
         .iter()
         .map(|table| table.module_name.clone())
         .collect();
-    let (analyzed, analysis_failures) = queries::analyze_queries(
-        &defs,
-        &parsed.schema.tables,
-        &generated_modules,
-        &parsed.failures,
-    );
+    // Columns carry the typed ids the generated resources define, so query
+    // parameters and result columns drawn from a key use them too.
+    let mut tables = generator::keys::resolve(&parsed.schema.tables);
+    for column in tables.iter_mut().flat_map(|table| &mut table.columns) {
+        if column
+            .typed_id
+            .as_ref()
+            .is_some_and(|id| !generated_modules.contains(&id.module))
+        {
+            column.typed_id = None;
+        }
+    }
+    let (analyzed, analysis_failures) =
+        queries::analyze_queries(&defs, &tables, &generated_modules, &parsed.failures);
     failures.extend(analysis_failures);
 
     let failures = failures

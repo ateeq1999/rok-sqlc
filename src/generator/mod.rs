@@ -141,14 +141,17 @@ pub fn plan_files_with_queries(
 
     match queries {
         QueriesModule::Generate(analyzed) => {
-            files.push((output.join("queries.rs"), queries::render(analyzed, serde)));
+            files.push((
+                output.join("queries.rs"),
+                queries::render(analyzed, tables, serde),
+            ));
         }
         QueriesModule::GenerateModules(modules) => {
             let dir = output.join("queries");
             for module in modules {
                 files.push((
                     dir.join(format!("{}.rs", module.name)),
-                    queries::render_nested(&module.queries, serde),
+                    queries::render_nested(&module.queries, tables, serde),
                 ));
             }
             files.push((dir.join("mod.rs"), queries::render_mod(modules)));

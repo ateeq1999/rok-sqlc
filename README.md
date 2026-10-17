@@ -26,7 +26,7 @@ ORDER BY name, id;
 #[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
 pub struct ActiveProductsInCategoryRow {
     /// The `id` column.
-    pub id: uuid::Uuid,
+    pub id: ProductId,
     /// The `sku` column.
     pub sku: String,
     /// The `name` column.
@@ -38,7 +38,7 @@ pub struct ActiveProductsInCategoryRow {
 /// Runs the `ActiveProductsInCategory` query (`:many`).
 pub async fn active_products_in_category<'e, E>(
     executor: E,
-    category_id: i64,
+    category_id: CategoryId,
 ) -> Result<Vec<ActiveProductsInCategoryRow>, sqlx::Error>
 where
     E: sqlx::PgExecutor<'e>,
@@ -481,9 +481,18 @@ are:
 - an explicit cast to a supported type.
 
 A placeholder anywhere else fails generation. The error names the fix, a
-`-- param:` override. Text parameters are taken as `&str` and arrays as
-slices. A query with more than three parameters takes a `{Name}Params`
-struct instead:
+`-- param:` override.
+
+**Keys keep their typed ids.** A parameter typed by a primary key or foreign
+key column takes that table's typed id, and so does a result column taken
+straight from one, as in `ActiveProductsInCategory` at the top
+(`category_id: CategoryId`, `id: ProductId`). A parameter compared with two
+different ids falls back to the plain type, and so does any computed
+expression.
+
+Text parameters are taken as `&str` (`&CurrencyId` for a text key) and
+arrays as slices. A query with more than three parameters takes a
+`{Name}Params` struct instead:
 
 <!-- source: docs/examples/quickstart/queries.sql -->
 ```sql
@@ -887,8 +896,6 @@ fails. With `--resource`, only that table's problems count.
   `WHERE deleted_at IS NULL` unique indexes, because PostgreSQL infers a
   partial index only from a target that repeats its condition, which the
   query parser can't read.
-- Query-file parameters and result columns keep the raw column types, not
-  typed ids (`category_id: i64` above, not `CategoryId`).
 - Joined-read structs (`ProductWithCategory`, the `…With…` structs) don't get
   serde derives, and neither do filters and search types.
 - A serde-deserialized update patch can't set a column to `NULL`: `None` and

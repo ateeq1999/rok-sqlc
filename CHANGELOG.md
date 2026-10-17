@@ -47,6 +47,12 @@ against earlier development snapshots.
 - Query-file functions take text parameters as `&str` and array parameters
   as slices (`&[T]`), also inside `Option`. Parameter structs (more than
   three parameters) stay owned.
+- Query-file functions use typed ids: a parameter typed by a primary key or
+  foreign key column takes the table's typed id (`category_id: CategoryId`,
+  `&CurrencyId` for a text key, `&[CategoryId]` for `= ANY($1)`), and a
+  result column taken straight from such a column decodes as it. A
+  parameter compared with two different ids, and computed expressions, keep
+  the plain type.
 
 ### Breaking changes to the library
 

@@ -2,11 +2,14 @@
 
 //! Functions for the annotated queries in the query file.
 
+use super::categories::models::CategoryId;
+use super::products::models::ProductId;
+
 /// A row returned by `active_products_in_category`.
 #[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
 pub struct ActiveProductsInCategoryRow {
     /// The `id` column.
-    pub id: uuid::Uuid,
+    pub id: ProductId,
     /// The `sku` column.
     pub sku: String,
     /// The `name` column.
@@ -18,7 +21,7 @@ pub struct ActiveProductsInCategoryRow {
 /// Runs the `ActiveProductsInCategory` query (`:many`).
 pub async fn active_products_in_category<'e, E>(
     executor: E,
-    category_id: i64,
+    category_id: CategoryId,
 ) -> Result<Vec<ActiveProductsInCategoryRow>, sqlx::Error>
 where
     E: sqlx::PgExecutor<'e>,
@@ -69,7 +72,7 @@ where
 #[derive(Debug, Clone, PartialEq)]
 pub struct UpsertProductPriceParams {
     /// Bound to `$1`.
-    pub category_id: i64,
+    pub category_id: CategoryId,
     /// Bound to `$2`.
     pub sku: String,
     /// Bound to `$3`.
@@ -135,7 +138,10 @@ where
 
 /// Runs the `ArchiveCategory` query (`:execrows`).
 /// Returns the number of affected rows.
-pub async fn archive_category<'e, E>(executor: E, category_id: i64) -> Result<u64, sqlx::Error>
+pub async fn archive_category<'e, E>(
+    executor: E,
+    category_id: CategoryId,
+) -> Result<u64, sqlx::Error>
 where
     E: sqlx::PgExecutor<'e>,
 {

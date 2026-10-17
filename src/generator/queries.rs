@@ -6,24 +6,72 @@
 //! parameter.
 
 use crate::queries::{AnalyzedQuery, Param, ResultShape, ReturnMode};
+use crate::schema::{Table, mentions_generated_type};
 
 use super::{
     HEADER, QueryModule, StaticQuery, doc_name, push_doc, push_fn_head, push_serde_derive, sql,
-    types_import,
+    use_paths,
 };
 
 /// Queries with more parameters than this take a `{Name}Params` struct
 /// instead of positional arguments.
 const MAX_POSITIONAL_PARAMS: usize = 3;
 
-/// Renders `db/queries.rs`, a direct child of `db`.
-pub fn render(queries: &[AnalyzedQuery], serde: bool) -> String {
-    render_at(queries, "super", serde)
+/// Renders `db/queries.rs`, a direct child of `db`. `tables` are the
+/// generated tables, whose typed ids the query types may name.
+pub fn render(queries: &[AnalyzedQuery], tables: &[Table], serde: bool) -> String {
+    render_at(queries, &TypedIds::of(tables), "super", serde)
 }
 
 /// Renders `db/queries/<stem>.rs`, one level below `db/queries.rs`.
-pub fn render_nested(queries: &[AnalyzedQuery], serde: bool) -> String {
-    render_at(queries, "super::super", serde)
+pub fn render_nested(queries: &[AnalyzedQuery], tables: &[Table], serde: bool) -> String {
+    render_at(queries, &TypedIds::of(tables), "super::super", serde)
+}
+
+/// The typed ids the generated tables define, which query parameters and
+/// result columns drawn from a key column carry by name (`CategoryId`).
+struct TypedIds<'a> {
+    /// `(name, module, copy)`: the id, the resource defining it in its
+    /// `models.rs`, and whether its value is `Copy`.
+    ids: Vec<(&'a str, &'a str, bool)>,
+}
+
+impl<'a> TypedIds<'a> {
+    fn of(tables: &'a [Table]) -> Self {
+        let ids = tables
+            .iter()
+            .flat_map(|table| {
+                table.columns.iter().filter_map(move |column| {
+                    let id = column.typed_id.as_ref()?;
+                    (id.module == table.module_name).then_some((
+                        id.name.as_str(),
+                        id.module.as_str(),
+                        column.is_copy(),
+                    ))
+                })
+            })
+            .collect();
+        Self { ids }
+    }
+
+    fn find(&self, name: &str) -> Option<&(&'a str, &'a str, bool)> {
+        self.ids.iter().find(|(id, _, _)| *id == name)
+    }
+
+    /// The typed ids a Rust type names as a bare identifier (`CategoryId`,
+    /// `Option<CategoryId>`, `Vec<CategoryId>`); a path such as
+    /// `other::CategoryId` names something else.
+    fn named_in<'t>(&'t self, rust_type: &'t str) -> impl Iterator<Item = (&'a str, &'a str)> + 't {
+        rust_type
+            .split(|character: char| !(character.is_alphanumeric() || "_:".contains(character)))
+            .filter_map(|token| self.find(token).map(|(name, module, _)| (*name, *module)))
+    }
+
+    /// Whether `rust_type` is a typed id whose value is not `Copy` (a text
+    /// key), which a parameter borrows.
+    fn is_borrowed(&self, rust_type: &str) -> bool {
+        self.find(rust_type).is_some_and(|(_, _, copy)| !copy)
+    }
 }
 
 /// Renders `db/queries/mod.rs`, declaring one module per query file.
@@ -41,20 +89,37 @@ pub fn render_mod(modules: &[QueryModule]) -> String {
 /// `db_path` is the path from the rendered file to the `db` module; row
 /// structs of generated resources and the `types` module are reached
 /// through it.
-fn render_at(queries: &[AnalyzedQuery], db_path: &str, serde: bool) -> String {
+fn render_at(queries: &[AnalyzedQuery], ids: &TypedIds<'_>, db_path: &str, serde: bool) -> String {
     let mut output =
         format!("{HEADER}\n//! Functions for the annotated queries in the query file.\n");
-    let types = types_import(db_path, mentioned_types(queries).iter().map(String::as_str));
-    if !types.is_empty() {
-        output.push_str(&format!("\n{types}"));
+    let mentioned = mentioned_types(queries);
+    let mut imports: Vec<String> = mentioned
+        .iter()
+        .flat_map(|rust_type| ids.named_in(rust_type))
+        .map(|(name, module)| format!("{db_path}::{module}::models::{name}"))
+        .collect();
+    if mentioned
+        .iter()
+        .any(|rust_type| mentions_generated_type(rust_type))
+    {
+        imports.push(format!("{db_path}::types"));
+    }
+    if !imports.is_empty() {
+        output.push_str(&format!("\n{}", use_paths(&imports)));
     }
     for query in queries {
-        render_query(&mut output, query, db_path, serde);
+        render_query(&mut output, query, ids, db_path, serde);
     }
     output
 }
 
-fn render_query(output: &mut String, query: &AnalyzedQuery, db_path: &str, serde: bool) {
+fn render_query(
+    output: &mut String,
+    query: &AnalyzedQuery,
+    ids: &TypedIds<'_>,
+    db_path: &str,
+    serde: bool,
+) {
     if let ResultShape::Row(columns) = &query.result {
         output.push('\n');
         push_doc(
@@ -110,7 +175,11 @@ fn render_query(output: &mut String, query: &AnalyzedQuery, db_path: &str, serde
         )
     } else {
         (
-            query.params.iter().map(signature_param).collect(),
+            query
+                .params
+                .iter()
+                .map(|param| signature_param(param, ids))
+                .collect(),
             query
                 .params
                 .iter()
@@ -177,21 +246,25 @@ fn render_query(output: &mut String, query: &AnalyzedQuery, db_path: &str, serde
     output.push_str("}\n");
 }
 
-fn signature_param(param: &Param) -> String {
-    format!("{}: {}", param.name, borrowed(&param.rust_type))
+fn signature_param(param: &Param, ids: &TypedIds<'_>) -> String {
+    format!("{}: {}", param.name, borrowed(&param.rust_type, ids))
 }
 
-/// A positional parameter's type: text and lists are borrowed (`&str`,
-/// `&[T]`, also inside `Option`), since binding them needs no ownership.
-fn borrowed(rust_type: &str) -> String {
+/// A positional parameter's type: text, text typed ids, and lists are
+/// borrowed (`&str`, `&CurrencyId`, `&[T]`, also inside `Option`), since
+/// binding them needs no ownership.
+fn borrowed(rust_type: &str, ids: &TypedIds<'_>) -> String {
     if let Some(inner) = rust_type
         .strip_prefix("Option<")
         .and_then(|rest| rest.strip_suffix('>'))
     {
-        return format!("Option<{}>", borrowed(inner));
+        return format!("Option<{}>", borrowed(inner, ids));
     }
     if rust_type == "String" {
         return "&str".to_owned();
+    }
+    if ids.is_borrowed(rust_type) {
+        return format!("&{rust_type}");
     }
     match rust_type
         .strip_prefix("Vec<")
@@ -236,7 +309,7 @@ mod tests {
     use crate::queries::OutputColumn;
 
     fn render(queries: &[AnalyzedQuery]) -> String {
-        super::render(queries, false)
+        super::render(queries, &[], false)
     }
 
     fn query(mode: ReturnMode, params: Vec<Param>, result: ResultShape) -> AnalyzedQuery {
@@ -324,7 +397,7 @@ mod tests {
             .collect();
         let queries = [query(ReturnMode::Many, params, row)];
         assert!(!render(&queries).contains("serde"));
-        let rendered = super::render(&queries, true);
+        let rendered = super::render(&queries, &[], true);
         let serde = "serde::Serialize, serde::Deserialize)]\n";
         assert!(rendered.contains(&format!("{serde}pub struct ListThingsRow {{")));
         assert!(rendered.contains(&format!("{serde}pub struct ListThingsParams {{")));

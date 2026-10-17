@@ -238,7 +238,12 @@ impl Deref for TableRef<'_> {
 
 struct Slot {
     name: String,
+    /// The parameter's type: a typed id when every column naming it has the
+    /// same one, otherwise the plain type.
     base: String,
+    /// The plain type under a typed id (`i64` for `CategoryId`); `base` itself
+    /// for other types.
+    raw: String,
     nullable: bool,
 }
 
@@ -724,11 +729,12 @@ impl<'a, 'c> Analysis<'a, 'c> {
                     && let Some(index) = placeholder(right)
                 {
                     let column = self.reference_column(&reference);
-                    let (name, base) = (
+                    let (name, base, raw) = (
                         format!("{}_list", column.rust_name),
+                        format!("Vec<{}>", column.value_type()),
                         format!("Vec<{}>", column.sqlx_type),
                     );
-                    self.assign(index, &name, &base, false)?;
+                    self.assign(index, &name, &base, &raw, false)?;
                 }
                 self.expr(left)?;
                 self.expr(right)
@@ -765,7 +771,8 @@ impl<'a, 'c> Analysis<'a, 'c> {
             } => {
                 if let Some(index) = placeholder(inner) {
                     let (_, sqlx_type) = map_type(data_type)?;
-                    self.assign(index, &format!("param_{index}"), &sqlx_type, false)?;
+                    let name = format!("param_{index}");
+                    self.assign(index, &name, &sqlx_type, &sqlx_type, false)?;
                 }
                 self.expr(inner)
             }
@@ -796,9 +803,14 @@ impl<'a, 'c> Analysis<'a, 'c> {
         let Some(reference) = self.column_reference(column)? else {
             return Ok(());
         };
-        let column = self.reference_column(&reference);
-        let (name, base) = (column.rust_name.clone(), column.sqlx_type.clone());
-        self.assign(index, &name, &base, false)
+        let column = self.reference_column(&reference).clone();
+        self.assign(
+            index,
+            &column.rust_name,
+            column.value_type(),
+            &column.sqlx_type,
+            false,
+        )
     }
 
     fn typed_by_column(
@@ -812,6 +824,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
             Some(index) => self.assign(
                 index,
                 &format!("{}{suffix}", column.rust_name),
+                column.value_type(),
                 &column.sqlx_type,
                 nullable,
             ),
@@ -821,24 +834,37 @@ impl<'a, 'c> Analysis<'a, 'c> {
 
     fn typed_as(&mut self, value: &Expr, name: &str, rust_type: &str) -> Result<(), String> {
         match placeholder(value) {
-            Some(index) => self.assign(index, name, rust_type, false),
+            Some(index) => self.assign(index, name, rust_type, rust_type, false),
             None => self.expr(value),
         }
     }
 
+    /// Types placeholder `index` as `base`, whose plain type is `raw` (they
+    /// differ for a typed id). A placeholder typed twice keeps one type: the
+    /// same type, or the typed id when the other use has its plain type. Two
+    /// different typed ids over one plain type fall back to the plain type,
+    /// and different plain types fail.
     fn assign(
         &mut self,
         index: usize,
         name: &str,
         base: &str,
+        raw: &str,
         nullable: bool,
     ) -> Result<(), String> {
         match self.slots.get_mut(&index) {
-            Some(slot) if slot.base != base => Err(format!(
+            Some(slot) if slot.raw != raw => Err(format!(
                 "`${index}` is used both as `{}` and as `{base}`; use separate placeholders or add `-- param: ${index} <name> <RustType>`",
                 slot.base
             )),
             Some(slot) => {
+                if slot.base != base {
+                    if slot.base == slot.raw {
+                        slot.base = base.to_owned();
+                    } else if base != raw {
+                        slot.base = raw.to_owned();
+                    }
+                }
                 slot.nullable &= nullable;
                 Ok(())
             }
@@ -848,6 +874,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
                     Slot {
                         name: name.to_owned(),
                         base: base.to_owned(),
+                        raw: raw.to_owned(),
                         nullable,
                     },
                 );
@@ -1160,11 +1187,13 @@ fn reusable_model(
     })
 }
 
+/// The Rust type of a result column drawn directly from `column`: its field
+/// type (the typed id, when it has one), optional on the outer side of a join.
 fn column_type(column: &Column, outer_nullable: bool) -> String {
     if outer_nullable && !column.nullable {
-        format!("Option<{}>", column.rust_type)
+        format!("Option<{}>", column.value_type())
     } else {
-        column.rust_type.clone()
+        column.field_type()
     }
 }
 
