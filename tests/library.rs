@@ -351,6 +351,44 @@ fn extractors_generate_the_http_module() -> Result<()> {
     Ok(())
 }
 
+/// `http` is a reserved module name only when `extractors` generates
+/// `db/http/`: without it, a table named `http` generates as in 0.2.1.
+#[test]
+fn a_table_named_http_is_reserved_only_with_extractors() -> Result<()> {
+    use rok_sqlc::{Derive, Extractor};
+    let dir = TempDir::new()?;
+    fs::write(
+        dir.path().join("schema.sql"),
+        "CREATE TABLE http (id BIGSERIAL PRIMARY KEY, url TEXT NOT NULL);",
+    )?;
+    let mut config = Config::default();
+    config.schema = vec![dir.path().join("schema.sql")];
+    config.output = dir.path().join("plain");
+    config.derive = vec![Derive::Serde, Derive::Validate];
+    let report = rok_sqlc::generate(&config)?;
+    assert!(
+        report.table_failures.is_empty(),
+        "{:?}",
+        report.table_failures
+    );
+    let plain = tree(&dir.path().join("plain"))?;
+    assert!(plain.contains_key(&Path::new("http").join("models.rs")));
+
+    config.output = dir.path().join("extractors");
+    config.extractors = vec![Extractor::Axum];
+    let error = rok_sqlc::generate(&config).unwrap_err();
+    let failures = &error.report().table_failures;
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert!(
+        failures[0]
+            .reason
+            .contains("module name `http` is reserved for the generated `db/http/`"),
+        "{}",
+        failures[0].reason
+    );
+    Ok(())
+}
+
 /// `extractors = ["actix_web"]` adds `db/http/actix_web.rs` next to the
 /// shared `db/http/mod.rs`, with `actix-web` among the dependency hints;
 /// `["axum", "actix_web"]` generates both side by side, sharing `mod.rs`.

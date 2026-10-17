@@ -59,8 +59,10 @@ where
             let Some(bytes) = bytes else {
                 return Err(BodyRejection::not_json());
             };
-            let bytes = bytes.await.map_err(|error| BodyRejection::Malformed {
-                message: error.to_string(),
+            let bytes = bytes.await.map_err(|error| {
+                BodyRejection::unreadable(
+                    error.as_response_error().status_code() == StatusCode::PAYLOAD_TOO_LARGE,
+                )
             })?;
             super::validated(&bytes).map(Self)
         })

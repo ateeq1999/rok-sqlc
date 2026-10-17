@@ -2,6 +2,7 @@
 //! function heads, method chains, and derives.
 
 use super::sql;
+use crate::Derive;
 use crate::schema::{Table, mentions_generated_type};
 
 /// rustfmt's default `max_width`; generated code is laid out to be
@@ -33,17 +34,46 @@ pub fn push_chain(output: &mut String, indent: usize, lead: &str, head: &str, ca
     }
 }
 
-/// Adds the derives `derive = ["serde"]` asks for (ADR 0013) to the
-/// `#[derive(...)]` line `output` ends with, laid out as rustfmt lays out a
-/// derive list: on one line when it fits, otherwise one derive per line.
-pub fn push_serde_derive(output: &mut String, serde: bool) {
+/// The derives `derive = ["serde"]` adds (ADR 0013), for [`push_derives`]:
+/// none without `serde`.
+pub fn serde_derives(serde: bool) -> &'static [&'static str] {
     if serde {
-        push_derives(output, &SERDE_DERIVES);
+        &["serde::Serialize", "serde::Deserialize"]
+    } else {
+        &[]
     }
 }
 
-/// The derives `derive = ["serde"]` adds.
-pub const SERDE_DERIVES: [&str; 2] = ["serde::Serialize", "serde::Deserialize"];
+/// What a run's `derive` asks of the generated items: serde's derives
+/// (ADR 0013), and `validator::Validate` with its rules on create inputs and
+/// update patches (ADR 0015).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DeriveOptions {
+    /// `derive = ["serde"]`.
+    pub serde: bool,
+    /// `derive = ["validate"]`.
+    pub validate: bool,
+}
+
+impl DeriveOptions {
+    /// The options `derive` lists.
+    pub fn of(derive: &[Derive]) -> Self {
+        DeriveOptions {
+            serde: derive.contains(&Derive::Serde),
+            validate: derive.contains(&Derive::Validate),
+        }
+    }
+
+    /// The derives a create input or update patch adds: serde's, then
+    /// `validator::Validate` with `validate`.
+    pub fn input_derives(self) -> Vec<&'static str> {
+        let mut derives = serde_derives(self.serde).to_vec();
+        if self.validate {
+            derives.push("validator::Validate");
+        }
+        derives
+    }
+}
 
 /// Adds `extra` derives to the `#[derive(...)]` line `output` ends with, laid
 /// out as rustfmt lays out a derive list: on one line when it fits,
@@ -287,7 +317,7 @@ mod tests {
     #[test]
     fn serde_derives_join_the_derive_list_as_rustfmt_lays_it_out() {
         let mut short = "/// Doc.\n#[derive(Debug, Clone)]\n".to_owned();
-        push_serde_derive(&mut short, true);
+        push_derives(&mut short, serde_derives(true));
         assert_eq!(
             short,
             "/// Doc.\n#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]\n"
@@ -296,7 +326,7 @@ mod tests {
         let mut long =
             "#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, sqlx::Type)]\n"
                 .to_owned();
-        push_serde_derive(&mut long, true);
+        push_derives(&mut long, serde_derives(true));
         assert_eq!(
             long,
             "#[derive(\n    Debug,\n    Clone,\n    Copy,\n    PartialEq,\n    Eq,\n    PartialOrd,\n    Ord,\n    Hash,\n    sqlx::Type,\n    serde::Serialize,\n    serde::Deserialize,\n)]\n"
@@ -304,14 +334,14 @@ mod tests {
 
         let mut packed =
             "#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]\n".to_owned();
-        push_serde_derive(&mut packed, true);
+        push_derives(&mut packed, serde_derives(true));
         assert_eq!(
             packed,
             "#[derive(\n    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,\n)]\n"
         );
 
         let mut off = "#[derive(Debug)]\n".to_owned();
-        push_serde_derive(&mut off, false);
+        push_derives(&mut off, serde_derives(false));
         assert_eq!(off, "#[derive(Debug)]\n");
     }
 

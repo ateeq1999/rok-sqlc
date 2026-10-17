@@ -85,9 +85,11 @@ async fn actix_answer(path: &str, content_type: Option<&str>, body: &str, limit:
 }
 
 /// Posts `body` to `path` on an axum app with the same routes, through the
-/// axum extractor generated beside the actix-web one.
-async fn axum_answer(path: &str, content_type: Option<&str>, body: &str) -> Answer {
+/// axum extractor generated beside the actix-web one, with a body limit of
+/// `limit` bytes.
+async fn axum_answer(path: &str, content_type: Option<&str>, body: &str, limit: usize) -> Answer {
     use axum::body::{Body, to_bytes};
+    use axum::extract::DefaultBodyLimit;
     use axum::routing::post;
     use rok_sqlc_fixture_app::validated_db::http::axum::ValidatedJson;
     use tower::ServiceExt;
@@ -104,7 +106,8 @@ async fn axum_answer(path: &str, content_type: Option<&str>, body: &str) -> Answ
             post(|ValidatedJson(signup): ValidatedJson<Signup>| async move {
                 describe_signup(&signup)
             }),
-        );
+        )
+        .layer(DefaultBodyLimit::max(limit));
     let mut request = axum::http::Request::post(path);
     if let Some(content_type) = content_type {
         request = request.header(axum::http::header::CONTENT_TYPE, content_type);
@@ -205,17 +208,25 @@ async fn a_missing_or_wrong_content_type_is_a_malformed_body() {
     }
 }
 
+/// A body over the configured limit (actix-web's `PayloadConfig`, axum's
+/// `DefaultBodyLimit`) gets the same answer from both frameworks.
 #[actix_web::test]
-async fn a_body_over_the_payload_limit_is_a_malformed_body() {
+async fn a_body_over_the_size_limit_is_a_malformed_body_in_both_frameworks() {
     let body = r#"{"code": "NORTH", "name": "Northern"}"#;
-    let (status, content_type, text) =
-        actix_answer("/teams", Some("application/json"), body, 8).await;
-    assert_eq!(status, 400);
-    assert_eq!(content_type.as_deref(), Some("application/json"));
-    assert_eq!(
-        serde_json::from_str::<Value>(&text).unwrap(),
-        envelope("payload reached size limit", "MALFORMED_BODY")
-    );
+    let json = Some("application/json");
+    let actix = actix_answer("/teams", json, body, 8).await;
+    let axum = axum_answer("/teams", json, body, 8).await;
+    for (status, content_type, text) in [actix, axum] {
+        assert_eq!(status, 400);
+        assert_eq!(content_type.as_deref(), Some("application/json"));
+        assert_eq!(
+            serde_json::from_str::<Value>(&text).unwrap(),
+            envelope(
+                "the request body is over the size limit",
+                "MALFORMED_BODY"
+            )
+        );
+    }
 }
 
 #[actix_web::test]
@@ -350,7 +361,7 @@ async fn both_frameworks_answer_the_same_input_with_the_same_body() {
     ];
     for (path, content_type, body) in cases {
         let actix = comparable(actix_answer(path, content_type, body, DEFAULT_LIMIT).await);
-        let axum = comparable(axum_answer(path, content_type, body).await);
+        let axum = comparable(axum_answer(path, content_type, body, DEFAULT_LIMIT).await);
         assert_eq!(actix, axum, "{path} {content_type:?} {body}");
     }
 }

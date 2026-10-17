@@ -79,9 +79,9 @@ enum Command {
         #[arg(short, long, value_name = "NAME", value_enum)]
         derive: Vec<DeriveArg>,
 
-        /// Generate a validated-body extractor for this framework into
-        /// `http.rs` (needs `-d validate`); repeatable [default:
-        /// `extractors` from rok-sqlc.toml]
+        /// Generate a validated-body extractor for this framework into `http/`
+        /// (needs `-d validate`); repeatable [default: `extractors` from
+        /// rok-sqlc.toml]
         #[arg(short, long, value_name = "FRAMEWORK", value_enum)]
         extractor: Vec<ExtractorArg>,
     },

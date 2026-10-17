@@ -16,8 +16,8 @@ use crate::schema::{Column, Relationship, RelationshipKind, Table};
 use super::relationships;
 use super::sql::{ident, live_condition, str_literal, table_ref, tenant_condition};
 use super::{
-    MAX_WIDTH, StaticQuery, doc_name, keys, param_name, param_type, push_doc, push_fn_head,
-    push_serde_derive,
+    MAX_WIDTH, StaticQuery, doc_name, keys, param_name, param_type, push_derives, push_doc,
+    push_fn_head, serde_derives,
 };
 
 /// The alias of the table read.
@@ -185,7 +185,7 @@ impl<'a> Join<'a> {
             ],
         );
         output.push_str("#[derive(Debug, Clone, PartialEq)]\n");
-        push_serde_derive(output, serde);
+        push_derives(output, serde_derives(serde));
         output.push_str(&format!("pub struct {} {{\n", self.struct_name()));
         push_doc(output, 4, &["The row read."]);
         output.push_str(&format!(

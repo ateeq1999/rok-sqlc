@@ -16,7 +16,7 @@
 use crate::IdGeneration;
 use crate::schema::{BaseType, Column, ForeignKey, Table, TypedId};
 
-use super::{param_name, param_type, push_doc, push_serde_derive};
+use super::{DeriveOptions, param_name, param_type, push_derives, push_doc, serde_derives};
 
 /// Copies `tables` with every column's typed id filled in.
 pub fn resolve(tables: &[Table]) -> Vec<Table> {
@@ -315,7 +315,8 @@ pub fn id_imports<'a>(
 }
 
 /// Renders the table's typed id or key struct (before the row struct).
-pub fn render_key_type(output: &mut String, table: &Table, serde: bool, validate: bool) {
+pub fn render_key_type(output: &mut String, table: &Table, derives: DeriveOptions) {
+    let DeriveOptions { serde, validate } = derives;
     let keys = table.key_columns();
     match keys.as_slice() {
         [] => {}
@@ -326,7 +327,7 @@ pub fn render_key_type(output: &mut String, table: &Table, serde: bool, validate
                 .filter(|id| id.module == table.module_name)
             {
                 render_typed_id(output, table, key, &id.name, serde);
-                if validate && key.sqlx_type == "String" {
+                if validate && key.base_type() == BaseType::Text {
                     super::validate::push_measured_id(output, &id.name);
                 }
             }
@@ -360,7 +361,7 @@ fn render_typed_id(output: &mut String, table: &Table, key: &Column, name: &str,
     output.push_str(&format!(
         "#[derive(Debug, Clone, {copy}PartialEq, Eq, {ord}Hash, sqlx::Type)]\n"
     ));
-    push_serde_derive(output, serde);
+    push_derives(output, serde_derives(serde));
     output.push_str("#[sqlx(transparent)]\n");
     if serde {
         output.push_str("#[serde(transparent)]\n");
@@ -423,7 +424,7 @@ fn render_key_struct(output: &mut String, table: &Table, keys: &[&Column], serde
         "Debug, Clone, PartialEq".to_owned()
     };
     output.push_str(&format!("#[derive({derives})]\n"));
-    push_serde_derive(output, serde);
+    push_derives(output, serde_derives(serde));
     output.push_str(&format!("pub struct {} {{\n", key_struct_name(table)));
     for key in keys {
         push_doc(

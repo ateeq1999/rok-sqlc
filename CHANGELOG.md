@@ -10,14 +10,8 @@ the *generated* API count as breaking (see ADR 0012).
 ## [0.3.0] - 2026-10-17
 
 Validated bodies and HTTP extractors (ADR 0015). A run without the new
-`validate` derive and `extractors` key generates what 0.2.1 generates, except
-for a table named `http`.
-
-### Breaking changes to the generated API
-
-- `http` is a reserved module name, for the generated `db/http/`. A table
-  whose module would be `http` fails with an error that says so, whether or
-  not `extractors` is set. Rename its module with `[modules]`.
+`validate` derive and `extractors` key generates byte-for-byte what 0.2.1
+generates.
 
 ### Added
 
@@ -37,8 +31,8 @@ for a table named `http`.
     (`> 0` is `min = 1`); on a float it stays strict (`exclusive_min`), and
     one that can't be represented exactly is dropped;
   - on a `NUMERIC` column the range is a `custom` rule calling a generated
-    `<field>_in_range` function, with the code `range`, since validator's
-    `range` can't compare `Decimal`;
+    `<field>_in_range` function, with the code `range` and `range`'s
+    `min`/`max` params, since validator's `range` can't compare `Decimal`;
   - a typed id over text whose column has a length rule implements
     `validator::ValidateLength<u64>`, so the rule applies through the id and
     through foreign keys using it. Typed-id fields get no `range` rule.
@@ -57,7 +51,8 @@ for a table named `http`.
   - `BodyRejection`, answered in the Rok error envelope
     `{"success": false, "error": {"message", "code", "details"?}}`: `400`
     `MALFORMED_BODY` for a missing or wrong `Content-Type`, bad JSON syntax,
-    or a body that can't be read (over the size limit, say); `422`
+    or a body that can't be read (over the framework's own size limit, with
+    the message `"the request body is over the size limit"` from both); `422`
     `VALIDATION_FAILED` with serde's message and no `details` for JSON that
     doesn't fit the type; `422` `VALIDATION_FAILED` with validator's errors
     as `details` for a broken rule;
@@ -68,6 +63,9 @@ for a table named `http`.
   With actix-web, no `JsonConfig` error handler is needed. `db/mod.rs` names
   the `axum`, `actix-web` and `serde_json` dependencies. `extractors` without
   `validate` fails the run, and an unknown framework lists the valid ones.
+  With `extractors`, `http` is a reserved module name: a table whose module
+  would be `http` fails with an error that says so (rename it with
+  `[modules]`). Without `extractors`, such a table generates as before.
 - The schema model keeps each text column's declared length and the simple
   `CHECK` bounds above, through `CREATE TABLE`, `ADD COLUMN`, `ALTER COLUMN …
   TYPE` (which replaces or clears them), `ADD CONSTRAINT`, and renames.

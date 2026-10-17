@@ -95,6 +95,44 @@ fn an_input_breaking_rules_fails_field_by_field() {
     );
 }
 
+/// A `NUMERIC` range rule is a `custom` one, but its error carries the
+/// bounds and the value as `params`, as validator's `range` does.
+#[test]
+fn a_decimal_range_error_carries_its_bounds() {
+    let input = NewPlayer {
+        salary: Some(Decimal::new(-1, 2)),
+        ..player()
+    };
+    let errors = input.validate().expect_err("salary is negative");
+    let salary = &errors.field_errors()["salary"][0];
+    let mut params: Vec<(String, serde_json::Value)> = salary
+        .params
+        .iter()
+        .map(|(name, value)| (name.to_string(), value.clone()))
+        .collect();
+    params.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        params,
+        [
+            ("min".to_owned(), serde_json::json!("0")),
+            ("value".to_owned(), serde_json::json!("-0.01")),
+        ]
+    );
+    // The same names as an integer column's `range`.
+    let input = NewPlayer {
+        jersey: 100,
+        ..player()
+    };
+    let errors = input.validate().expect_err("jersey is out of range");
+    let mut names: Vec<String> = errors.field_errors()["jersey"][0]
+        .params
+        .keys()
+        .map(ToString::to_string)
+        .collect();
+    names.sort();
+    assert_eq!(names, ["max", "min", "value"]);
+}
+
 #[test]
 fn absent_and_null_input_fields_pass() {
     let input = NewPlayer {

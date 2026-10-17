@@ -236,22 +236,17 @@ fn narrow_value(column: &mut Column, bound: Bound) {
 /// The bound as the column's type takes it, or `None` when it cannot.
 fn number_bound(column: &Column, bound: &Bound) -> Option<NumberBound> {
     let literal = &bound.literal;
-    let exact = match column.sqlx_type.as_str() {
-        "i16" | "i32" | "i64" => {
-            let (min, max) = match column.sqlx_type.as_str() {
-                "i16" => (i128::from(i16::MIN), i128::from(i16::MAX)),
-                "i32" => (i128::from(i32::MIN), i128::from(i32::MAX)),
-                _ => (i128::from(i64::MIN), i128::from(i64::MAX)),
-            };
+    let exact = match column.base_type() {
+        BaseType::Integer => {
+            let (min, max) = BaseType::integer_bounds(&column.sqlx_type)?;
             let value = inclusive(literal.integer()?, bound)?;
             return (min..=max).contains(&value).then(|| NumberBound {
                 value: value.to_string(),
                 exclusive: false,
             });
         }
-        "f32" => literal.fits_binary(f32::MANTISSA_DIGITS),
-        "f64" => literal.fits_binary(f64::MANTISSA_DIGITS),
-        "rust_decimal::Decimal" => {
+        BaseType::Float => literal.fits_binary(BaseType::float_mantissa_digits(&column.sqlx_type)?),
+        BaseType::Decimal => {
             if !literal.fits_rust_decimal() {
                 return None;
             }

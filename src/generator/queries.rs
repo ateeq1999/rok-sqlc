@@ -9,8 +9,8 @@ use crate::queries::{AnalyzedQuery, Param, ResultShape, ReturnMode};
 use crate::schema::{BaseType, Shape, Table, mentions_generated_type};
 
 use super::{
-    HEADER, QueryModule, StaticQuery, doc_name, push_doc, push_fn_head, push_serde_derive, sql,
-    use_paths,
+    HEADER, QueryModule, StaticQuery, doc_name, push_derives, push_doc, push_fn_head,
+    serde_derives, sql, use_paths,
 };
 
 /// Queries with more parameters than this take a `{Name}Params` struct
@@ -133,7 +133,7 @@ fn render_query(
             &[&format!("A row returned by `{}`.", query.fn_name)],
         );
         output.push_str("#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]\n");
-        push_serde_derive(output, serde);
+        push_derives(output, serde_derives(serde));
         output.push_str(&format!("pub struct {}Row {{\n", query.name));
         for column in columns {
             push_doc(
@@ -160,7 +160,7 @@ fn render_query(
         output.push('\n');
         push_doc(output, 0, &[&format!("Parameters of `{}`.", query.fn_name)]);
         output.push_str("#[derive(Debug, Clone, PartialEq)]\n");
-        push_serde_derive(output, serde);
+        push_derives(output, serde_derives(serde));
         output.push_str(&format!("pub struct {}Params {{\n", query.name));
         for param in &query.params {
             push_doc(output, 4, &[&format!("Bound to `${}`.", param.index)]);

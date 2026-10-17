@@ -55,8 +55,8 @@ where
         }
         let bytes = Bytes::from_request(request, state)
             .await
-            .map_err(|rejection| BodyRejection::Malformed {
-                message: rejection.body_text(),
+            .map_err(|rejection| {
+                BodyRejection::unreadable(rejection.status() == StatusCode::PAYLOAD_TOO_LARGE)
             })?;
         super::validated(&bytes).map(Self)
     }

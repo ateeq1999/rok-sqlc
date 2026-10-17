@@ -54,7 +54,8 @@ pub struct Config {
     /// inputs, and patches (ADR 0013). Empty by default.
     pub derive: Vec<Derive>,
     /// HTTP frameworks to generate validated-body extractors for, into
-    /// `http.rs` of the output (ADR 0015). Needs [`Derive::Validate`]. Empty
+    /// `http/` of the output: `mod.rs` and a module per framework (ADR 0015).
+    /// Needs [`Derive::Validate`], and reserves the module name `http`. Empty
     /// by default.
     pub extractors: Vec<Extractor>,
     /// Renames and opt-outs of inferred relationships (ADR 0014), by table

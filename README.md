@@ -471,9 +471,10 @@ same name fail generation, and the error names both.
 pub enum ProductStatus {
 ```
 
-`http`, `nullable`, `schema`, `search`, `session` and `types` are reserved module names, as is
-`queries` when you pass query files. A table that would generate one of
-those modules fails with an error that says so.
+`nullable`, `schema`, `search`, `session` and `types` are reserved module
+names, as are `queries` when you pass query files and `http` when you set
+`extractors`. A table that would generate one of those modules fails with an
+error that says so.
 
 **Code quality.** Every public item is documented. Generated code passes
 `#![deny(missing_docs)]`, `cargo clippy -- -D warnings` and a fixed set of
@@ -796,7 +797,7 @@ pub struct NewMember {
 | `VARCHAR(n)`, `CHAR(n)` (and `CHARACTER [VARYING](n)`) | `length(max = n)`, counted in characters as PostgreSQL counts them |
 | `CHECK (char_length(col) >= n)`, with `character_length` or `length`, any comparison | `length(min = n)` (or `max`); with a declared length, the tighter bounds, and `equal` when they meet |
 | `CHECK (col >= n)`, `>`, `<=`, `<`, the literal on either side, `BETWEEN a AND b`, an `AND` of these, on an integer or float column | `range(...)`. A strict bound on an integer becomes inclusive (`> 0` is `min = 1`); on a float it stays strict (`exclusive_min`) |
-| the same on a `NUMERIC` column (`Decimal`, which `range` can't compare) | `custom(function = "<field>_in_range", code = "range")`, a function generated next to the input |
+| the same on a `NUMERIC` column (`Decimal`, which `range` can't compare) | `custom(function = "<field>_in_range", code = "range")`, a function generated next to the input, whose error carries `range`'s `min`/`max` params |
 | a typed id over text whose column has a length rule | `impl validator::ValidateLength<u64>` on the id, so the rule applies through it, also on foreign keys |
 
 Each rule has an English message naming the column and validator's code
@@ -845,7 +846,7 @@ frameworks:
 
 | The body | Status | `code` | `details` |
 |---|---|---|---|
-| no JSON `Content-Type`, bad JSON syntax, or unreadable (over the framework's size limit, say) | `400` | `MALFORMED_BODY` | none |
+| no JSON `Content-Type`, bad JSON syntax, or unreadable (over the size limit, say) | `400` | `MALFORMED_BODY` | none |
 | JSON that doesn't fit the type (a missing field, a wrong type, an unknown label) | `422` | `VALIDATION_FAILED`, with serde's message | none |
 | breaks a validation rule | `422` | `VALIDATION_FAILED` | validator's errors by field |
 
@@ -884,6 +885,10 @@ same messages. `BodyRejection` (`Malformed { message }` or
 `ValidationFailure(validator::ValidationErrors)`) is public, with `status()`
 and `body()`, so an app that wants another response can match on it, and
 `db::http::validated::<T>(bytes)` applies the same rules outside a handler.
+Each framework's own body-size limit applies, and their defaults differ
+(axum's `DefaultBodyLimit` is 2 MiB, actix-web's `PayloadConfig` 256 KiB): set
+the same limit on both to answer a large body the same way. A body over it
+gets `"the request body is over the size limit"` from either.
 Only JSON bodies are covered: query strings, forms, and query-file
 parameters are not validated. `db/mod.rs` names the `validator`, `axum` and
 `actix-web` dependencies to add. The complete crate is in

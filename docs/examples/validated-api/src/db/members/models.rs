@@ -145,8 +145,11 @@ impl UpdateMember {
 
 /// The range rule of the `balance` column.
 fn balance_in_range(value: &rust_decimal::Decimal) -> Result<(), validator::ValidationError> {
-    if *value < rust_decimal::Decimal::from_i128_with_scale(0, 0) {
-        return Err(validator::ValidationError::new("range"));
+    let min = rust_decimal::Decimal::from_i128_with_scale(0, 0);
+    if *value < min {
+        let mut error = validator::ValidationError::new("range");
+        error.add_param("min".into(), &min);
+        return Err(error);
     }
     Ok(())
 }

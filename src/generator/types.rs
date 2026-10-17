@@ -10,7 +10,7 @@
 use crate::schema::EnumType;
 
 use super::sql::{ident, str_literal};
-use super::{HEADER, MAX_WIDTH, doc_name, push_doc, push_serde_derive};
+use super::{HEADER, MAX_WIDTH, doc_name, push_derives, push_doc, serde_derives};
 
 /// With `serde`, every enum also serializes each variant as its exact
 /// database value.
@@ -42,7 +42,7 @@ fn render_enum_type(output: &mut String, enum_type: &EnumType, serde: bool) {
         &[&format!("The `{}` enum type.", enum_type.display_name())],
     );
     output.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, sqlx::Type)]\n");
-    push_serde_derive(output, serde);
+    push_derives(output, serde_derives(serde));
     output.push_str(&format!(
         "#[sqlx(type_name = {})]\n",
         str_literal(&type_name(enum_type))
@@ -71,7 +71,7 @@ fn render_value_list(output: &mut String, enum_type: &EnumType, column: &str, se
         &[&format!("The values of the `{column}` column.")],
     );
     output.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\n");
-    push_serde_derive(output, serde);
+    push_derives(output, serde_derives(serde));
     output.push_str(&format!("pub enum {name} {{\n"));
     for variant in &enum_type.variants {
         push_doc(output, 4, &[&doc_name(&variant.label)]);

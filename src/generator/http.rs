@@ -7,13 +7,16 @@ use std::path::Path;
 use super::HEADER;
 use crate::Extractor;
 
+/// The module `extractors` generates, and so reserves while they are set.
+pub const MODULE: &str = "http";
+
 /// The `db/http/` files for `extractors`, under `output`; none without
 /// extractors.
 pub fn render(output: &Path, extractors: &[Extractor]) -> Vec<(std::path::PathBuf, String)> {
     if extractors.is_empty() {
         return Vec::new();
     }
-    let dir = output.join("http");
+    let dir = output.join(MODULE);
     let mut files = vec![(dir.join("mod.rs"), render_mod(extractors))];
     if extractors.contains(&Extractor::ActixWeb) {
         files.push((dir.join("actix_web.rs"), format!("{HEADER}\n{ACTIX_WEB}")));
@@ -39,7 +42,7 @@ fn render_mod(extractors: &[Extractor]) -> String {
     output
 }
 
-const MOD_DOC: &str = "//! Validated JSON bodies for HTTP handlers: the Rok error envelope, and the
+const MOD_DOC: &str = "//! Validated bodies for HTTP handlers: the Rok error envelope, and the
 //! rules that turn a request body into a validated body or a
 //! [`BodyRejection`], shared by each framework's extractor.
 ";
@@ -121,6 +124,21 @@ impl BodyRejection {
     pub fn not_json() -> Self {
         BodyRejection::Malformed {
             message: "expected a request with `Content-Type: application/json`".to_owned(),
+        }
+    }
+
+    /// The rejection of a body that could not be read: over the framework's
+    /// size limit when `over_limit`, or cut short. Both frameworks answer it
+    /// with the same message.
+    #[must_use]
+    pub fn unreadable(over_limit: bool) -> Self {
+        let message = if over_limit {
+            "the request body is over the size limit"
+        } else {
+            "the request body could not be read"
+        };
+        BodyRejection::Malformed {
+            message: message.to_owned(),
         }
     }
 
@@ -284,8 +302,8 @@ where
         }
         let bytes = Bytes::from_request(request, state)
             .await
-            .map_err(|rejection| BodyRejection::Malformed {
-                message: rejection.body_text(),
+            .map_err(|rejection| {
+                BodyRejection::unreadable(rejection.status() == StatusCode::PAYLOAD_TOO_LARGE)
             })?;
         super::validated(&bytes).map(Self)
     }
@@ -359,8 +377,10 @@ where
             let Some(bytes) = bytes else {
                 return Err(BodyRejection::not_json());
             };
-            let bytes = bytes.await.map_err(|error| BodyRejection::Malformed {
-                message: error.to_string(),
+            let bytes = bytes.await.map_err(|error| {
+                BodyRejection::unreadable(
+                    error.as_response_error().status_code() == StatusCode::PAYLOAD_TOO_LARGE,
+                )
             })?;
             super::validated(&bytes).map(Self)
         })

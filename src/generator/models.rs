@@ -1,22 +1,9 @@
 use crate::schema::{Column, Table, mentions_generated_type};
 
 use super::{
-    CHAIN_WIDTH, HEADER, SERDE_DERIVES, doc_name, insert_field_type, keys, push_and_chain,
-    push_chain, push_derives, push_doc, push_serde_derive, update_field_type, use_paths,
+    CHAIN_WIDTH, DeriveOptions, HEADER, doc_name, insert_field_type, keys, push_and_chain,
+    push_chain, push_derives, push_doc, serde_derives, update_field_type, use_paths,
 };
-
-/// The derives a create input or update patch adds: serde's, and with
-/// `validate` (ADR 0015) `validator::Validate`.
-fn input_derives(serde: bool, validate: bool) -> Vec<&'static str> {
-    let mut derives = Vec::new();
-    if serde {
-        derives.extend(SERDE_DERIVES);
-    }
-    if validate {
-        derives.push("validator::Validate");
-    }
-    derives
-}
 
 /// The doc line of a row, input, or patch field: the column it holds.
 fn column_doc(column: &Column) -> String {
@@ -72,7 +59,7 @@ where
 }
 ";
 
-pub fn render(table: &Table, serde: bool, validate: bool) -> String {
+pub fn render(table: &Table, derives: DeriveOptions) -> String {
     let mut output = format!("{HEADER}\n");
     let mut imports = keys::id_imports(table, &table.columns, true);
     // A column typed by another module's id (one wrapping an enum) does not
@@ -90,23 +77,23 @@ pub fn render(table: &Table, serde: bool, validate: bool) -> String {
         output.push_str(&use_paths(&imports));
         output.push('\n');
     }
-    keys::render_key_type(&mut output, table, serde, validate);
-    render_row(&mut output, table, serde);
+    keys::render_key_type(&mut output, table, derives);
+    render_row(&mut output, table, derives.serde);
     keys::render_row_key(&mut output, table);
 
     let insert_columns = table.insert_columns();
     if !insert_columns.is_empty() {
-        render_insert_input(&mut output, table, &insert_columns, serde, validate);
+        render_insert_input(&mut output, table, &insert_columns, derives);
     }
 
     let mut update_columns = table.update_columns();
     if !table.primary_key.is_empty() && !update_columns.is_empty() {
-        render_update_patch(&mut output, table, &update_columns, serde, validate);
+        render_update_patch(&mut output, table, &update_columns, derives);
     } else {
         update_columns.clear();
     }
 
-    if validate {
+    if derives.validate {
         let fields = insert_columns.into_iter().chain(update_columns);
         super::validate::push_decimal_checks(&mut output, fields);
     }
@@ -117,7 +104,7 @@ fn render_row(output: &mut String, table: &Table, serde: bool) {
     let doc = format!("A row of the `{}` table.", table.display_name());
     push_doc(output, 0, &[&doc]);
     output.push_str("#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]\n");
-    push_serde_derive(output, serde);
+    push_derives(output, serde_derives(serde));
     output.push_str(&format!("pub struct {} {{\n", table.struct_name));
     for column in &table.columns {
         push_doc(output, 4, &[&column_doc(column)]);
@@ -140,9 +127,9 @@ fn render_insert_input(
     output: &mut String,
     table: &Table,
     columns: &[&Column],
-    serde: bool,
-    validate: bool,
+    derives: DeriveOptions,
 ) {
+    let DeriveOptions { serde, validate } = derives;
     output.push('\n');
     let has_defaults = columns.iter().any(|column| column.is_omittable_on_insert());
     let mut doc = vec!["Input for `create`: every column the caller may supply."];
@@ -165,7 +152,7 @@ fn render_insert_input(
     } else {
         output.push_str("#[derive(Debug, Clone, PartialEq)]\n");
     }
-    push_derives(output, &input_derives(serde, validate));
+    push_derives(output, &derives.input_derives());
     output.push_str(&format!("pub struct New{} {{\n", table.struct_name));
     for column in columns {
         let doc = column_doc(column);
@@ -215,9 +202,9 @@ fn render_update_patch(
     output: &mut String,
     table: &Table,
     columns: &[&Column],
-    serde: bool,
-    validate: bool,
+    derives: DeriveOptions,
 ) {
+    let DeriveOptions { serde, validate } = derives;
     output.push('\n');
     let mut doc = vec!["Partial update for `update`: `None` leaves a column unchanged."];
     if serde {
@@ -229,7 +216,7 @@ fn render_update_patch(
     }
     push_doc(output, 0, &doc);
     output.push_str("#[derive(Debug, Clone, Default, PartialEq)]\n");
-    push_derives(output, &input_derives(serde, validate));
+    push_derives(output, &derives.input_derives());
     if serde {
         output.push_str("#[serde(default)]\n");
     }
@@ -301,7 +288,13 @@ mod tests {
     use crate::schema::{LengthRange, NumberBound, TypedId, ValueRange};
 
     fn render(table: &Table) -> String {
-        super::render(table, false, false)
+        super::render(
+            table,
+            DeriveOptions {
+                serde: false,
+                validate: false,
+            },
+        )
     }
 
     #[test]
@@ -312,7 +305,13 @@ mod tests {
         );
         let serde = "serde::Serialize, serde::Deserialize)]\n";
         assert!(!render(&users).contains("serde"));
-        let rendered = super::render(&users, true, false);
+        let rendered = super::render(
+            &users,
+            DeriveOptions {
+                serde: true,
+                validate: false,
+            },
+        );
         for item in ["", "pub struct User {", "pub struct NewUser {"] {
             assert!(
                 rendered.contains(&format!("{serde}{item}")),
@@ -335,7 +334,13 @@ mod tests {
             vec![column("id", "i64"), column("email", "String")],
             &["id"],
         );
-        let rendered = super::render(&users, true, true);
+        let rendered = super::render(
+            &users,
+            DeriveOptions {
+                serde: true,
+                validate: true,
+            },
+        );
         let derive = "serde::Serialize, serde::Deserialize, validator::Validate)]\n";
         assert!(
             rendered.contains(&format!("{derive}pub struct NewUser {{")),
@@ -348,7 +353,16 @@ mod tests {
             "{rendered}"
         );
         assert_eq!(rendered.matches("validator::Validate").count(), 2);
-        assert!(!super::render(&users, true, false).contains("validat"));
+        assert!(
+            !super::render(
+                &users,
+                DeriveOptions {
+                    serde: true,
+                    validate: false,
+                },
+            )
+            .contains("validat")
+        );
     }
 
     /// A text column's declared length and length checks become a `length`
@@ -376,7 +390,13 @@ mod tests {
             ],
             &["id"],
         );
-        let rendered = super::render(&users, true, true);
+        let rendered = super::render(
+            &users,
+            DeriveOptions {
+                serde: true,
+                validate: true,
+            },
+        );
         let (input, patch) = rendered
             .split_once("pub struct UpdateUser {")
             .expect("a patch");
@@ -409,7 +429,16 @@ mod tests {
             }
         }
         assert_eq!(rendered.matches("#[validate(").count(), 10, "{rendered}");
-        assert!(!super::render(&users, true, false).contains("validat"));
+        assert!(
+            !super::render(
+                &users,
+                DeriveOptions {
+                    serde: true,
+                    validate: false,
+                },
+            )
+            .contains("validat")
+        );
     }
 
     /// A numeric column's range checks become a `range` rule; a decimal one,
@@ -446,7 +475,13 @@ mod tests {
             ],
             &["id"],
         );
-        let rendered = super::render(&users, true, true);
+        let rendered = super::render(
+            &users,
+            DeriveOptions {
+                serde: true,
+                validate: true,
+            },
+        );
         let (input, patch) = rendered
             .split_once("pub struct UpdateUser {")
             .expect("a patch");
@@ -484,10 +519,13 @@ mod tests {
             rendered.ends_with(
                 "/// The range rule of the `price` column.
 fn price_in_range(value: &rust_decimal::Decimal) -> Result<(), validator::ValidationError> {
-    if *value < rust_decimal::Decimal::from_i128_with_scale(0, 0)
-        || *value >= rust_decimal::Decimal::from_i128_with_scale(9995, 2)
-    {
-        return Err(validator::ValidationError::new(\"range\"));
+    let min = rust_decimal::Decimal::from_i128_with_scale(0, 0);
+    let exclusive_max = rust_decimal::Decimal::from_i128_with_scale(9995, 2);
+    if *value < min || *value >= exclusive_max {
+        let mut error = validator::ValidationError::new(\"range\");
+        error.add_param(\"min\".into(), &min);
+        error.add_param(\"exclusive_max\".into(), &exclusive_max);
+        return Err(error);
     }
     Ok(())
 }
@@ -495,7 +533,16 @@ fn price_in_range(value: &rust_decimal::Decimal) -> Result<(), validator::Valida
             ),
             "{rendered}"
         );
-        assert!(!super::render(&users, true, false).contains("validat"));
+        assert!(
+            !super::render(
+                &users,
+                DeriveOptions {
+                    serde: true,
+                    validate: false,
+                },
+            )
+            .contains("validat")
+        );
     }
 
     /// A typed id over text measures the text inside, so a key column, or a
@@ -517,7 +564,13 @@ fn price_in_range(value: &rust_decimal::Decimal) -> Result<(), validator::Valida
             ],
             &["code"],
         );
-        let rendered = super::render(&users, true, true);
+        let rendered = super::render(
+            &users,
+            DeriveOptions {
+                serde: true,
+                validate: true,
+            },
+        );
         assert!(
             rendered.contains(
                 "        std::fmt::Display::fmt(&self.0, formatter)
@@ -547,10 +600,28 @@ impl validator::ValidateLength<u64> for UserId {
                 "{field}\n{rendered}"
             );
         }
-        assert!(!super::render(&users, true, false).contains("validat"));
+        assert!(
+            !super::render(
+                &users,
+                DeriveOptions {
+                    serde: true,
+                    validate: false,
+                },
+            )
+            .contains("validat")
+        );
 
         let numbered = table(vec![typed(column("id", "i64"), "UserId", "users")], &["id"]);
-        assert!(!super::render(&numbered, true, true).contains("ValidateLength"));
+        assert!(
+            !super::render(
+                &numbered,
+                DeriveOptions {
+                    serde: true,
+                    validate: true,
+                },
+            )
+            .contains("ValidateLength")
+        );
     }
 
     /// Plain serde reads both an absent field and `null` as `None`; the
@@ -566,7 +637,13 @@ impl validator::ValidateLength<u64> for UserId {
             ],
             &["id"],
         );
-        let rendered = super::render(&users, true, false);
+        let rendered = super::render(
+            &users,
+            DeriveOptions {
+                serde: true,
+                validate: false,
+            },
+        );
         let patch = rendered.split("pub struct UpdateUser {").nth(1).unwrap();
         assert!(patch.contains(
             "    #[serde(skip_serializing_if = \"Option::is_none\")]\n    pub email: Option<String>,\n"

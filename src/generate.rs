@@ -245,17 +245,6 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The resource directories an earlier run generated for tables the schema
-/// still defines but this run skips as unsupported (`--lenient`, or a table
-/// outside `--resource`), with the tables' last good shapes. They are kept as
-/// they are rather than removed as stale, and the run plans the other files
-/// against those shapes, so the kept files still compile (ADR 0001).
-///
-/// A table the schema no longer defines (dropped, or never created) has no
-/// failure, so its directory stays stale. So does one with no last good
-/// shape (it failed at its `CREATE TABLE`, or its value lists cannot be
-/// generated), or whose last good shape uses an enum that no longer
-/// generates: the files kept for it could not compile.
 /// Fails a run whose options need ones it doesn't set (ADR 0015):
 /// `validate` needs `serde`, and extractors need `validate`.
 fn check_options(config: &Config) -> anyhow::Result<()> {
@@ -273,6 +262,17 @@ fn check_options(config: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The resource directories an earlier run generated for tables the schema
+/// still defines but this run skips as unsupported (`--lenient`, or a table
+/// outside `--resource`), with the tables' last good shapes. They are kept as
+/// they are rather than removed as stale, and the run plans the other files
+/// against those shapes, so the kept files still compile (ADR 0001).
+///
+/// A table the schema no longer defines (dropped, or never created) has no
+/// failure, so its directory stays stale. So does one with no last good
+/// shape (it failed at its `CREATE TABLE`, or its value lists cannot be
+/// generated), or whose last good shape uses an enum that no longer
+/// generates: the files kept for it could not compile.
 fn kept_resources(
     output_dir: &Path,
     failures: &[parser::TableFailure],

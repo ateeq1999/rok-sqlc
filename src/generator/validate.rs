@@ -2,7 +2,7 @@
 //! `derive = ["validate"]` puts on create input and update patch fields,
 //! derived from each column's declared length and range checks.
 
-use crate::schema::{Column, ValueRange};
+use crate::schema::{BaseType, Column, ValueRange};
 
 use super::doc_name;
 use super::emit::MAX_WIDTH;
@@ -24,27 +24,55 @@ const ATTR_FN_LIKE_WIDTH: usize = 70;
 /// attribute. Patch fields (`Option<T>`, `Option<Option<T>>`) are checked
 /// only when a value is present, which `validator` does for any `Option`.
 pub fn push_field_rule(output: &mut String, column: &Column) {
-    if let Some((kind, args)) = length_rule(column).or_else(|| range_rule(column)) {
-        push_rule(output, kind, &args);
+    if let Some(rule) = length_rule(column).or_else(|| range_rule(column)) {
+        push_rule(output, rule.kind.name(), &rule.args);
     }
 }
 
-/// The type `rust_decimal::Decimal`, which `validator`'s `range` cannot
-/// compare: its range rule is a `custom` one, checked by a function
-/// [`push_decimal_checks`] renders.
+/// A validation rule: its kind and its arguments, `message` last.
+struct Rule {
+    kind: RuleKind,
+    args: Vec<String>,
+}
+
+/// The kinds of [`Rule`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuleKind {
+    /// validator's `length`.
+    Length,
+    /// validator's `range`.
+    Range,
+    /// A decimal column's range: a `custom` rule calling the function
+    /// [`push_decimal_checks`] renders, since validator's `range` cannot
+    /// compare a `rust_decimal::Decimal`.
+    DecimalRange,
+}
+
+impl RuleKind {
+    /// The rule's name inside `#[validate(...)]`.
+    fn name(self) -> &'static str {
+        match self {
+            RuleKind::Length => "length",
+            RuleKind::Range => "range",
+            RuleKind::DecimalRange => "custom",
+        }
+    }
+}
+
+/// `rust_decimal::Decimal`, as the functions checking a decimal column's
+/// range rule write it.
 const DECIMAL: &str = "rust_decimal::Decimal";
 
 /// The `range` rule of a numeric column, from its range checks. A typed id
 /// field has none: `validator` cannot compare the id with a number.
-fn range_rule(column: &Column) -> Option<(&'static str, Vec<String>)> {
+fn range_rule(column: &Column) -> Option<Rule> {
     let range = column.value_range.as_ref()?;
     if column.typed_id.is_some() {
         return None;
     }
-    let float = matches!(column.sqlx_type.as_str(), "f32" | "f64");
-    let integer = matches!(column.sqlx_type.as_str(), "i16" | "i32" | "i64");
-    let decimal = column.sqlx_type == DECIMAL;
-    if !(float || integer || decimal) {
+    let base = column.base_type();
+    let (float, decimal) = (base == BaseType::Float, base == BaseType::Decimal);
+    if !(float || decimal || base == BaseType::Integer) {
         return None;
     }
     let mut args = Vec::new();
@@ -69,7 +97,12 @@ fn range_rule(column: &Column) -> Option<(&'static str, Vec<String>)> {
     }
     let message = format!("{} must be {}", column.sql_name, range_phrase(range));
     args.push(format!("message = {}", str_literal(&message)));
-    Some((if decimal { "custom" } else { "range" }, args))
+    let kind = if decimal {
+        RuleKind::DecimalRange
+    } else {
+        RuleKind::Range
+    };
+    Some(Rule { kind, args })
 }
 
 /// `"between 1 and 5"`, `"at least 0"`, `"greater than 0 and at most 1"`.
@@ -113,7 +146,7 @@ pub fn push_decimal_checks<'a>(output: &mut String, columns: impl IntoIterator<I
     let mut done: Vec<&str> = Vec::new();
     for column in columns {
         if done.contains(&column.sql_name.as_str())
-            || range_rule(column).is_none_or(|(kind, _)| kind != "custom")
+            || range_rule(column).is_none_or(|rule| rule.kind != RuleKind::DecimalRange)
         {
             continue;
         }
@@ -136,19 +169,35 @@ pub fn push_decimal_checks<'a>(output: &mut String, columns: impl IntoIterator<I
                 "fn {name}(\n    value: &{DECIMAL},\n) -> Result<(), validator::ValidationError> {{\n"
             ));
         }
+        // Each bound is a local named as validator's `range` names its
+        // param, so the error carries the same `params`.
+        let mut bounds = Vec::new();
         let mut terms = Vec::new();
-        if let Some(min) = &range.min {
-            let op = if min.exclusive { "<=" } else { "<" };
-            terms.push(format!("*value {op} {}", decimal_expr(&min.value)));
-        }
-        if let Some(max) = &range.max {
-            let op = if max.exclusive { ">=" } else { ">" };
-            terms.push(format!("*value {op} {}", decimal_expr(&max.value)));
+        for (name, bound, outside, outside_exclusive) in [
+            ("min", &range.min, "<", "<="),
+            ("max", &range.max, ">", ">="),
+        ] {
+            let Some(bound) = bound else { continue };
+            let (param, op) = if bound.exclusive {
+                (format!("exclusive_{name}"), outside_exclusive)
+            } else {
+                (name.to_owned(), outside)
+            };
+            output.push_str(&format!(
+                "    let {param} = {};\n",
+                decimal_expr(&bound.value)
+            ));
+            terms.push(format!("*value {op} {param}"));
+            bounds.push(param);
         }
         push_or_condition(output, &terms);
-        output.push_str(
-            "        return Err(validator::ValidationError::new(\"range\"));\n    }\n    Ok(())\n}\n",
-        );
+        output.push_str("        let mut error = validator::ValidationError::new(\"range\");\n");
+        for param in &bounds {
+            output.push_str(&format!(
+                "        error.add_param(\"{param}\".into(), &{param});\n"
+            ));
+        }
+        output.push_str("        return Err(error);\n    }\n    Ok(())\n}\n");
     }
 }
 
@@ -198,7 +247,7 @@ fn push_rule(output: &mut String, kind: &str, args: &[String]) {
 /// The `length` rule of a text column: its declared length and length
 /// checks, the tightest bounds when both apply. Lengths count characters,
 /// as both PostgreSQL and `validator` count them.
-fn length_rule(column: &Column) -> Option<(&'static str, Vec<String>)> {
+fn length_rule(column: &Column) -> Option<Rule> {
     if !holds_text(column) {
         return None;
     }
@@ -229,13 +278,16 @@ fn length_rule(column: &Column) -> Option<(&'static str, Vec<String>)> {
         ),
     };
     args.push(format!("message = {}", str_literal(&message)));
-    Some(("length", args))
+    Some(Rule {
+        kind: RuleKind::Length,
+        args,
+    })
 }
 
 /// Whether the field holds the column's text: a `String`, or a typed id
 /// over one, which implements `validator::ValidateLength`.
 fn holds_text(column: &Column) -> bool {
-    column.sqlx_type == "String"
+    column.base_type() == BaseType::Text
 }
 
 /// `"1 character"`, `"80 characters"`.

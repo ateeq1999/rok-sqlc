@@ -165,6 +165,27 @@ impl BaseType {
                 | BaseType::TimestampTz
         )
     }
+
+    /// The inclusive bounds of the values an [`BaseType::Integer`] base type
+    /// (`sqlx_type`) holds; `None` for any other type.
+    pub fn integer_bounds(sqlx_type: &str) -> Option<(i128, i128)> {
+        match sqlx_type {
+            "i16" => Some((i128::from(i16::MIN), i128::from(i16::MAX))),
+            "i32" => Some((i128::from(i32::MIN), i128::from(i32::MAX))),
+            "i64" => Some((i128::from(i64::MIN), i128::from(i64::MAX))),
+            _ => None,
+        }
+    }
+
+    /// The binary mantissa digits of a [`BaseType::Float`] base type
+    /// (`sqlx_type`); `None` for any other type.
+    pub fn float_mantissa_digits(sqlx_type: &str) -> Option<u32> {
+        match sqlx_type {
+            "f32" => Some(f32::MANTISSA_DIGITS),
+            "f64" => Some(f64::MANTISSA_DIGITS),
+            _ => None,
+        }
+    }
 }
 
 /// Whether `rust_type` is a generated enum's path, `types::X`.
