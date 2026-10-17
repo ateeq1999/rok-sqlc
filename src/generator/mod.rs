@@ -123,7 +123,7 @@ pub fn plan_files_with_queries(
     for table in tables {
         let dir = output.join(&table.module_name);
         let filter = search::render_filter(table, tables);
-        let loaders = relationships::render(table, tables);
+        let loaders = relationships::render(table, tables, serde);
         files.push((
             dir.join("mod.rs"),
             render_resource_mod(table, filter.is_some(), loaders.is_some()),

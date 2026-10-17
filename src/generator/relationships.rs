@@ -603,8 +603,9 @@ fn describe(table: &Table, relationship: &Relationship) -> String {
 }
 
 /// Renders `table`'s `relationships.rs`, or `None` when it has no
-/// relationship. `tables` holds every table generated with it.
-pub fn render(table: &Table, tables: &[Table]) -> Option<String> {
+/// relationship. `tables` holds every table generated with it; `serde` adds
+/// serde derives to the joined-read structs.
+pub fn render(table: &Table, tables: &[Table], serde: bool) -> Option<String> {
     if table.relationships.is_empty() {
         return None;
     }
@@ -631,7 +632,7 @@ pub fn render(table: &Table, tables: &[Table]) -> Option<String> {
         loader.render(&mut output);
     }
     for join in &joins {
-        join.render(&mut output);
+        join.render(&mut output, serde);
     }
     Some(output)
 }

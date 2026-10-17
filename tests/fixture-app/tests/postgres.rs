@@ -2975,6 +2975,14 @@ async fn joined_read_fetches_a_row_with_its_parent_in_one_query(pool: &PgPool) {
     assert_eq!(products_after - products_before, 1, "one statement");
     assert_eq!(categories_after - categories_before, 1, "one statement");
 
+    // With `derive = ["serde"]`, the joined struct goes to JSON and back too.
+    let json = serde_json::to_value(&joined).unwrap();
+    assert_eq!(json["category"]["name"], category.name.as_str());
+    assert_eq!(
+        serde_json::from_value::<ProductWithCategory>(json).unwrap(),
+        joined
+    );
+
     // The category is not optional: the foreign key is NOT NULL and
     // categories are never hidden.
     let ProductWithCategory {

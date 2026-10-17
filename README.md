@@ -444,9 +444,10 @@ pedantic lints (see [ADR 0013](docs/adr/0013-generated-code-quality-bar.md)),
 and it is rustfmt-clean. It never forces your crate to relax its lints.
 
 **Serde.** With `derive = ["serde"]` (or `-d serde`), rows, typed ids
-(transparent), key structs, enums (by database label), inputs, patches, and
-query rows and parameters derive `Serialize` and `Deserialize`. Without it,
-generated code doesn't mention serde.
+(transparent), key structs, enums (by database label), inputs, patches,
+joined-read structs (`ProductWithCategory`), and query rows and parameters
+derive `Serialize` and `Deserialize`. Without it, generated code doesn't
+mention serde.
 
 ## Writing query files
 
@@ -896,8 +897,7 @@ fails. With `--resource`, only that table's problems count.
   soft-delete convention's `WHERE deleted_at IS NULL` unique indexes,
   because PostgreSQL infers a partial index only from a target that repeats
   its condition, which the query parser can't read.
-- Joined-read structs (`ProductWithCategory`, the `…With…` structs) don't get
-  serde derives, and neither do filters and search types.
+- Filters and search types don't get serde derives.
 - A serde-deserialized update patch can't set a column to `NULL`: `None` and
   `Some(None)` both serialize to `null`.
 - Relationship filters nest at most `MAX_RELATIONSHIP_DEPTH` (4) deep. Deeper

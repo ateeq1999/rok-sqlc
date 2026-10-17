@@ -16,6 +16,7 @@ use crate::schema::{Column, Relationship, RelationshipKind, Table};
 use super::sql::{ident, str_literal, table_ref};
 use super::{
     MAX_WIDTH, StaticQuery, doc_name, keys, param_name, param_type, push_doc, push_fn_head,
+    push_serde_derive,
 };
 
 /// The alias of the table read.
@@ -169,13 +170,15 @@ impl<'a> Join<'a> {
         }
     }
 
-    pub fn render(&self, output: &mut String) {
-        self.render_struct(output);
+    /// Renders the joined struct (with serde derives when `serde`), its
+    /// `FromRow`, and `get_with_<relationship>`.
+    pub fn render(&self, output: &mut String, serde: bool) {
+        self.render_struct(output, serde);
         self.render_from_row(output);
         self.render_function(output);
     }
 
-    fn render_struct(&self, output: &mut String) {
+    fn render_struct(&self, output: &mut String, serde: bool) {
         let name = format!("`{}`", self.relationship.name);
         output.push('\n');
         push_doc(
@@ -192,6 +195,7 @@ impl<'a> Join<'a> {
             ],
         );
         output.push_str("#[derive(Debug, Clone, PartialEq)]\n");
+        push_serde_derive(output, serde);
         output.push_str(&format!("pub struct {} {{\n", self.struct_name()));
         push_doc(output, 4, &["The row read."]);
         output.push_str(&format!(

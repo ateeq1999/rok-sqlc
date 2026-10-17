@@ -218,8 +218,8 @@ against earlier development snapshots.
 - `derive = ["serde"]` (config file, JSON payload, `-d/--derive serde`, or
   `Config::derive` with `rok_sqlc::Derive::Serde`) adds
   `serde::Serialize`/`Deserialize` to rows, typed ids (transparent), key
-  structs, enums (by database label), inputs, patches, and query rows and
-  parameters, and adds `serde` to the dependency hints. Without it,
+  structs, enums (by database label), inputs, patches, joined-read structs
+  (`ProductWithCategory`), and query rows and parameters, and adds `serde` to the dependency hints. Without it,
   generated code does not mention `serde`.
 - Short aliases for every command and flag; `--help` and `--version` exit 0.
 - Crate metadata, license files, this changelog, and CI on Linux (Rust 1.88,
