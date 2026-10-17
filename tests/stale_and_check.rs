@@ -477,7 +477,7 @@ fn check_ignores_line_endings_of_generated_files() -> Result<()> {
 
 // --- lenient runs keep skipped tables' files ---------------------------------
 
-const BREAK_POSTS: &str = "ALTER TABLE posts ADD COLUMN duration INTERVAL;\n";
+const BREAK_POSTS: &str = "ALTER TABLE posts ADD COLUMN duration INET;\n";
 
 /// A migrations directory and an output directory in a temp dir, driven
 /// through the real binary.

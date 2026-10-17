@@ -38,6 +38,10 @@ async fn fresh_database() -> Option<PgPool> {
         .execute(&pool)
         .await
         .expect("apply fixture schema");
+    sqlx::raw_sql(rok_sqlc_fixture_app::plain_db::schema::SCHEMA_SQL)
+        .execute(&pool)
+        .await
+        .expect("apply the fixture schema generated without serde");
     Some(pool)
 }
 
@@ -94,6 +98,151 @@ async fn generated_crud_against_postgres() {
     soft_delete_join_rows_are_restored_not_duplicated(&pool).await;
     plain_join_table_deletes_detached_pairs(&pool).await;
     many_to_many_filters_go_through_the_join_table(&pool).await;
+    interval_bytea_and_timetz_round_trip(&pool).await;
+}
+
+/// `INTERVAL`, `BYTEA`, and `TIME WITH TIME ZONE` columns (and their arrays)
+/// round-trip through create, get, update, and search, and query-file casts
+/// to them bind and decode the mapped types.
+async fn interval_bytea_and_timetz_round_trip(pool: &PgPool) {
+    use chrono::{FixedOffset, NaiveTime};
+    use rok_sqlc_fixture_app::plain_db;
+    use plain_db::search::{Equality, Page, Sort};
+    use plain_db::timed_badges::filter::{TimedBadgeFilter, TimedBadgeSortKey};
+    use plain_db::timed_badges::models::{NewTimedBadge, UpdateTimedBadge};
+    use plain_db::timed_badges::{read, write};
+    use sqlx::postgres::types::{PgInterval, PgTimeTz};
+
+    let interval = |days, microseconds| PgInterval {
+        months: 1,
+        days,
+        microseconds,
+    };
+    let time_tz = |hour, offset_hours| PgTimeTz {
+        time: NaiveTime::from_hms_opt(hour, 30, 0).unwrap(),
+        offset: FixedOffset::east_opt(offset_hours * 3600).unwrap(),
+    };
+
+    let created = write::create(
+        pool,
+        NewTimedBadge {
+            span: interval(2, 1_500_000),
+            breaks: Some(vec![interval(0, 60_000_000), interval(1, 0)]),
+            badge: vec![0, 159, 146, 150, 255],
+            photos: Some(vec![vec![1, 2], Vec::new()]),
+            opens: time_tz(9, 2),
+            closes: None,
+            slots: Some(vec![time_tz(10, -5)]),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(created.span, interval(2, 1_500_000));
+    assert_eq!(created.badge, [0, 159, 146, 150, 255]);
+    assert_eq!(created.photos, Some(vec![vec![1, 2], Vec::new()]));
+    assert_eq!(created.opens, time_tz(9, 2));
+    assert_eq!(created.slots, Some(vec![time_tz(10, -5)]));
+    let other = write::create(
+        pool,
+        NewTimedBadge {
+            span: interval(5, 0),
+            breaks: None,
+            badge: vec![7],
+            photos: None,
+            opens: time_tz(8, 0),
+            closes: Some(time_tz(17, 0)),
+            slots: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        read::get_by_id(pool, created.id).await.unwrap().as_ref(),
+        Some(&created)
+    );
+    // A `BYTEA` lookup borrows its key as a byte slice.
+    let by_badge = read::get_by_badge(pool, &[7]).await.unwrap();
+    assert_eq!(by_badge.map(|row| row.id), Some(other.id));
+
+    let updated = write::update(
+        pool,
+        created.id,
+        UpdateTimedBadge {
+            span: Some(interval(3, 0)),
+            badge: Some(vec![42; 3]),
+            closes: Some(Some(time_tz(18, 2))),
+            photos: Some(None),
+            ..UpdateTimedBadge::default()
+        },
+    )
+    .await
+    .unwrap()
+    .expect("the row exists");
+    assert_eq!(updated.span, interval(3, 0));
+    assert_eq!(updated.badge, [42, 42, 42]);
+    assert_eq!(updated.closes, Some(time_tz(18, 2)));
+    assert_eq!(updated.photos, None);
+    assert_eq!(updated.breaks, created.breaks);
+
+    let found = |filter| async move {
+        read::search(pool, filter, Sort::asc(TimedBadgeSortKey::Span), Page::first(10))
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|row| row.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        found(TimedBadgeFilter {
+            span: vec![Equality::Eq(interval(5, 0))],
+            ..TimedBadgeFilter::default()
+        })
+        .await,
+        [other.id]
+    );
+    assert_eq!(
+        found(TimedBadgeFilter {
+            badge: vec![Equality::In(vec![vec![42; 3], vec![9]])],
+            ..TimedBadgeFilter::default()
+        })
+        .await,
+        [created.id]
+    );
+    assert_eq!(
+        found(TimedBadgeFilter {
+            opens: vec![Equality::Ne(time_tz(9, 2))],
+            closes_is_null: Some(false),
+            ..TimedBadgeFilter::default()
+        })
+        .await,
+        [other.id]
+    );
+    // Sorting by an interval column orders by PostgreSQL's interval order.
+    assert_eq!(
+        found(TimedBadgeFilter::default()).await,
+        [created.id, other.id]
+    );
+
+    let rows = plain_db::queries::badges_at_least(pool, interval(0, 0), interval(3, 0), &[7])
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, created.id);
+    assert_eq!(rows[0].badge, [42, 42, 42]);
+    // `$1` adds its month too.
+    assert_eq!(
+        rows[0].extended,
+        Some(PgInterval {
+            months: 2,
+            days: 3,
+            microseconds: 0,
+        })
+    );
+    let opening = plain_db::queries::badge_opening(pool, time_tz(8, 0))
+        .await
+        .unwrap();
+    assert_eq!(opening, Some(time_tz(8, 0)));
 }
 
 /// A category's typed id goes straight into a product's foreign key field

@@ -447,7 +447,10 @@ and it is rustfmt-clean. It never forces your crate to relax its lints.
 (transparent), key structs, enums (by database label), inputs, patches,
 joined-read structs (`ProductWithCategory`), and query rows and parameters
 derive `Serialize` and `Deserialize`. Without it, generated code doesn't
-mention serde.
+mention serde. SQLx's `PgInterval` and `PgTimeTz` implement no serde traits,
+so with serde a table with an `INTERVAL` or `TIME WITH TIME ZONE` column, or
+a query row or parameter struct holding one, fails the run with an error
+naming it.
 
 ## Writing query files
 
@@ -835,6 +838,9 @@ database.
 | `TIME` | `chrono::NaiveTime` |
 | `TIMESTAMP` | `chrono::NaiveDateTime` |
 | `TIMESTAMPTZ` | `chrono::DateTime<chrono::Utc>` |
+| `TIME WITH TIME ZONE`, `TIMETZ` | `sqlx::postgres::types::PgTimeTz` |
+| `INTERVAL` | `sqlx::postgres::types::PgInterval` |
+| `BYTEA` | `Vec<u8>` (`&[u8]` for parameters) |
 | `NUMERIC`, `DECIMAL` (at most 28 digits) | `rust_decimal::Decimal` |
 | `JSON`, `JSONB` | `serde_json::Value` |
 | `T[]` | `Vec<T>` |
@@ -842,7 +848,11 @@ database.
 | text column with `CHECK (col IN ('a', …))` | an enum in `db::types` (`InvoiceStatus`) |
 
 A nullable column is wrapped in `Option`, and a primary key column uses its
-typed id.
+typed id. SQLx implements no `PartialOrd` for `PgInterval` or `PgTimeTz`, so
+those columns get equality filters, as `BYTEA` columns do. `PgTimeTz` holds
+`chrono` types, or the `time` crate's types when SQLx's `time` feature is on.
+SQLx decodes `INTERVAL` only from prepared statements, which is what the
+generated code uses.
 
 **Statements rok-sqlc reads:**
 
@@ -883,7 +893,8 @@ problems count.
 
 | Rejected | Why |
 |---|---|
-| Column types not in the table above (`INTERVAL`, `BYTEA`, `TIME WITH TIME ZONE`, network types, …) | There is no chosen Rust mapping yet, and rok-sqlc doesn't guess one. |
+| Column types not in the table above (network types, `MONEY`, ranges, …) | There is no chosen Rust mapping yet, and rok-sqlc doesn't guess one. |
+| `INTERVAL` and `TIME WITH TIME ZONE` with `derive = ["serde"]` | SQLx's `PgInterval` and `PgTimeTz` implement no serde traits, so the serde derives wouldn't compile. The whole run fails, even with `--lenient`. |
 | `NUMERIC(p, s)` with `p` > 28 | `rust_decimal` holds 28 significant digits, so the value would fail to decode at runtime. |
 | Other `ALTER TABLE` clauses (`RENAME TO`, `ALTER COLUMN … TYPE` to an unsupported type, `DROP NOT NULL` on a primary key column, …) | The table's shape after the change is unknown, so the table fails. |
 | Other `ALTER TYPE` clauses | The tables that use the type fail. |
@@ -900,8 +911,10 @@ problems count.
 
 **Known limitations in 0.1:**
 
-- `INTERVAL`, `BYTEA`, `TIME WITH TIME ZONE` and other unmapped types are
-  unsupported, in tables and in query casts (`$1::interval`).
+- Types outside the type table (network types, `MONEY`, ranges, …) are
+  unsupported, in tables and in query casts (`$1::inet`).
+- `INTERVAL` and `TIME WITH TIME ZONE` columns can't be generated with
+  `derive = ["serde"]`.
 - Casts to enum types in query files (`$1::product_status`) are rejected.
   Compare against the enum column instead (`status = $1`); that infers
   `types::ProductStatus`.

@@ -16,7 +16,9 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use crate::queries::AnalyzedQuery;
-use crate::schema::{BaseType, Column, EnumType, Table, mentions_generated_type};
+use crate::schema::{
+    BaseType, Column, EnumType, Table, lacks_serde, mentions_generated_type, rust_type,
+};
 use crate::{Config, Conventions, Derive};
 
 /// rustfmt's default `max_width`; generated code is laid out to be
@@ -149,6 +151,9 @@ pub fn plan_files_with_queries(
 ) -> Result<Vec<(PathBuf, String)>, String> {
     let (conventions, output) = (&config.conventions, config.output.as_path());
     let serde = config.derive.contains(&Derive::Serde);
+    if serde {
+        check_serde(tables, queries)?;
+    }
     let mut files = Vec::new();
     let resolved = prepare(
         tables,
@@ -212,6 +217,56 @@ pub fn plan_files_with_queries(
     files.push((output.join("schema.rs"), render_schema_snapshot(schema_sql)));
 
     Ok(files)
+}
+
+/// Checks that every type the serde-deriving items hold implements serde's
+/// traits: table columns (rows, inputs, patches, keys), query row columns,
+/// and the fields of query parameter structs. Returns the first problem,
+/// naming the column or parameter.
+fn check_serde(tables: &[Table], queries: QueriesModule<'_>) -> Result<(), String> {
+    let problem = |subject: String, rust_type: &str| {
+        lacks_serde(rust_type).then(|| {
+            format!(
+                "{subject} maps to `{rust_type}`, which implements no serde traits, so \
+                 `derive = [\"serde\"]` cannot derive `Serialize`/`Deserialize` for it; \
+                 drop the serde derive or the column"
+            )
+        })
+    };
+    for table in tables {
+        for column in &table.columns {
+            let subject = format!("column `{}` of `{}`", column.sql_name, table.display_name());
+            if let Some(problem) = problem(subject, &column.sqlx_type) {
+                return Err(problem);
+            }
+        }
+    }
+    let analyzed: Vec<&AnalyzedQuery> = match queries {
+        QueriesModule::Generate(analyzed) => analyzed.iter().collect(),
+        QueriesModule::GenerateModules(modules) => {
+            modules.iter().flat_map(|module| &module.queries).collect()
+        }
+        QueriesModule::None | QueriesModule::Keep => Vec::new(),
+    };
+    for query in analyzed {
+        if queries::uses_params_struct(query) {
+            for param in &query.params {
+                let subject = format!("parameter `{}` of query `{}`", param.name, query.name);
+                if let Some(problem) = problem(subject, &param.rust_type) {
+                    return Err(problem);
+                }
+            }
+        }
+        if let crate::queries::ResultShape::Row(columns) = &query.result {
+            for column in columns {
+                let subject = format!("column `{}` of query `{}`", column.sql_name, query.name);
+                if let Some(problem) = problem(subject, &column.rust_type) {
+                    return Err(problem);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn render_resource_mod(table: &Table, has_filter: bool, has_relationships: bool) -> String {
@@ -282,17 +337,18 @@ pub fn param_name(column: &Column) -> String {
     }
 }
 
-/// The type a key or lookup parameter takes a column's value as: text is
-/// borrowed (`&str`, or `&` its typed id) because binding it needs no
-/// ownership; every other value, `Copy` keys included, is taken by value.
+/// The type a key or lookup parameter takes a column's value as: text and
+/// bytes are borrowed (`&str` or `&` its typed id, `&[u8]`) because binding
+/// them needs no ownership; every other value, `Copy` keys included, is
+/// taken by value.
 pub fn param_type(column: &Column) -> String {
-    if column.base_type() == BaseType::Text {
-        match &column.typed_id {
+    match column.base_type() {
+        BaseType::Text => match &column.typed_id {
             Some(id) => format!("&{}", id.name),
             None => "&str".to_owned(),
-        }
-    } else {
-        column.value_type().to_owned()
+        },
+        BaseType::Bytes => "&[u8]".to_owned(),
+        _ => column.value_type().to_owned(),
     }
 }
 
@@ -573,7 +629,9 @@ pub enum UpdateOutcome<T> {
 fn dependency_hints(types: &[String], serde: bool) -> String {
     let uses = |needle: &str| types.iter().any(|rust_type| rust_type.contains(needle));
     let uses_uuid = uses("uuid::");
-    let uses_chrono = uses("chrono::");
+    // `PgTimeTz` is encoded and decoded through SQLx's `chrono` feature, and
+    // its default parameters are `chrono` types.
+    let uses_chrono = uses("chrono::") || uses(rust_type::TIME_TZ);
     let uses_serde_json = uses("serde_json::");
     let uses_rust_decimal = uses("rust_decimal::");
 
