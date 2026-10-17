@@ -7,6 +7,12 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+### Added
+
+- The Release workflow publishes the crate to crates.io once every binary
+  builds, using the `CARGO_REGISTRY_TOKEN` repository secret. A version
+  crates.io already has is skipped, so running a tag again doesn't fail.
+
 ## [0.3.0] - 2026-10-17
 
 Validated bodies and HTTP extractors (ADR 0015). A run without the new
