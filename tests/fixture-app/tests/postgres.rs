@@ -66,7 +66,9 @@ async fn generated_crud_against_postgres() {
     query_modules_per_file(&pool).await;
     search_filters_and_pages(&pool).await;
     altered_table_has_its_final_columns(&pool).await;
+    altered_columns_round_trip_in_their_final_shape(&pool).await;
     enums_keep_their_exact_labels(&pool).await;
+    renamed_enum_types_use_their_new_name(&pool).await;
     value_list_columns_round_trip(&pool).await;
     typed_ids_flow_from_rows_to_foreign_keys(&pool).await;
     enum_keys_get_a_typed_id(&pool).await;
@@ -76,6 +78,7 @@ async fn generated_crud_against_postgres() {
     versioned_updates_detect_concurrent_edits(&pool).await;
     text_keys_are_borrowed(&pool).await;
     rows_round_trip_through_json(&pool).await;
+    patches_from_json_tell_absent_from_null(&pool).await;
     soft_deleted_rows_are_hidden_restored_and_removed(&pool).await;
     tenant_rows_are_invisible_to_other_tenants(&pool).await;
     a_tenant_in_the_primary_key_is_passed_once(&pool).await;
@@ -504,6 +507,56 @@ async fn search_filters_and_pages(pool: &PgPool) {
     null_checks_and_equality_filters(pool, category).await;
     sorting_is_allowlisted_and_stable(pool, category).await;
     keyset_pagination_follows_the_primary_key(pool, category).await;
+    filters_round_trip_through_json(pool, category).await;
+}
+
+/// With `derive = ["serde"]`, a filter, its sort, and its conditions
+/// (including a relationship filter) go to JSON and back, and the filter
+/// read back finds the same rows.
+async fn filters_round_trip_through_json(pool: &PgPool, category: CategoryId) {
+    use db::categories::filter::CategoryFilter;
+    use db::products::filter::{ProductFilter, ProductSortKey};
+    use db::products::read::search;
+    use db::search::{Equality, Ordered, Page, Sort, Text};
+
+    let filter = ProductFilter {
+        category_id: vec![Ordered::Eq(category)],
+        price_cents: vec![Ordered::Between(50, 350), Ordered::Ne(200)],
+        name: vec![Text::Contains("l".to_owned())],
+        discontinued: vec![Equality::Eq(false)],
+        weight_kg_is_null: Some(false),
+        category: Some(Box::new(CategoryFilter {
+            name: vec![Text::Eq("search".to_owned())],
+            ..Default::default()
+        })),
+        ..Default::default()
+    };
+    let sort = Sort::desc(ProductSortKey::PriceCents);
+    let expected = search(pool, filter.clone(), sort, Page::first(10))
+        .await
+        .unwrap();
+    assert_eq!(skus(&expected), ["S-3", "S-1"]);
+
+    let json = serde_json::to_string(&(&filter, &sort)).unwrap();
+    let (decoded, decoded_sort): (ProductFilter, Sort<ProductSortKey>) =
+        serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, filter);
+    assert_eq!(decoded_sort, sort);
+    let found = search(pool, decoded, decoded_sort, Page::first(10))
+        .await
+        .unwrap();
+    assert_eq!(found, expected);
+
+    // Fields left out of the JSON keep their defaults.
+    let sparse: ProductFilter =
+        serde_json::from_str(r#"{"price_cents": [{"Ge": 400}]}"#).unwrap();
+    assert_eq!(
+        sparse,
+        ProductFilter {
+            price_cents: vec![Ordered::Ge(400)],
+            ..Default::default()
+        }
+    );
 }
 
 async fn keyset_pagination_follows_the_primary_key(pool: &PgPool, category: CategoryId) {
@@ -1370,11 +1423,59 @@ async fn altered_table_has_its_final_columns(pool: &PgPool) {
     );
 }
 
+/// `meter_readings` is reshaped by alter_schema.sql's `ALTER COLUMN`
+/// changes; the generated code binds and reads every column in its final
+/// shape: widened `BIGINT` key and amount, a `TEXT` unique key, a `label`
+/// with no default, a nullable `note`, and a defaulted `views`.
+async fn altered_columns_round_trip_in_their_final_shape(pool: &PgPool) {
+    use db::meter_readings::models::{MeterReading, MeterReadingId, NewMeterReading};
+    use db::meter_readings::{read, write};
+
+    // Both exceed `i32`, which the columns were created as.
+    let id = MeterReadingId::from(5_000_000_001_i64);
+    let amount = 9_000_000_000_i64;
+    let created = write::create(
+        pool,
+        NewMeterReading {
+            id,
+            code: Some("M-1".to_owned()),
+            amount,
+            label: "kitchen".to_owned(),
+            note: None,
+            views: None,
+        },
+    )
+    .await
+    .unwrap();
+    let expected = MeterReading {
+        id,
+        code: Some("M-1".to_owned()),
+        amount,
+        label: "kitchen".to_owned(),
+        note: None,
+        views: 0,
+    };
+    assert_eq!(created, expected);
+    assert_eq!(read::get_by_id(pool, id).await.unwrap(), Some(expected.clone()));
+    assert_eq!(read::get_by_code(pool, "M-1").await.unwrap(), Some(expected));
+
+    // `label` lost its default, so the database now requires it, as the
+    // generated `NewMeterReading` does.
+    let missing_label = sqlx::query("INSERT INTO meter_readings (id, amount, views) VALUES (1, 1, 1)")
+        .execute(pool)
+        .await
+        .unwrap_err();
+    assert!(
+        missing_label.to_string().contains("label"),
+        "{missing_label}"
+    );
+}
+
 /// `ticket_priority` and `app.ticket_state` (extended by alter_schema.sql)
 /// are database enums; their columns use the generated `db::types` enums in
 /// rows, inputs, patches, filters, sort keys, arrays, and query files.
 async fn enums_keep_their_exact_labels(pool: &PgPool) {
-    use db::queries::tickets::tickets_with_priority;
+    use db::queries::tickets::{tickets_in_states, tickets_with_priority};
     use db::search::{Equality, Page, Sort};
     use db::tickets::filter::{TicketFilter, TicketSortKey};
     use db::tickets::models::{NewTicket, Ticket, UpdateTicket};
@@ -1492,6 +1593,72 @@ async fn enums_keep_their_exact_labels(pool: &PgPool) {
     assert_eq!(found[0].id, routine.id);
     assert_eq!(found[0].priority, TicketPriority::High);
     assert_eq!(found[0].state, None);
+
+    // Casts to enum types (`$1::app.ticket_state[]`, `$2::ticket_priority`)
+    // type the parameters and the cast result column.
+    let in_states = tickets_in_states(
+        pool,
+        &[TicketState::Archived, TicketState::Open],
+        TicketPriority::Low,
+    )
+    .await
+    .unwrap();
+    assert_eq!(in_states.len(), 1);
+    assert_eq!(in_states[0].id, urgent.id);
+    assert_eq!(in_states[0].state, Some(TicketState::Archived));
+    assert_eq!(in_states[0].wanted, Some(TicketPriority::Low));
+}
+
+/// `ticket_channel` is renamed to `contact_channel` by alter_schema.sql: the
+/// enum is `ContactChannel`, bound and decoded under its new database name.
+async fn renamed_enum_types_use_their_new_name(pool: &PgPool) {
+    use db::queries::tickets::contacts_on_channel;
+    use db::ticket_contacts::models::{NewTicketContact, TicketContact};
+    use db::ticket_contacts::{read, write};
+    use db::types::ContactChannel;
+
+    let phone = write::create(
+        pool,
+        NewTicketContact {
+            channel: ContactChannel::Phone,
+            fallbacks: Some(vec![ContactChannel::Email]),
+        },
+    )
+    .await
+    .unwrap();
+    let email = write::create(
+        pool,
+        NewTicketContact {
+            channel: ContactChannel::Email,
+            fallbacks: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        read::get_by_id(pool, phone.id).await.unwrap(),
+        Some(TicketContact {
+            id: phone.id,
+            channel: ContactChannel::Phone,
+            fallbacks: Some(vec![ContactChannel::Email]),
+        })
+    );
+    let label: String =
+        sqlx::query_scalar("SELECT channel::text FROM ticket_contacts WHERE id = $1")
+            .bind(phone.id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(label, "Phone");
+
+    let reachable = contacts_on_channel(pool, ContactChannel::Email)
+        .await
+        .unwrap();
+    assert_eq!(reachable, [phone.id, email.id]);
+    let by_phone = contacts_on_channel(pool, ContactChannel::Phone)
+        .await
+        .unwrap();
+    assert_eq!(by_phone, [phone.id]);
 }
 
 /// `app.shipments.status`, `app.shipments.carrier`, `refunds.status`, and
@@ -2005,6 +2172,44 @@ async fn rows_round_trip_through_json(pool: &PgPool) {
     let json = serde_json::to_value(very_high).unwrap();
     assert_eq!(json["priority"], "Very High");
     assert_eq!(&serde_json::from_value::<Ticket>(json).unwrap(), very_high);
+}
+
+/// A patch deserialized from JSON leaves the columns absent from it alone
+/// and sets those given as `null` to `NULL`; serializing skips absent fields.
+async fn patches_from_json_tell_absent_from_null(pool: &PgPool) {
+    use db::patch_targets::write;
+
+    let before = write::create(pool, base_patch_target()).await.unwrap();
+    assert_eq!(before.note.as_deref(), Some("n0"));
+
+    let untouched: UpdatePatchTarget = serde_json::from_str("{}").unwrap();
+    assert!(untouched.is_empty());
+    assert_eq!(serde_json::to_string(&untouched).unwrap(), "{}");
+    let row = write::update(pool, before.id, untouched)
+        .await
+        .unwrap()
+        .expect("row exists");
+    assert_eq!(row, before, "an empty patch changes nothing");
+
+    let cleared: UpdatePatchTarget =
+        serde_json::from_str(r#"{"note": null, "score": 9}"#).unwrap();
+    assert_eq!(cleared.note, Some(None));
+    assert_eq!(cleared.tag, None);
+    assert_eq!(
+        serde_json::to_value(&cleared).unwrap(),
+        serde_json::json!({"note": null, "score": 9})
+    );
+    let row = write::update(pool, before.id, cleared)
+        .await
+        .unwrap()
+        .expect("row exists");
+    assert_eq!(row.note, None, "`null` sets the column to NULL");
+    assert_eq!(row.score, 9);
+    assert_eq!(row.tag, before.tag, "an absent column is left alone");
+    assert_eq!(row.label, before.label);
+
+    let set: UpdatePatchTarget = serde_json::from_str(r#"{"note": "again"}"#).unwrap();
+    assert_eq!(set.note, Some(Some("again".to_owned())));
 }
 
 /// `soft_notes` is generated with `deleted_at` as its soft-delete column:

@@ -454,8 +454,13 @@ fn analyze_query_file(
             column.typed_id = None;
         }
     }
-    let (analyzed, analysis_failures) =
-        queries::analyze_queries(&defs, &tables, &generated_modules, &parsed.failures);
+    let (analyzed, analysis_failures) = queries::analyze_queries(
+        &defs,
+        &tables,
+        &parsed.schema.enums,
+        &generated_modules,
+        &parsed.failures,
+    );
     failures.extend(analysis_failures);
 
     let failures = failures

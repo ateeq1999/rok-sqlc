@@ -450,12 +450,17 @@ and it is rustfmt-clean. It never forces your crate to relax its lints.
 
 **Serde.** With `derive = ["serde"]` (or `-d serde`), rows, typed ids
 (transparent), key structs, enums (by database label), inputs, patches,
-joined-read structs (`ProductWithCategory`), and query rows and parameters
-derive `Serialize` and `Deserialize`. Without it, generated code doesn't
-mention serde. SQLx's `PgInterval` and `PgTimeTz` implement no serde traits,
-so with serde a table with an `INTERVAL` or `TIME WITH TIME ZONE` column, or
-a query row or parameter struct holding one, fails the run with an error
-naming it.
+joined-read structs (`ProductWithCategory`), query rows and parameters,
+filters (`ProductFilter`), sort keys, and the `db::search` conditions and
+`Sort` derive `Serialize` and `Deserialize`, so an API can take a search as
+JSON. In a patch, an absent field leaves the column alone and `null` sets it
+to `NULL` (`{"note": null}` is `note: Some(None)`); serializing skips the
+absent fields. A filter field left out of the JSON adds no condition. Without
+`derive`, generated code doesn't mention serde. SQLx's `PgInterval` and
+`PgTimeTz` implement no serde traits, so with serde a table with an
+`INTERVAL` or `TIME WITH TIME ZONE` column (which would also reach its
+filter), or a query row or parameter struct holding one, fails the run with
+an error naming it.
 
 ## Writing query files
 
@@ -487,7 +492,9 @@ are:
 - an `INSERT … VALUES` position, an `UPDATE … SET` target, or
   `ON CONFLICT … DO UPDATE SET`;
 - `LIMIT`/`OFFSET` (`i64`);
-- an explicit cast to a supported type.
+- an explicit cast to a supported type, including an enum type
+  (`$1::product_status` takes `types::ProductStatus`, and
+  `$1::product_status[]` a slice of them).
 
 A placeholder anywhere else fails generation. The error names the fix, a
 `-- param:` override.
@@ -876,12 +883,17 @@ generated code uses.
   and value-list `CHECK`s. Other `CHECK`s are ignored.
 - `ALTER TABLE`: `ADD COLUMN`, `DROP COLUMN`, `RENAME COLUMN`,
   `ADD CONSTRAINT` (primary key, unique, foreign key, value-list check;
-  other `CHECK`s are ignored, as in `CREATE TABLE`), and
-  `ENABLE`/`DISABLE ROW LEVEL SECURITY`.
+  other `CHECK`s are ignored, as in `CREATE TABLE`),
+  `ENABLE`/`DISABLE ROW LEVEL SECURITY`, and `ALTER COLUMN` with
+  `[SET DATA] TYPE` (with or without `USING`), `SET`/`DROP NOT NULL`,
+  `SET`/`DROP DEFAULT`, and `ADD GENERATED … AS IDENTITY`. The column ends up
+  in its final shape, and its keys follow a type change.
 - `CREATE UNIQUE INDEX` on plain columns, which becomes a unique key with a
   lookup. A partial index over live rows (`WHERE deleted_at IS NULL`) counts
   under the soft-delete convention. Expression indexes are ignored.
-- `CREATE TYPE … AS ENUM`, and `ALTER TYPE … ADD VALUE`/`RENAME VALUE`.
+- `CREATE TYPE … AS ENUM`, and `ALTER TYPE … ADD VALUE`/`RENAME VALUE`/
+  `RENAME TO`. A renamed enum takes the Rust name of its new name, and the
+  columns using it follow.
 - `DROP TABLE`, which removes the table, so its generated files become stale
   and are removed. Foreign keys other tables hold to it go too, as with
   `CASCADE`: those columns keep their raw type and lose the relationship.
@@ -908,8 +920,8 @@ problems count.
 | Column types not in the table above (network types, `MONEY`, ranges, …) | There is no chosen Rust mapping yet, and rok-sqlc doesn't guess one. |
 | `INTERVAL` and `TIME WITH TIME ZONE` with `derive = ["serde"]` | SQLx's `PgInterval` and `PgTimeTz` implement no serde traits, so the serde derives wouldn't compile. The whole run fails, even with `--lenient`. |
 | `NUMERIC(p, s)` with `p` > 28 | `rust_decimal` holds 28 significant digits, so the value would fail to decode at runtime. |
-| Other `ALTER TABLE` clauses (`ALTER COLUMN … TYPE`/`SET NOT NULL`, `RENAME TO`, …) | The table's shape after the change is unknown, so the table fails. |
-| Other `ALTER TYPE` clauses | The tables that use the type fail. |
+| Other `ALTER TABLE` clauses (`RENAME TO`, `ALTER COLUMN … TYPE` to an unsupported type, `DROP NOT NULL` on a primary key column, …) | The table's shape after the change is unknown, so the table fails. |
+| An `ALTER TYPE` that can't be applied (an existing label or type name, an unknown label) | The tables that use the type fail. |
 | A table whose module name is reserved or already taken | Its module would collide with a generated one. Rename it in `[modules]`. |
 | Two typed ids of one name imported into one file, or an imported id named like one of the file's own items | The generated code wouldn't compile. Rename a module in `[modules]`. |
 | Columns whose filter or sort-key names collide (`weight` next to `weight_is_null`) | The generated code wouldn't compile. |
@@ -928,22 +940,18 @@ problems count.
   unsupported, in tables and in query casts (`$1::inet`).
 - `INTERVAL` and `TIME WITH TIME ZONE` columns can't be generated with
   `derive = ["serde"]`.
-- Casts to enum types in query files (`$1::product_status`) are rejected.
-  Compare against the enum column instead (`status = $1`); that infers
-  `types::ProductStatus`.
 - Partial-index `ON CONFLICT` targets are rejected, including the
   soft-delete convention's `WHERE deleted_at IS NULL` unique indexes,
   because PostgreSQL infers a partial index only from a target that repeats
   its condition, which the query parser can't read.
-- Filters and search types don't get serde derives.
-- A serde-deserialized update patch can't set a column to `NULL`: `None` and
-  `Some(None)` both serialize to `null`.
 - Relationship filters nest at most `MAX_RELATIONSHIP_DEPTH` (4) deep. Deeper
   filters make `search` fail with `sqlx::Error::InvalidArgument`.
 - Keyset pagination (`search_after`) follows primary-key order only. Array
   and JSON columns get only null checks in filters.
 - `WITH RECURSIVE` and data-modifying CTEs are rejected in query files.
-- `ALTER COLUMN` changes fail the table.
+- `ALTER COLUMN … DROP IDENTITY`, `SET STATISTICS`, `SET STORAGE`,
+  `DROP EXPRESSION`, and other `ALTER COLUMN` forms the SQL parser doesn't
+  know stop the run as a syntax error in their file, even with `--lenient`.
 - Typed ids and relationships cover only the tables generated together. A
   foreign key into another migration set keeps its raw type and makes no
   relationship.

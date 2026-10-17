@@ -3,11 +3,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use sqlparser::ast::{
-    AlterTableOperation, AlterType, AlterTypeAddValue, AlterTypeAddValuePosition,
-    AlterTypeOperation, ArrayElemTypeDef, ColumnDef, ColumnOption, CreateIndex, CreateTable,
-    CreateTrigger, DataType, DropTrigger, ExactNumberInfo, Expr, Ident, IndexColumn, ObjectName,
-    ObjectNamePart, ObjectType, Spanned, Statement, TableConstraint, TimezoneInfo, TriggerEvent,
-    TriggerObject, TriggerPeriod, UserDefinedTypeRepresentation, Value,
+    AlterColumnOperation, AlterTableOperation, AlterType, AlterTypeAddValue,
+    AlterTypeAddValuePosition, AlterTypeOperation, ArrayElemTypeDef, ColumnDef, ColumnOption,
+    CreateIndex, CreateTable, CreateTrigger, DataType, DropTrigger, ExactNumberInfo, Expr, Ident,
+    IndexColumn, ObjectName, ObjectNamePart, ObjectType, Spanned, Statement, TableConstraint,
+    TimezoneInfo, TriggerEvent, TriggerObject, TriggerPeriod, UserDefinedTypeRepresentation, Value,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -56,7 +56,7 @@ impl ParsedSchema {
 }
 
 /// Root modules rok-sqlc always generates next to the resource modules.
-const GENERATED_MODULES: &[&str] = &["schema", "search", "session", "types"];
+const GENERATED_MODULES: &[&str] = &["nullable", "schema", "search", "session", "types"];
 
 /// One schema input: a migration file's path and its SQL.
 pub struct SchemaSource<'a> {
@@ -257,8 +257,15 @@ pub fn parse_sources_with_modules(
                 Statement::AlterType(alter) => {
                     // sqlparser gives `ALTER TYPE` no span of its own; its name has one.
                     let line = usize::try_from(alter.name.span().start.line).ok();
-                    let Some(reason) = enums.alter(&alter) else {
-                        continue;
+                    let reason = match enums.alter(&alter) {
+                        Ok(None) => continue,
+                        Ok(Some(renamed)) => {
+                            for table in &mut tables {
+                                retype_columns(table, &renamed);
+                            }
+                            continue;
+                        }
+                        Err(reason) => reason,
                     };
                     // Tables already using the type cannot be generated against it.
                     let (failed, kept) = std::mem::take(&mut tables)
@@ -453,6 +460,13 @@ impl EnumEntry {
     }
 }
 
+/// An `ALTER TYPE … RENAME TO`: the columns of the enum type at `from` now
+/// have the type at `to`.
+struct RenamedEnum {
+    from: String,
+    to: String,
+}
+
 /// An `ALTER TYPE` that broke an enum: every table using it fails.
 struct BrokenEnum {
     rust_path: String,
@@ -479,9 +493,42 @@ impl EnumRegistry {
         self.position(name).map(|index| &self.entries[index])
     }
 
-    /// Registers a `CREATE TYPE … AS ENUM`. The Rust name is the type name in
-    /// UpperCamelCase, prefixed with the schema when another enum already
-    /// took that name.
+    /// The Rust name of the enum type `schema.sql_name`: the type name in
+    /// UpperCamelCase, prefixed with the schema when another enum (other
+    /// than the one at `except`) already took that name. Also returns why
+    /// the name cannot be generated.
+    fn rust_name_for(
+        &self,
+        schema: Option<&str>,
+        sql_name: &str,
+        except: Option<usize>,
+    ) -> (String, Option<String>) {
+        let taken = |rust_name: &str| {
+            self.entries.iter().enumerate().any(|(index, entry)| {
+                Some(index) != except && entry.enum_type.rust_name == rust_name
+            })
+        };
+        let mut rust_name = naming::type_name(sql_name);
+        if taken(&rust_name)
+            && let Some(schema) = schema
+        {
+            rust_name = naming::type_name(&format!("{schema}_{sql_name}"));
+        }
+        let broken = if rust_name.is_empty() {
+            Some(format!(
+                "`{sql_name}` does not contain any characters usable in a Rust identifier"
+            ))
+        } else if taken(&rust_name) {
+            Some(format!(
+                "its Rust name `{rust_name}` is already used by another enum type"
+            ))
+        } else {
+            None
+        };
+        (rust_name, broken)
+    }
+
+    /// Registers a `CREATE TYPE … AS ENUM`, named by [`Self::rust_name_for`].
     fn define(&mut self, name: &ObjectName, labels: impl Iterator<Item = String>) {
         if let Some(index) = self.position(name) {
             self.entries[index].broken = Some("the type is defined more than once".to_owned());
@@ -489,27 +536,7 @@ impl EnumRegistry {
         }
         let schema = normalize_schema(object_schema_name(name));
         let sql_name = object_leaf_name(name);
-        let taken = |rust_name: &str| {
-            self.entries
-                .iter()
-                .any(|entry| entry.enum_type.rust_name == rust_name)
-        };
-        let mut broken = None;
-        let mut rust_name = naming::type_name(&sql_name);
-        if taken(&rust_name)
-            && let Some(schema) = &schema
-        {
-            rust_name = naming::type_name(&format!("{schema}_{sql_name}"));
-        }
-        if rust_name.is_empty() {
-            broken = Some(format!(
-                "`{sql_name}` does not contain any characters usable in a Rust identifier"
-            ));
-        } else if taken(&rust_name) {
-            broken = Some(format!(
-                "its Rust name `{rust_name}` is already used by another enum type"
-            ));
-        }
+        let (rust_name, broken) = self.rust_name_for(schema.as_deref(), &sql_name, None);
         let mut entry = EnumEntry {
             enum_type: EnumType {
                 schema,
@@ -524,16 +551,19 @@ impl EnumRegistry {
         self.entries.push(entry);
     }
 
-    /// Applies an `ALTER TYPE` to a known enum. Returns the enum's path and
-    /// the reason when the alteration breaks a generatable enum; unknown and
-    /// already broken types are left alone.
-    fn alter(&mut self, alter: &AlterType) -> Option<BrokenEnum> {
-        let index = self.position(&alter.name)?;
-        let entry = &mut self.entries[index];
-        if entry.broken.is_some() {
-            return None;
+    /// Applies an `ALTER TYPE` to a known enum. A `RENAME TO` returns the
+    /// enum's old and new paths, for the columns using it to follow. An
+    /// alteration that breaks a generatable enum returns its path and the
+    /// reason. Unknown and already broken types are left alone.
+    fn alter(&mut self, alter: &AlterType) -> std::result::Result<Option<RenamedEnum>, BrokenEnum> {
+        let Some(index) = self.position(&alter.name) else {
+            return Ok(None);
+        };
+        if self.entries[index].broken.is_some() {
+            return Ok(None);
         }
-        let mut labels = entry.labels();
+        let mut labels = self.entries[index].labels();
+        let mut renamed = None;
         let applied = match &alter.operation {
             AlterTypeOperation::AddValue(add) => add_enum_value(&mut labels, add),
             AlterTypeOperation::RenameValue(rename) => {
@@ -549,17 +579,50 @@ impl EnumRegistry {
                     None => Err(format!("RENAME VALUE: label `{from}` does not exist")),
                 }
             }
-            other => Err(format!("unsupported ALTER TYPE clause `{other}`")),
+            AlterTypeOperation::Rename(rename) => {
+                let sql_name = ident_name(&rename.new_name);
+                let schema = self.entries[index].enum_type.schema.clone();
+                let exists = self.entries.iter().any(|entry| {
+                    entry.enum_type.sql_name == sql_name && entry.enum_type.schema == schema
+                });
+                let (rust_name, broken) =
+                    self.rust_name_for(schema.as_deref(), &sql_name, Some(index));
+                match (exists, broken) {
+                    (true, _) => {
+                        let name = match &schema {
+                            Some(schema) => format!("{schema}.{sql_name}"),
+                            None => sql_name,
+                        };
+                        Err(format!("RENAME TO: type `{name}` already exists"))
+                    }
+                    (false, Some(reason)) => Err(format!("RENAME TO: {reason}")),
+                    (false, None) => {
+                        let enum_type = &mut self.entries[index].enum_type;
+                        let from = enum_type.rust_path();
+                        enum_type.sql_name = sql_name;
+                        enum_type.rust_name = rust_name;
+                        renamed = Some(RenamedEnum {
+                            from,
+                            to: enum_type.rust_path(),
+                        });
+                        Ok(())
+                    }
+                }
+            }
         };
+        let entry = &mut self.entries[index];
         let reason = match applied {
             Ok(()) => {
                 entry.set_labels(labels);
-                entry.broken.clone()?
+                match entry.broken.clone() {
+                    None => return Ok(renamed),
+                    Some(reason) => reason,
+                }
             }
             Err(reason) => reason,
         };
         entry.broken = Some(reason.clone());
-        Some(BrokenEnum {
+        Err(BrokenEnum {
             rust_path: entry.enum_type.rust_path(),
             reason: format!("ALTER TYPE `{}`: {reason}", entry.enum_type.display_name()),
         })
@@ -687,6 +750,21 @@ fn drop_table(
     }
 }
 
+/// Moves every column of a renamed enum type (or an array of it) to the
+/// enum's new path.
+fn retype_columns(table: &mut Table, renamed: &RenamedEnum) {
+    for column in &mut table.columns {
+        if column.sqlx_type == renamed.from {
+            column.sqlx_type.clone_from(&renamed.to);
+        } else if Shape::of(&column.sqlx_type) == Shape::List(&renamed.from) {
+            column.sqlx_type = format!("Vec<{}>", renamed.to);
+        } else {
+            continue;
+        }
+        column.rust_type = rust_type(&column.sqlx_type, column.nullable);
+    }
+}
+
 /// Drops every column of the enum type at `rust_path` (or an array of it),
 /// as `DROP TYPE … CASCADE` does.
 fn drop_columns_of_type(table: &mut Table, rust_path: &str) {
@@ -736,6 +814,9 @@ fn apply_alter(
             AlterTableOperation::AddConstraint { constraint, .. } => {
                 add_constraint(table, constraint)?;
             }
+            AlterTableOperation::AlterColumn { column_name, op } => {
+                alter_column(table, &ident_name(column_name), op, enums)?;
+            }
             AlterTableOperation::EnableRowLevelSecurity
             | AlterTableOperation::DisableRowLevelSecurity => {}
             other => {
@@ -744,6 +825,87 @@ fn apply_alter(
         }
     }
     check_search_names(&table.columns)
+}
+
+/// Applies an `ALTER COLUMN` change, leaving the column in its final shape.
+/// Keys, unique keys, and foreign keys name their columns, so they follow a
+/// type change.
+///
+/// PostgreSQL rejects `SET DEFAULT` and `DROP DEFAULT` on identity and
+/// `GENERATED` columns, so a generated column they reach is a serial one:
+/// replacing or dropping its `nextval` default leaves it no longer generated.
+fn alter_column(
+    table: &mut Table,
+    name: &str,
+    operation: &AlterColumnOperation,
+    enums: &EnumRegistry,
+) -> std::result::Result<(), String> {
+    let index = column_index(table, name).ok_or_else(|| missing_column("ALTER COLUMN", name))?;
+    let is_key = table.primary_key.iter().any(|key| key == name);
+    let column = &mut table.columns[index];
+    let column_fail = |reason: String| format!("ALTER COLUMN: column `{name}`: {reason}");
+    match operation {
+        AlterColumnOperation::SetDataType { data_type, .. } => {
+            if is_serial_type(data_type) {
+                return Err(column_fail(format!(
+                    "type `{data_type}` exists only in CREATE TABLE and ADD COLUMN"
+                )));
+            }
+            let (base_type, sqlx_type) = map_type_in(data_type, enums).map_err(column_fail)?;
+            column.rust_type = rust_type(&base_type, column.nullable);
+            column.sqlx_type = sqlx_type;
+            // A value list restricts text only; one on another type is no enum.
+            if column.base_type() != BaseType::Text {
+                column.value_list = None;
+            }
+        }
+        AlterColumnOperation::SetNotNull => set_nullable(column, false),
+        AlterColumnOperation::DropNotNull => {
+            if is_key {
+                return Err(format!(
+                    "ALTER COLUMN: column `{name}` is in the primary key, so it cannot drop NOT NULL"
+                ));
+            }
+            set_nullable(column, true);
+        }
+        AlterColumnOperation::SetDefault { .. } => {
+            column.has_default = true;
+            column.is_generated = false;
+        }
+        AlterColumnOperation::DropDefault => {
+            column.has_default = false;
+            column.is_generated = false;
+        }
+        AlterColumnOperation::AddGenerated { .. } => {
+            if column.nullable {
+                return Err(format!(
+                    "ALTER COLUMN: column `{name}` must be NOT NULL before it can become an identity column"
+                ));
+            }
+            column.has_default = true;
+            column.is_generated = true;
+        }
+    }
+    Ok(())
+}
+
+/// Makes `column` nullable or required, wrapping or unwrapping its Rust type.
+fn set_nullable(column: &mut Column, nullable: bool) {
+    if column.nullable == nullable {
+        return;
+    }
+    let base_type = if column.nullable {
+        column
+            .rust_type
+            .strip_prefix("Option<")
+            .and_then(|inner| inner.strip_suffix('>'))
+            .unwrap_or(&column.rust_type)
+            .to_owned()
+    } else {
+        column.rust_type.clone()
+    };
+    column.rust_type = rust_type(&base_type, nullable);
+    column.nullable = nullable;
 }
 
 fn column_index(table: &Table, name: &str) -> Option<usize> {
@@ -1522,9 +1684,24 @@ fn index_column_name(column: &IndexColumn) -> Option<String> {
     }
 }
 
-/// Maps a SQL type to its Rust type, without enum types (query-file casts).
-pub(crate) fn map_type(data_type: &DataType) -> std::result::Result<(String, String), String> {
-    map_type_in(data_type, &EnumRegistry::default())
+/// Maps a query-file cast's SQL type to its Rust type, resolving the
+/// database enum types among the generated `enums` (a value-list enum names
+/// no database type).
+pub(crate) fn map_type(
+    data_type: &DataType,
+    enums: &[EnumType],
+) -> std::result::Result<(String, String), String> {
+    let registry = EnumRegistry {
+        entries: enums
+            .iter()
+            .filter(|enum_type| enum_type.column.is_none())
+            .map(|enum_type| EnumEntry {
+                enum_type: enum_type.clone(),
+                broken: None,
+            })
+            .collect(),
+    };
+    map_type_in(data_type, &registry)
 }
 
 /// Maps a SQL type to `(Rust type, base type)`, resolving enum types defined
@@ -1972,10 +2149,15 @@ mod tests {
     #[test]
     fn rejects_tables_named_after_generated_modules() {
         let parsed = parse(
-            "CREATE TABLE search (id BIGSERIAL PRIMARY KEY); CREATE TABLE schema (id BIGSERIAL PRIMARY KEY); CREATE TABLE session (id BIGSERIAL PRIMARY KEY);",
+            "CREATE TABLE search (id BIGSERIAL PRIMARY KEY); CREATE TABLE schema (id BIGSERIAL PRIMARY KEY); CREATE TABLE session (id BIGSERIAL PRIMARY KEY); CREATE TABLE nullable (id BIGSERIAL PRIMARY KEY);",
         );
         assert!(parsed.schema.tables.is_empty());
-        assert_eq!(parsed.failures.len(), 3);
+        assert_eq!(parsed.failures.len(), 4);
+        assert!(
+            parsed.failures[3]
+                .reason
+                .contains("reserved for the generated `db/nullable.rs`")
+        );
         assert!(
             parsed.failures[0]
                 .reason
@@ -2136,8 +2318,8 @@ mod tests {
                 "CREATE TABLE prices (id BIGSERIAL PRIMARY KEY, amount INTEGER NOT NULL);",
             ),
             (
-                "migrations/0002_widen.up.sql",
-                "-- widen prices\n\nALTER TABLE prices ALTER COLUMN amount TYPE BIGINT;",
+                "migrations/0002_rename.up.sql",
+                "-- rename prices\n\nALTER TABLE prices RENAME TO costs;",
             ),
         ]);
         assert!(parsed.schema.tables.is_empty());
@@ -2145,8 +2327,8 @@ mod tests {
         let message = parsed.failures[0].to_string();
         assert!(
             message.starts_with(&format!(
-                "{}:3: table `prices`: unsupported ALTER TABLE clause `ALTER COLUMN amount",
-                Path::new("migrations/0002_widen.up.sql").display()
+                "{}:3: table `prices`: unsupported ALTER TABLE clause `RENAME",
+                Path::new("migrations/0002_rename.up.sql").display()
             )),
             "{message}"
         );
@@ -2465,16 +2647,67 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_alter_type_clauses_fail_tables_using_the_type() {
+    fn alter_type_rename_renames_the_enum_and_its_columns_follow() {
         let parsed = parse(
             "CREATE TYPE mood AS ENUM ('a');
+             CREATE TABLE people (id BIGSERIAL PRIMARY KEY, mood mood NOT NULL, past mood[], next mood);
+             ALTER TYPE mood RENAME TO feeling;
+             CREATE TABLE later (id BIGSERIAL PRIMARY KEY, feeling feeling NOT NULL);",
+        );
+        assert!(parsed.failures.is_empty(), "{:?}", parsed.failures);
+        let feeling = &parsed.schema.enums[0];
+        assert_eq!(
+            (feeling.sql_name.as_str(), feeling.rust_name.as_str()),
+            ("feeling", "Feeling")
+        );
+        let types: Vec<(&str, &str)> = parsed
+            .schema
+            .tables
+            .iter()
+            .flat_map(|table| &table.columns[1..])
+            .map(|column| (column.sqlx_type.as_str(), column.rust_type.as_str()))
+            .collect();
+        assert_eq!(
+            types,
+            [
+                ("types::Feeling", "types::Feeling"),
+                ("Vec<types::Feeling>", "Option<Vec<types::Feeling>>"),
+                ("types::Feeling", "Option<types::Feeling>"),
+                ("types::Feeling", "types::Feeling"),
+            ]
+        );
+    }
+
+    #[test]
+    fn alter_type_rename_keeps_the_schema_and_avoids_taken_rust_names() {
+        let parsed = parse(
+            "CREATE TYPE status AS ENUM ('a');
+             CREATE TYPE app.mood AS ENUM ('b');
+             CREATE TABLE app.people (id BIGSERIAL PRIMARY KEY, mood app.mood);
+             ALTER TYPE app.mood RENAME TO status;",
+        );
+        assert!(parsed.failures.is_empty(), "{:?}", parsed.failures);
+        let renamed = &parsed.schema.enums[1];
+        assert_eq!(renamed.display_name(), "app.status");
+        assert_eq!(renamed.rust_name, "AppStatus");
+        assert_eq!(
+            parsed.schema.tables[0].columns[1].sqlx_type,
+            "types::AppStatus"
+        );
+    }
+
+    #[test]
+    fn alter_type_rename_to_a_taken_name_fails_tables_using_the_type() {
+        let parsed = parse(
+            "CREATE TYPE mood AS ENUM ('a');
+             CREATE TYPE feeling AS ENUM ('b');
              CREATE TABLE people (id BIGSERIAL PRIMARY KEY, mood mood);
              ALTER TYPE mood RENAME TO feeling;",
         );
         assert!(parsed.schema.tables.is_empty());
         assert_eq!(
             parsed.failures[0].reason,
-            "ALTER TYPE `mood`: unsupported ALTER TYPE clause `RENAME TO feeling`"
+            "ALTER TYPE `mood`: RENAME TO: type `feeling` already exists"
         );
     }
 
@@ -2638,6 +2871,188 @@ mod tests {
         );
     }
 
+    fn column<'a>(table: &'a Table, name: &str) -> &'a Column {
+        table
+            .columns
+            .iter()
+            .find(|column| column.sql_name == name)
+            .unwrap_or_else(|| panic!("no column `{name}`"))
+    }
+
+    /// `TYPE`, with or without `USING`, gives the column its new type; keys
+    /// name columns, so they follow the change.
+    #[test]
+    fn alter_column_type_changes_the_column_and_its_keys() {
+        let parsed = parse_files(&[
+            (
+                "0001.up.sql",
+                "CREATE TABLE readings (id INTEGER PRIMARY KEY, code VARCHAR(8) UNIQUE, amount INTEGER NOT NULL, note TEXT);",
+            ),
+            (
+                "0002.up.sql",
+                "ALTER TABLE readings ALTER COLUMN id TYPE BIGINT, ALTER COLUMN code SET DATA TYPE UUID USING code::uuid;
+                 ALTER TABLE readings ALTER amount TYPE NUMERIC(12, 2) USING amount::numeric;
+                 ALTER TABLE readings ALTER COLUMN note TYPE BYTEA USING convert_to(note, 'UTF8');",
+            ),
+        ]);
+        assert!(parsed.failures.is_empty(), "{:?}", parsed.failures);
+        let table = &parsed.schema.tables[0];
+        let types: Vec<(&str, &str, bool)> = table
+            .columns
+            .iter()
+            .map(|column| {
+                (
+                    column.rust_type.as_str(),
+                    column.sqlx_type.as_str(),
+                    column.nullable,
+                )
+            })
+            .collect();
+        assert_eq!(
+            types,
+            [
+                ("i64", "i64", false),
+                ("Option<uuid::Uuid>", "uuid::Uuid", true),
+                ("rust_decimal::Decimal", "rust_decimal::Decimal", false),
+                ("Option<Vec<u8>>", "Vec<u8>", true),
+            ]
+        );
+        assert_eq!(table.primary_key, ["id"]);
+        assert!(column(table, "id").is_primary_key);
+        assert_eq!(table.unique_keys, [UniqueKey::new(vec!["code".to_owned()])]);
+    }
+
+    /// `(Rust type, nullable, has a default, generated)` of each column.
+    fn shapes(table: &Table) -> Vec<(&str, &str, bool, bool, bool)> {
+        table
+            .columns
+            .iter()
+            .map(|column| {
+                (
+                    column.sql_name.as_str(),
+                    column.rust_type.as_str(),
+                    column.nullable,
+                    column.has_default,
+                    column.is_generated,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn alter_column_sets_and_drops_not_null_and_defaults() {
+        let table = one_table(
+            "CREATE TABLE notes (
+                 id BIGINT PRIMARY KEY,
+                 title TEXT,
+                 body TEXT NOT NULL DEFAULT '',
+                 views INTEGER,
+                 seq SERIAL NOT NULL
+             );
+             ALTER TABLE notes ALTER COLUMN title SET NOT NULL, ALTER COLUMN title TYPE VARCHAR(80);
+             ALTER TABLE notes ALTER COLUMN body DROP NOT NULL, ALTER COLUMN body DROP DEFAULT;
+             ALTER TABLE notes ALTER COLUMN views SET DEFAULT 0;
+             ALTER TABLE notes ALTER COLUMN seq DROP DEFAULT;",
+        );
+        assert_eq!(
+            shapes(&table),
+            [
+                ("id", "i64", false, false, false),
+                ("title", "String", false, false, false),
+                ("body", "Option<String>", true, false, false),
+                ("views", "Option<i32>", true, true, false),
+                ("seq", "i32", false, false, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn alter_column_add_identity_makes_the_column_generated() {
+        let table = one_table(
+            "CREATE TABLE notes (id BIGINT NOT NULL, other BIGINT NOT NULL);
+             ALTER TABLE notes ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY;
+             ALTER TABLE notes ALTER COLUMN other ADD GENERATED BY DEFAULT AS IDENTITY (START WITH 10);
+             ALTER TABLE notes ADD PRIMARY KEY (id);",
+        );
+        assert_eq!(
+            shapes(&table),
+            [
+                ("id", "i64", false, true, true),
+                ("other", "i64", false, true, true),
+            ]
+        );
+    }
+
+    /// A value list restricts text; a type change away from text drops it.
+    #[test]
+    fn alter_column_type_keeps_value_lists_only_on_text() {
+        let parsed = parse(
+            "CREATE TABLE orders (
+                 id BIGSERIAL PRIMARY KEY,
+                 state TEXT CHECK (state IN ('new', 'done')),
+                 grade TEXT CHECK (grade IN ('1', '2'))
+             );
+             ALTER TABLE orders ALTER COLUMN state TYPE VARCHAR(10);
+             ALTER TABLE orders ALTER COLUMN grade TYPE INTEGER USING grade::integer;",
+        );
+        assert!(parsed.failures.is_empty(), "{:?}", parsed.failures);
+        assert_eq!(
+            enum_summary(&parsed.schema),
+            [(
+                "OrderState".to_owned(),
+                Some("orders.state"),
+                vec!["new", "done"]
+            )]
+        );
+        let table = &parsed.schema.tables[0];
+        assert_eq!(column(table, "grade").rust_type, "Option<i32>");
+        assert_eq!(column(table, "grade").value_list, None);
+    }
+
+    #[test]
+    fn rejects_alter_column_changes_it_cannot_apply_with_their_location() {
+        let cases = [
+            (
+                "ALTER TABLE notes ALTER COLUMN body TYPE INET;",
+                "ALTER COLUMN: column `body`: type `INET` is not supported yet",
+            ),
+            (
+                "ALTER TABLE notes ALTER COLUMN body TYPE BIGSERIAL;",
+                "ALTER COLUMN: column `body`: type `BIGSERIAL` exists only in CREATE TABLE and ADD COLUMN",
+            ),
+            (
+                "ALTER TABLE notes ALTER COLUMN id DROP NOT NULL;",
+                "ALTER COLUMN: column `id` is in the primary key, so it cannot drop NOT NULL",
+            ),
+            (
+                "ALTER TABLE notes ALTER COLUMN body ADD GENERATED ALWAYS AS IDENTITY;",
+                "ALTER COLUMN: column `body` must be NOT NULL before it can become an identity column",
+            ),
+            (
+                "ALTER TABLE notes ALTER COLUMN title SET NOT NULL;",
+                "ALTER COLUMN: column `title` does not exist",
+            ),
+        ];
+        for (alter, reason) in cases {
+            let sql = format!("-- change notes\n{alter}");
+            let parsed = parse_files(&[
+                (
+                    "0001.up.sql",
+                    "CREATE TABLE notes (id BIGINT PRIMARY KEY, body TEXT);",
+                ),
+                ("0002.up.sql", &sql),
+            ]);
+            assert!(parsed.schema.tables.is_empty(), "{alter}");
+            assert_eq!(parsed.failures.len(), 1, "{alter}");
+            assert_eq!(parsed.failures[0].reason, reason, "{alter}");
+            assert_eq!(parsed.failures[0].line, Some(2), "{alter}");
+            assert_eq!(
+                parsed.failures[0].path.as_deref(),
+                Some(Path::new("0002.up.sql")),
+                "{alter}"
+            );
+        }
+    }
     #[test]
     fn value_lists_that_cannot_be_generated_fail_their_tables() {
         let parsed = parse(
