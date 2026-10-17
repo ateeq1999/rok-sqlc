@@ -304,3 +304,49 @@ fn validate_needs_serde_and_extractors_need_validate() -> Result<()> {
     assert_eq!(Extractor::ActixWeb.name(), "actix_web");
     Ok(())
 }
+
+/// `extractors = ["axum"]` adds `db/http/mod.rs` (the shared envelope) and
+/// `db/http/axum.rs`, declared by `db/mod.rs` with `axum` among the
+/// dependency hints; without `extractors` there is no `db/http`.
+#[test]
+fn extractors_generate_the_http_module() -> Result<()> {
+    use rok_sqlc::{Derive, Extractor};
+    let inputs = Inputs::new()?;
+
+    let mut config = inputs.config("plain");
+    config.derive = vec![Derive::Serde, Derive::Validate];
+    rok_sqlc::generate(&config)?;
+    let plain = tree(&inputs.path("plain"))?;
+    assert!(
+        plain.keys().all(|path| !path.starts_with("http")),
+        "{:?}",
+        plain.keys()
+    );
+    assert!(!plain[Path::new("mod.rs")].contains("http"));
+    assert!(!plain[Path::new("mod.rs")].contains("axum"));
+
+    let mut config = inputs.config("axum");
+    config.derive = vec![Derive::Serde, Derive::Validate];
+    config.extractors = vec![Extractor::Axum];
+    rok_sqlc::generate(&config)?;
+    let generated = tree(&inputs.path("axum"))?;
+    let http_mod = &generated[&Path::new("http").join("mod.rs")];
+    assert!(http_mod.contains("pub mod axum;"), "{http_mod}");
+    assert!(http_mod.contains("pub struct ErrorBody"), "{http_mod}");
+    let axum = &generated[&Path::new("http").join("axum.rs")];
+    assert!(
+        axum.contains("pub struct ValidatedJson<T>(pub T);"),
+        "{axum}"
+    );
+    let db_mod = &generated[Path::new("mod.rs")];
+    assert!(db_mod.contains("pub mod http;"), "{db_mod}");
+    assert!(db_mod.contains("//   axum = \"0.8\"\n"), "{db_mod}");
+    assert!(db_mod.contains("//   serde_json = \"1\"\n"), "{db_mod}");
+    // Everything else is what the same run without `extractors` generates.
+    for (path, text) in &plain {
+        if path != Path::new("mod.rs") {
+            assert_eq!(&generated[path], text, "{}", path.display());
+        }
+    }
+    Ok(())
+}

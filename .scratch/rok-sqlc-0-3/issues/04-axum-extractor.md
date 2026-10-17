@@ -27,7 +27,11 @@ Test it in the fixture app with a real axum `Router` driven through `tower::Serv
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Fixture tests for every rejection path, plus a hand-written type, all on axum 0.8.
-- [ ] Generator tests: no `db/http` without `extractors`, and `http` is a reserved module name.
+- [x] Fixture tests for every rejection path, plus a hand-written type, all on axum 0.8.
+- [x] Generator tests: no `db/http` without `extractors`, and `http` is a reserved module name.
+
+## Comments
+
+- Implemented on branch `rok-sqlc-0-3-04`. `db/http/mod.rs` owns `BodyRejection` (status, body, `Display`), `ErrorBody`/`ErrorPayload`, the codes, `is_json`, and `validated::<T>(bytes)`, which reads and classifies JSON with serde's `Category` itself; `axum.rs` re-exports `BodyRejection`, checks `Content-Type`, reads `Bytes`, and calls `validated`. It does not go through `axum::Json<T>`, whose data-error messages carry a `serde_path_to_error` path that actix-web cannot reproduce, so both frameworks give byte-identical bodies. A data error is `ValidationFailure` holding one `__all__` error with code `deserialize` (`BodyRejection::unfit`), answered with serde's message and no `details`.

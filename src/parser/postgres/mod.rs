@@ -107,8 +107,9 @@ impl ParsedSchema {
     }
 }
 
-/// Root modules rok-sqlc always generates next to the resource modules.
-const GENERATED_MODULES: &[&str] = &["nullable", "schema", "search", "session", "types"];
+/// Root modules rok-sqlc generates next to the resource modules. Each is
+/// reserved even when a run's options leave it out.
+const GENERATED_MODULES: &[&str] = &["http", "nullable", "schema", "search", "session", "types"];
 
 /// One schema input: a migration file's path and its SQL.
 pub struct SchemaSource<'a> {

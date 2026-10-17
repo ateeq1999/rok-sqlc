@@ -2,6 +2,7 @@ mod checks;
 pub mod conventions;
 mod db_mod;
 mod emit;
+mod http;
 mod joins;
 pub mod keys;
 pub mod models;
@@ -228,6 +229,7 @@ pub fn plan_files_with_queries(
     if serde {
         files.push((output.join("nullable.rs"), models::render_nullable()));
     }
+    files.extend(http::render(output, &config.extractors));
     if !enums.is_empty() {
         files.push((output.join("types.rs"), types::render(&enums, serde)));
     }
@@ -238,6 +240,7 @@ pub fn plan_files_with_queries(
         queries,
         serde,
         validate,
+        extractors: &config.extractors,
     };
     if let Some(session) = session {
         files.push((output.join("session.rs"), session));

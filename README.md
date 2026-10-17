@@ -469,7 +469,7 @@ same name fail generation, and the error names both.
 pub enum ProductStatus {
 ```
 
-`schema`, `search`, `session` and `types` are reserved module names, as is
+`http`, `nullable`, `schema`, `search`, `session` and `types` are reserved module names, as is
 `queries` when you pass query files. A table that would generate one of
 those modules fails with an error that says so.
 

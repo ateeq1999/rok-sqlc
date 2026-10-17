@@ -2,8 +2,8 @@
 //! snapshot.
 
 use super::{HEADER, QueriesModule, queries, sql, write};
-use crate::IdGeneration;
 use crate::schema::{BaseType, Table, rust_type};
+use crate::{Extractor, IdGeneration};
 
 /// What `db/mod.rs` declares besides the resource modules.
 #[derive(Debug, Clone, Copy)]
@@ -17,6 +17,8 @@ pub struct DbMod<'a> {
     pub serde: bool,
     /// Whether `derive = ["validate"]` is on, which needs `validator`.
     pub validate: bool,
+    /// The frameworks `http/` has an extractor for; none leaves `http/` out.
+    pub extractors: &'a [Extractor],
 }
 
 /// Renders `db/mod.rs`: the dependency hints, a module per table of
@@ -29,6 +31,7 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
         queries,
         serde,
         validate,
+        extractors,
     } = *db_mod;
     let mut types: Vec<String> = tables
         .iter()
@@ -48,9 +51,17 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
         .flat_map(|table| &table.columns)
         .filter_map(|column| Some((column.id_generation?, column.base_type())))
         .collect();
-    output.push_str(&dependency_hints(&types, &ids, serde));
+    output.push_str(&dependency_hints(
+        &types,
+        &ids,
+        serde,
+        !extractors.is_empty(),
+    ));
     if validate {
         output.push_str("//   validator = { version = \"0.21\", features = [\"derive\"] }\n");
+    }
+    if extractors.contains(&Extractor::Axum) {
+        output.push_str("//   axum = \"0.8\"\n");
     }
     output.push('\n');
     // Sorted the way rustfmt sorts `mod` declarations.
@@ -65,6 +76,9 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
     }
     if has_types {
         modules.push("types");
+    }
+    if !extractors.is_empty() {
+        modules.push("http");
     }
     if has_session {
         modules.push("session");
@@ -100,7 +114,13 @@ pub enum UpdateOutcome<T> {
 
 /// The `Cargo.toml` lines the generated code needs. With `serde`, the crates
 /// whose types appear in serialized items need their `serde` feature.
-fn dependency_hints(types: &[String], ids: &[(IdGeneration, BaseType)], serde: bool) -> String {
+/// `json_bodies` (an extractor reading JSON bodies) needs `serde_json`.
+fn dependency_hints(
+    types: &[String],
+    ids: &[(IdGeneration, BaseType)],
+    serde: bool,
+    json_bodies: bool,
+) -> String {
     let uses = |needle: &str| types.iter().any(|rust_type| rust_type.contains(needle));
     let uses_uuid = uses("uuid::");
     // `PgTimeTz` is encoded and decoded through SQLx's `chrono` feature, and
@@ -148,7 +168,7 @@ fn dependency_hints(types: &[String], ids: &[(IdGeneration, BaseType)], serde: b
     if uses_chrono {
         hints.push_str(&crate_hint("chrono", "0.4"));
     }
-    if uses_serde_json {
+    if uses_serde_json || json_bodies {
         hints.push_str("//   serde_json = \"1\"\n");
     }
     if uses_rust_decimal {
@@ -212,6 +232,7 @@ mod tests {
                 queries,
                 serde,
                 validate: false,
+                extractors: &[],
             },
         )
     }
@@ -265,6 +286,7 @@ mod tests {
                     queries: QueriesModule::None,
                     serde: true,
                     validate,
+                    extractors: &[],
                 },
             )
         };

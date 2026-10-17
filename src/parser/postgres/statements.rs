@@ -158,11 +158,17 @@ pub fn parse_sources_with_modules(
                     others.create_sequences(&create.name, &create.columns, &mut taken);
                     match build_table(&create, &enums, &taken).map(&mut rename) {
                         Ok(table) if GENERATED_MODULES.contains(&table.module_name.as_str()) => {
+                            let module = &table.module_name;
+                            // `http` is a directory; the others are files.
+                            let generated = if module == "http" {
+                                "db/http/".to_owned()
+                            } else {
+                                format!("db/{module}.rs")
+                            };
                             table_failure(
                                 &table.sql_name,
                                 format!(
-                                    "module name `{}` is reserved for the generated `db/{}.rs`",
-                                    table.module_name, table.module_name
+                                    "module name `{module}` is reserved for the generated `{generated}`"
                                 ),
                             )
                         }

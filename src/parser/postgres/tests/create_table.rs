@@ -317,6 +317,22 @@ fn rejects_tables_named_after_generated_modules() {
     );
 }
 
+/// `db/http/` is generated only with `extractors`, but its name is reserved
+/// either way, so adding an extractor never breaks a schema that generated.
+#[test]
+fn rejects_a_table_named_after_the_http_module() {
+    let parsed = parse("CREATE TABLE http (id BIGSERIAL PRIMARY KEY);");
+    assert!(parsed.schema.tables.is_empty());
+    assert_eq!(parsed.failures.len(), 1);
+    assert!(
+        parsed.failures[0]
+            .reason
+            .contains("module name `http` is reserved for the generated `db/http/`"),
+        "{}",
+        parsed.failures[0].reason
+    );
+}
+
 #[test]
 fn rejects_module_name_collisions() {
     let parsed = parse(
