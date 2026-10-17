@@ -1270,8 +1270,10 @@ cargo fmt --all -- --check
   [Release workflow](.github/workflows/release.yml) checks the tag matches
   `Cargo.toml`, builds the binaries, publishes the GitHub release with that
   CHANGELOG section as its notes, and then installs it with both install
-  scripts. To build a tag that predates the workflow, run it by hand with the
-  tag. Publishing to crates.io stays a manual `cargo publish`.
+  scripts. Once the binaries build, it also runs `cargo publish` with the
+  `CARGO_REGISTRY_TOKEN` repository secret, skipping a version crates.io
+  already has. To build a tag that predates the workflow, run it by hand with
+  the tag.
 
 ## License
 
