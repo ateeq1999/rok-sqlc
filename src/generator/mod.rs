@@ -686,6 +686,7 @@ pub(crate) mod test_support {
             soft_delete_column: None,
             tenant_column: None,
             relationships: Vec::new(),
+            before_insert_triggers: Vec::new(),
         }
     }
 }
