@@ -80,6 +80,13 @@ the *generated* API count as breaking (see ADR 0012).
   are no longer stale: a successful run does not remove them, and a lenient
   `--check` reports the table's warning but no drift. A table the schema no
   longer defines (dropped, or never created) is still stale (ADR 0001).
+  The rest of the output is generated against the kept table's last good
+  shape (its model before the statement that broke it), so the crate still
+  compiles: `types.rs` keeps its enums, foreign keys into it keep its typed
+  id, and relationships and filters still reach it. The kept directory is
+  the table's module, `[modules]` renames included. A table that fails at
+  its own `CREATE TABLE`, or whose value lists can't be generated, has no
+  such shape, so its earlier files are stale.
 - A managed column with no source of values fails its table with a
   `path:line` diagnostic: one that is `NOT NULL`, has no `DEFAULT`, is not
   serial, identity, or `GENERATED`, on a table with no row-level

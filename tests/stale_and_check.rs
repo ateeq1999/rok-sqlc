@@ -638,3 +638,47 @@ fn a_kept_versioned_table_keeps_update_outcome_in_mod_rs() -> Result<()> {
     assert!(after.contains("pub enum UpdateOutcome"), "{after}");
     Ok(())
 }
+
+/// The kept directory is the module the table generates under, which a
+/// `[modules]` rename sets.
+#[test]
+fn a_renamed_table_skipped_by_lenient_keeps_its_files() -> Result<()> {
+    let project = Migrations::new(&[("0001_init.up.sql", TWO_TABLES)])?;
+    let rename = r#"{"modules": {"posts": "articles"}}"#;
+    assert!(project.run(&["--json", rename]).status.success());
+    let before = project.resource("articles")?;
+    assert!(before.contains_key(Path::new("articles").join("models.rs").as_path()));
+
+    project.add(&[("0002_break.up.sql", BREAK_POSTS)])?;
+    let output = project.run(&["--lenient", "--json", rename]);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert_eq!(project.resource("articles")?, before);
+    let db_mod = fs::read_to_string(project.out().join("mod.rs"))?;
+    assert!(db_mod.contains("pub mod articles;"), "{db_mod}");
+    Ok(())
+}
+
+/// A table that fails at its own `CREATE TABLE` has no last good shape to
+/// plan the other files against, so its earlier files are stale: keeping
+/// them could leave the generated code not compiling.
+#[test]
+fn a_table_failing_at_its_create_table_is_not_kept() -> Result<()> {
+    let project = Migrations::new(&[("0001_init.up.sql", TWO_TABLES)])?;
+    assert!(project.run(&[]).status.success());
+    assert!(project.out().join("posts/models.rs").is_file());
+
+    project.add(&[(
+        "0001_init.up.sql",
+        "CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);\n\
+         CREATE TABLE posts (id BIGSERIAL PRIMARY KEY, title TEXT NOT NULL, origin INET);",
+    )])?;
+    let output = project.run(&["--lenient"]);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert!(stderr(&output).contains("table `posts` skipped"));
+    assert!(!project.out().join("posts").exists());
+    let db_mod = fs::read_to_string(project.out().join("mod.rs"))?;
+    assert!(!db_mod.contains("pub mod posts;"), "{db_mod}");
+    Ok(())
+}

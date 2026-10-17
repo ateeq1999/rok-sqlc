@@ -281,7 +281,7 @@ fn row_type(query: &AnalyzedQuery, db_path: &str) -> String {
 }
 
 /// Every Rust type the queries mention, for dependency hints.
-pub fn mentioned_types(queries: &[AnalyzedQuery]) -> Vec<String> {
+pub fn mentioned_types<'a>(queries: impl IntoIterator<Item = &'a AnalyzedQuery>) -> Vec<String> {
     let mut types = Vec::new();
     for query in queries {
         types.extend(query.params.iter().map(|param| param.rust_type.clone()));

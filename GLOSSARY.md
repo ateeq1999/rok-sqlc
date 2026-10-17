@@ -73,8 +73,12 @@ A difference between the generated files on disk and what the current SQL would 
 _Avoid_: out of sync, dirty
 
 **Stale file**:
-A generated file whose source no longer exists (for example, a dropped table); generation removes it. A table that still exists but is skipped as unsupported is not a stale source: its files are kept.
+A generated file whose source no longer exists (for example, a dropped table); generation removes it. A table that still exists but is skipped as unsupported is not a stale source: its files are kept (when rok-sqlc knows its last good shape; see ADR 0001).
 _Avoid_: orphan, leftover
+
+**Last good shape**:
+A skipped table's model just before the statement that made it unsupported. Its kept files were generated from it, so the rest of a lenient run is planned against it (ADR 0001).
+_Avoid_: snapshot (that is the schema snapshot)
 
 **Typed id**:
 A distinct Rust type for one table's key, used wherever that key appears, so keys of different tables cannot be mixed up.

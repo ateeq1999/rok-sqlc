@@ -914,9 +914,12 @@ the error is reported as `path:line:`. A silently incomplete `db` module is a
 worse failure than a loud one. `--lenient` skips the offending tables and
 queries with warnings instead. A skipped table keeps the files an earlier run
 generated for it, unchanged and still declared in `mod.rs`; they are not
-stale, so `--check` reports the warning but no drift. If every table is
-unsupported, the run still fails. With `--resource`, only that table's
-problems count.
+stale, so `--check` reports the warning but no drift. The rest is generated
+against the table's last good shape (before the migration that broke it), so
+its enums, typed ids, and relationships stay and the crate still compiles.
+A table that fails at its own `CREATE TABLE` has no such shape, and its old
+files are removed as stale. If every table is unsupported, the run still
+fails. With `--resource`, only that table's problems count.
 
 | Rejected | Why |
 |---|---|

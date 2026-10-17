@@ -14,7 +14,7 @@ use sqlparser::keywords::Keyword;
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Token, Tokenizer};
 
-use super::diagnostics::TableFailure;
+use super::diagnostics::{LastGood, TableFailure};
 use super::naming;
 use crate::report::display_path;
 use crate::schema::rust_type;
@@ -93,6 +93,11 @@ impl ParsedSchema {
                 schema: table.schema.clone(),
                 ..table_failure(&table.sql_name, rejection.reason)
             });
+            // Its value lists are resolved, and their enums are among the
+            // schema's.
+            if let Some(failure) = self.failures.last_mut() {
+                failure.last_good = Some(LastGood::new(table));
+            }
         }
     }
 }
@@ -181,7 +186,7 @@ pub fn parse_sources_with_modules(
                         continue;
                     };
                     let table = tables.remove(index);
-                    failures.push(TableFailure {
+                    let mut failure = TableFailure {
                         path: Some(source.path.to_path_buf()),
                         line: Some(unparsed.line),
                         schema: table.schema.clone(),
@@ -192,7 +197,9 @@ pub fn parse_sources_with_modules(
                                 unparsed.error
                             ),
                         )
-                    });
+                    };
+                    failure.last_good = Some(LastGood::new(table));
+                    failures.push(failure);
                     continue;
                 }
             };
@@ -280,7 +287,7 @@ pub fn parse_sources_with_modules(
                         ),
                         Err(failure) => TableFailure {
                             schema: object_schema_name(&create.name),
-                            ..failure
+                            ..*failure
                         },
                     }
                 }
@@ -297,6 +304,8 @@ pub fn parse_sources_with_modules(
                         _ => None,
                     });
                     others.create_sequences(&name, added, &mut taken);
+                    // A failing statement may have applied some clauses.
+                    let before = tables[index].clone();
                     match apply_alter(&mut tables[index], &operations, &enums, &taken) {
                         Ok(()) => {
                             for operation in &operations {
@@ -321,10 +330,11 @@ pub fn parse_sources_with_modules(
                             continue;
                         }
                         Err(reason) => {
-                            let table = tables.remove(index);
+                            tables.remove(index);
                             TableFailure {
-                                schema: table.schema.clone(),
-                                ..table_failure(&table.sql_name, reason)
+                                schema: before.schema.clone(),
+                                last_good: Some(LastGood::new(before.clone())),
+                                ..table_failure(&before.sql_name, reason)
                             }
                         }
                     }
@@ -425,7 +435,7 @@ pub fn parse_sources_with_modules(
     }
 
     // Value lists become enums once every statement has shaped their tables.
-    let (value_lists, broken) = resolve_value_lists(&mut tables, &enums);
+    let (value_lists, broken) = resolve_value_lists(&mut tables, &enums, &[]);
     tables.retain(|table| {
         let Some(reason) = broken.get(&table.module_name) else {
             return true;
@@ -438,6 +448,23 @@ pub fn parse_sources_with_modules(
         });
         false
     });
+    // A failed table's last good shape resolves its value lists the same
+    // way, after every table's that generates; one whose value lists cannot
+    // be generated has no last good shape.
+    let mut known = value_lists.clone();
+    for failure in &mut failures {
+        let Some(last_good) = &mut failure.last_good else {
+            continue;
+        };
+        let (table_enums, broken) =
+            resolve_value_lists(std::slice::from_mut(&mut last_good.table), &enums, &known);
+        if broken.is_empty() {
+            known.extend(table_enums.iter().cloned());
+            last_good.enums = table_enums;
+        } else {
+            failure.last_good = None;
+        }
+    }
 
     if tables.is_empty() && failures.is_empty() {
         bail!("no supported CREATE TABLE statements found");
@@ -569,9 +596,11 @@ fn uses_type_column(column: &Column, rust_path: &str) -> bool {
 /// column order. A table whose value list cannot be generated (unusable or
 /// colliding labels, or a name another enum already took) is reported by
 /// module name with the reason, and its other value lists are not generated.
+/// `earlier` holds value-list enums resolved before, whose names are taken.
 fn resolve_value_lists(
     tables: &mut [Table],
     enums: &EnumRegistry,
+    earlier: &[EnumType],
 ) -> (Vec<EnumType>, HashMap<String, String>) {
     let mut generated: Vec<EnumType> = Vec::new();
     let mut broken = HashMap::new();
@@ -585,8 +614,9 @@ fn resolve_value_lists(
             let rust_name =
                 naming::type_name(&format!("{}_{}", table.struct_name, column.rust_name));
             let taken = enums.has_rust_name(&rust_name)
-                || generated
+                || earlier
                     .iter()
+                    .chain(&generated)
                     .chain(&table_enums)
                     .any(|other: &EnumType| other.rust_name == rust_name);
             let variants = if taken {
@@ -1532,9 +1562,9 @@ fn build_table(
     create: &CreateTable,
     enums: &EnumRegistry,
     taken: &HashSet<String>,
-) -> std::result::Result<Table, TableFailure> {
+) -> std::result::Result<Table, Box<TableFailure>> {
     let sql_name = object_leaf_name(&create.name);
-    let fail = |reason: String| table_failure(&sql_name, reason);
+    let fail = |reason: String| Box::new(table_failure(&sql_name, reason));
 
     if create.columns.is_empty() {
         return Err(fail("table has no columns".to_owned()));
@@ -1949,6 +1979,7 @@ fn table_failure(table: &str, reason: String) -> TableFailure {
         path: None,
         line: None,
         schema: None,
+        last_good: None,
     }
 }
 

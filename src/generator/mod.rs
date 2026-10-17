@@ -87,20 +87,34 @@ pub struct QueryModule {
 }
 
 /// Resource modules an earlier run generated for tables this run skips as
-/// unsupported. Their files are kept as they are, so `mod.rs` keeps
-/// declaring them.
+/// unsupported (ADR 0001). Their files are kept as they are, and the run
+/// plans everything else as if these tables generated in their last good
+/// shape: `mod.rs` declares them (and `UpdateOutcome` for a versioned one),
+/// `types.rs` defines their enums, and the typed ids, relationships, and
+/// filters of the other tables reach them as before.
 #[derive(Debug, Clone, Default)]
 pub struct KeptResources {
-    /// The kept modules, sorted.
-    pub modules: Vec<String>,
-    /// Whether a kept module's `update` returns `UpdateOutcome`, which
-    /// `mod.rs` then still defines.
-    pub uses_update_outcome: bool,
+    /// The kept tables in their last good shape (see
+    /// [`LastGood`](crate::parser::LastGood)).
+    pub tables: Vec<Table>,
+    /// Their value-list enums that no generated table defines.
+    pub enums: Vec<EnumType>,
 }
 
-impl QueriesModule<'_> {
+impl<'a> QueriesModule<'a> {
     fn is_declared(self) -> bool {
         !matches!(self, QueriesModule::None)
+    }
+
+    /// Every query this run generates, from every query file.
+    fn analyzed(self) -> Vec<&'a AnalyzedQuery> {
+        match self {
+            QueriesModule::Generate(analyzed) => analyzed.iter().collect(),
+            QueriesModule::GenerateModules(modules) => {
+                modules.iter().flat_map(|module| &module.queries).collect()
+            }
+            QueriesModule::None | QueriesModule::Keep => Vec::new(),
+        }
     }
 }
 
@@ -161,8 +175,8 @@ pub fn table_failures(table: &Table, config: &Config) -> Option<Rejection> {
 
 /// Plans every generated file under `config.output`: `tables` (the ones
 /// this run generates), the shared modules, `enums` in `types.rs`, and the
-/// queries module, and declares the `kept` resource modules in `mod.rs`.
-/// `schema_sql` is the schema snapshot. Uses the
+/// queries module. The `kept` resources are planned with the rest but get no
+/// files of their own. `schema_sql` is the schema snapshot. Uses the
 /// configuration's conventions, derives, and relationship changes.
 pub fn plan_files_with_queries(
     config: &Config,
@@ -178,15 +192,22 @@ pub fn plan_files_with_queries(
         check_serde(tables, queries)?;
     }
     let mut files = Vec::new();
+    let all: Vec<Table> = tables.iter().chain(&kept.tables).cloned().collect();
     let resolved = prepare(
-        tables,
+        &all,
         conventions,
         &config.relationships,
         relationships::Scope::Run,
     )?;
     let tables = resolved.as_slice();
+    let enums: Vec<EnumType> = enums.iter().chain(&kept.enums).cloned().collect();
+    let is_kept = |table: &Table| {
+        kept.tables
+            .iter()
+            .any(|kept| kept.module_name == table.module_name)
+    };
 
-    for table in tables {
+    for table in tables.iter().filter(|table| !is_kept(table)) {
         let dir = output.join(&table.module_name);
         let filter = search::render_filter(table, tables, serde);
         let loaders = relationships::render(table, tables, serde);
@@ -229,17 +250,19 @@ pub fn plan_files_with_queries(
         files.push((output.join("nullable.rs"), models::render_nullable()));
     }
     if !enums.is_empty() {
-        files.push((output.join("types.rs"), types::render(enums, serde)));
+        files.push((output.join("types.rs"), types::render(&enums, serde)));
     }
     let session = session::render(conventions);
-    let has_session = session.is_some();
+    let db_mod = DbMod {
+        has_types: !enums.is_empty(),
+        has_session: session.is_some(),
+        queries,
+        serde,
+    };
     if let Some(session) = session {
         files.push((output.join("session.rs"), session));
     }
-    files.push((
-        output.join("mod.rs"),
-        render_db_mod(tables, !enums.is_empty(), has_session, queries, kept, serde),
-    ));
+    files.push((output.join("mod.rs"), render_db_mod(tables, &db_mod)));
     files.push((output.join("schema.rs"), render_schema_snapshot(schema_sql)));
 
     Ok(files)
@@ -268,14 +291,7 @@ fn check_serde(tables: &[Table], queries: QueriesModule<'_>) -> Result<(), Strin
             }
         }
     }
-    let analyzed: Vec<&AnalyzedQuery> = match queries {
-        QueriesModule::Generate(analyzed) => analyzed.iter().collect(),
-        QueriesModule::GenerateModules(modules) => {
-            modules.iter().flat_map(|module| &module.queries).collect()
-        }
-        QueriesModule::None | QueriesModule::Keep => Vec::new(),
-    };
-    for query in analyzed {
+    for query in queries.analyzed() {
         if queries::uses_params_struct(query) {
             for param in &query.params {
                 let subject = format!("parameter `{}` of query `{}`", param.name, query.name);
@@ -577,28 +593,34 @@ pub fn push_build_and_fetch(output: &mut String, table: &Table, fetch: &str) {
     }
 }
 
-pub fn render_db_mod(
-    tables: &[Table],
-    has_types: bool,
-    has_session: bool,
-    queries: QueriesModule<'_>,
-    kept: &KeptResources,
-    serde: bool,
-) -> String {
+/// What `db/mod.rs` declares besides the resource modules.
+#[derive(Debug, Clone, Copy)]
+pub struct DbMod<'a> {
+    /// Whether `types.rs` is generated.
+    pub has_types: bool,
+    /// Whether `session.rs` is generated.
+    pub has_session: bool,
+    pub queries: QueriesModule<'a>,
+    /// Whether `derive = ["serde"]` is on, which adds `nullable.rs`.
+    pub serde: bool,
+}
+
+/// Renders `db/mod.rs`: the dependency hints, a module per table of
+/// `tables` (generated or kept) and per shared module of `db_mod`, and
+/// `UpdateOutcome` when a table's `update` uses it.
+pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
+    let DbMod {
+        has_types,
+        has_session,
+        queries,
+        serde,
+    } = *db_mod;
     let mut types: Vec<String> = tables
         .iter()
         .flat_map(|table| &table.columns)
         .map(|column| column.rust_type.clone())
         .collect();
-    match queries {
-        QueriesModule::Generate(analyzed) => types.extend(queries::mentioned_types(analyzed)),
-        QueriesModule::GenerateModules(modules) => {
-            for module in modules {
-                types.extend(queries::mentioned_types(&module.queries));
-            }
-        }
-        QueriesModule::None | QueriesModule::Keep => {}
-    }
+    types.extend(queries::mentioned_types(queries.analyzed()));
 
     let mut output =
         format!("{HEADER}\n//! Typed database access for the schema, generated by rok-sqlc.\n\n");
@@ -612,7 +634,6 @@ pub fn render_db_mod(
     let mut modules: Vec<&str> = tables
         .iter()
         .map(|table| table.module_name.as_str())
-        .chain(kept.modules.iter().map(String::as_str))
         .collect();
     modules.push("schema");
     modules.push("search");
@@ -632,7 +653,7 @@ pub fn render_db_mod(
     for module in modules {
         output.push_str(&format!("pub mod {module};\n"));
     }
-    if kept.uses_update_outcome || tables.iter().any(write::has_versioned_update) {
+    if tables.iter().any(write::has_versioned_update) {
         output.push_str(UPDATE_OUTCOME);
     }
     output
@@ -798,17 +819,23 @@ mod tests {
         assert!(paths.contains(&Path::new("out").join("schema.rs")));
     }
 
+    /// `db/mod.rs` for `tables` with no `types.rs` or `session.rs`.
+    fn db_mod(tables: &[Table], queries: QueriesModule<'_>, serde: bool) -> String {
+        render_db_mod(
+            tables,
+            &DbMod {
+                has_types: false,
+                has_session: false,
+                queries,
+                serde,
+            },
+        )
+    }
+
     #[test]
     fn db_mod_lists_modules_and_conditional_dependencies() {
         let tables = vec![table(vec![column("id", "uuid::Uuid")], &["id"])];
-        let rendered = render_db_mod(
-            &tables,
-            false,
-            false,
-            QueriesModule::None,
-            &KeptResources::default(),
-            false,
-        );
+        let rendered = db_mod(&tables, QueriesModule::None, false);
         assert!(rendered.contains("pub mod users;"));
         assert!(rendered.contains("pub mod schema;"));
         assert!(rendered.contains("\"uuid\""));
@@ -823,84 +850,28 @@ mod tests {
     #[test]
     fn db_mod_declares_queries_when_generated_or_kept() {
         let tables = vec![table(vec![column("id", "i64")], &["id"])];
+        assert!(!db_mod(&tables, QueriesModule::None, false).contains("pub mod queries;"));
         assert!(
-            !render_db_mod(
-                &tables,
-                false,
-                false,
-                QueriesModule::None,
-                &KeptResources::default(),
-                false
-            )
-            .contains("pub mod queries;")
+            db_mod(&tables, QueriesModule::Keep, false)
+                .contains("pub mod queries;\npub mod schema;\npub mod search;\npub mod users;")
         );
-        assert!(
-            render_db_mod(
-                &tables,
-                false,
-                false,
-                QueriesModule::Keep,
-                &KeptResources::default(),
-                false
-            )
-            .contains(
-                "pub mod queries;
-pub mod schema;
-pub mod search;
-pub mod users;"
-            )
-        );
-        assert!(
-            render_db_mod(
-                &tables,
-                false,
-                false,
-                QueriesModule::Generate(&[]),
-                &KeptResources::default(),
-                false
-            )
-            .contains("pub mod queries;")
-        );
+        assert!(db_mod(&tables, QueriesModule::Generate(&[]), false).contains("pub mod queries;"));
     }
 
     #[test]
     fn db_mod_declares_the_nullable_helper_with_serde() {
         let tables = vec![table(vec![column("id", "i64")], &["id"])];
+        assert!(!db_mod(&tables, QueriesModule::None, false).contains("pub mod nullable;"));
         assert!(
-            !render_db_mod(
-                &tables,
-                false,
-                false,
-                QueriesModule::None,
-                &KeptResources::default(),
-                false
-            )
-            .contains("pub mod nullable;")
-        );
-        assert!(
-            render_db_mod(
-                &tables,
-                false,
-                false,
-                QueriesModule::None,
-                &KeptResources::default(),
-                true
-            )
-            .contains("pub mod nullable;\npub mod schema;\npub mod search;\npub mod users;")
+            db_mod(&tables, QueriesModule::None, true)
+                .contains("pub mod nullable;\npub mod schema;\npub mod search;\npub mod users;")
         );
     }
 
     #[test]
     fn db_mod_hints_rust_decimal_when_used() {
         let tables = vec![table(vec![column("id", "rust_decimal::Decimal")], &["id"])];
-        let rendered = render_db_mod(
-            &tables,
-            false,
-            false,
-            QueriesModule::None,
-            &KeptResources::default(),
-            false,
-        );
+        let rendered = db_mod(&tables, QueriesModule::None, false);
         assert!(rendered.contains("\"rust_decimal\""));
         assert!(rendered.contains("rust_decimal = \"1\""));
         assert!(!rendered.contains("\"uuid\""));

@@ -11,7 +11,7 @@ use crate::config::Config;
 use crate::output::is_generated_file;
 use crate::queries::AnalyzedQuery;
 use crate::report::{Error, QueryFailure, RefusedFile, Report, Result, TableFailure, display_path};
-use crate::schema::Table;
+use crate::schema::{BaseType, EnumType, Shape, Table};
 use crate::{generator, output, parser, queries};
 
 pub(crate) fn generate(config: &Config) -> Result<Report> {
@@ -120,10 +120,24 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
     }
 
     generator::conventions::check(&selected, &config.conventions).map_err(anyhow::Error::msg)?;
-    // `[relationships]` is checked against the whole schema, so a run limited
-    // to some tables (`--resource`) accepts the same configuration.
+    let kept = kept_resources(
+        output_dir,
+        &parsed.failures,
+        &selected,
+        &parsed.schema.enums,
+    );
+    // `[relationships]` is checked against the whole schema, kept tables
+    // included, so a run limited to some tables (`--resource`) accepts the
+    // same configuration.
+    let schema_tables: Vec<Table> = parsed
+        .schema
+        .tables
+        .iter()
+        .chain(&kept.tables)
+        .cloned()
+        .collect();
     generator::relationships::check_changes(
-        &parsed.schema.tables,
+        &schema_tables,
         &config.conventions,
         &config.relationships,
     )
@@ -169,7 +183,6 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
         modules => generator::QueriesModule::GenerateModules(modules),
     };
 
-    let kept = kept_resources(output_dir, &parsed.failures, &selected);
     let files = generator::plan_files_with_queries(
         config,
         &sql,
@@ -191,8 +204,8 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
         let (single, dir) = (output_dir.join("queries.rs"), output_dir.join("queries"));
         stale.retain(|path| *path != single && !path.starts_with(&dir));
     }
-    for module in &kept.modules {
-        let dir = output_dir.join(module);
+    for table in &kept.tables {
+        let dir = output_dir.join(&table.module_name);
         stale.retain(|path| !path.starts_with(&dir));
     }
 
@@ -233,37 +246,55 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
 
 /// The resource directories an earlier run generated for tables the schema
 /// still defines but this run skips as unsupported (`--lenient`, or a table
-/// outside `--resource`). They are kept as they are rather than removed as
-/// stale. A table the schema no longer defines (dropped, or never created)
-/// has no failure, so its directory stays stale.
+/// outside `--resource`), with the tables' last good shapes. They are kept as
+/// they are rather than removed as stale, and the run plans the other files
+/// against those shapes, so the kept files still compile (ADR 0001).
+///
+/// A table the schema no longer defines (dropped, or never created) has no
+/// failure, so its directory stays stale. So does one with no last good
+/// shape (it failed at its `CREATE TABLE`, or its value lists cannot be
+/// generated), or whose last good shape uses an enum that no longer
+/// generates: the files kept for it could not compile.
 fn kept_resources(
     output_dir: &Path,
     failures: &[parser::TableFailure],
     selected: &[Table],
+    enums: &[EnumType],
 ) -> generator::KeptResources {
-    let mut modules: Vec<String> = failures
+    let mut kept = generator::KeptResources::default();
+    for last_good in failures
         .iter()
-        .filter_map(|failure| parser::naming::rust_identifier(&failure.table).ok())
-        .filter(|module| {
-            !RESERVED_MODULES.contains(&module.as_str())
-                && !selected.iter().any(|table| table.module_name == *module)
-                && is_generated_file(&output_dir.join(module).join("models.rs"))
-        })
-        .collect();
-    modules.sort();
-    modules.dedup();
-    let uses_update_outcome = modules.iter().any(|module| {
-        std::fs::read_to_string(output_dir.join(module).join("write.rs"))
-            .is_ok_and(|write| write.contains("UpdateOutcome"))
-    });
-    generator::KeptResources {
-        modules,
-        uses_update_outcome,
+        .filter_map(|failure| failure.last_good.as_ref())
+    {
+        let table = &last_good.table;
+        let module = &table.module_name;
+        let taken = selected
+            .iter()
+            .chain(&kept.tables)
+            .any(|other| other.module_name == *module);
+        if taken || !is_generated_file(&output_dir.join(module).join("models.rs")) {
+            continue;
+        }
+        let defined = |path: &str| {
+            enums
+                .iter()
+                .chain(&last_good.enums)
+                .any(|enum_type| enum_type.rust_path() == path)
+        };
+        let enums_generate = table.columns.iter().all(|column| {
+            let value = match Shape::of(&column.sqlx_type) {
+                Shape::List(item) => item,
+                Shape::Optional(_) | Shape::Value(_) => column.sqlx_type.as_str(),
+            };
+            BaseType::of(value) != BaseType::Enum || defined(value)
+        });
+        if enums_generate {
+            kept.tables.push(table.clone());
+            kept.enums.extend(last_good.enums.iter().cloned());
+        }
     }
+    kept
 }
-
-/// Modules of `db/mod.rs` that are not table resources.
-const RESERVED_MODULES: &[&str] = &["queries", "schema", "search", "session", "types"];
 
 /// Reads the schema inputs in order: a file as is, a directory as its
 /// `*.sql` files in filename order without `*.down.sql`. Returns each file's

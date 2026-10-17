@@ -49,6 +49,19 @@ struct Expected {
 }
 
 const EXPECTED: &[Expected] = &[
+    // The kept-table scenarios (see `KEPT`) skip `orders` on their second run.
+    Expected {
+        fixture: "kept/child_foreign_key",
+        tables: &[("orders", "ADD COLUMN: column `client_ip`")],
+        queries: &[],
+        functions: &[],
+    },
+    Expected {
+        fixture: "kept/value_lists",
+        tables: &[("orders", "ADD COLUMN: column `client_ip`")],
+        queries: &[],
+        functions: &[],
+    },
     Expected {
         fixture: "legacy_modules/accounting",
         tables: &[],
@@ -95,6 +108,96 @@ const EXPECTED: &[Expected] = &[
 
 fn modules_dir() -> PathBuf {
     manifest_dir().join("modules")
+}
+
+/// A kept-table scenario (ADR 0001): `initial` generates strictly, then a
+/// lenient run over `initial` plus `breaking` skips `orders`, whose resource
+/// directory is kept from the first run. The kept files and the regenerated
+/// ones must compile together.
+struct KeptScenario {
+    /// The output directory under `src/db/kept`.
+    name: &'static str,
+    initial: &'static str,
+    breaking: &'static str,
+}
+
+/// A later migration `orders` cannot follow: rok-sqlc has no mapping for
+/// `INET`.
+const BREAK_ORDERS: &str = "ALTER TABLE orders ADD COLUMN client_ip INET;\n";
+
+const KEPT: &[KeptScenario] = &[
+    // The kept `models.rs` uses the value-list enum, so `types.rs` must
+    // still define it.
+    KeptScenario {
+        name: "value_lists",
+        initial: "CREATE TABLE tags (id BIGSERIAL PRIMARY KEY, label TEXT NOT NULL);\n\
+                  CREATE TABLE orders (\n\
+                      id BIGSERIAL PRIMARY KEY,\n\
+                      status TEXT NOT NULL CHECK (status IN ('open', 'paid'))\n\
+                  );\n",
+        breaking: BREAK_ORDERS,
+    },
+    // The kept `relationships.rs` loads `LineItem`s by `OrderId`, so the
+    // regenerated child must keep the typed id, and its own loaders reach the
+    // kept `Order`.
+    KeptScenario {
+        name: "child_foreign_key",
+        initial: "CREATE TABLE orders (id BIGSERIAL PRIMARY KEY, placed_at TIMESTAMPTZ NOT NULL);\n\
+                  CREATE TABLE line_items (\n\
+                      id BIGSERIAL PRIMARY KEY,\n\
+                      order_id BIGINT NOT NULL REFERENCES orders (id),\n\
+                      quantity INTEGER NOT NULL\n\
+                  );\n",
+        breaking: BREAK_ORDERS,
+    },
+];
+
+/// Generates a [`KeptScenario`] into `src/db/kept/<name>` from migrations
+/// written under `target/kept-fixtures/<name>`.
+fn generate_kept(scenario: &KeptScenario) -> Result<Outcome> {
+    let root = manifest_dir()
+        .join("target/kept-fixtures")
+        .join(scenario.name);
+    if root.exists() {
+        fs::remove_dir_all(&root)?;
+    }
+    let migrations = root.join("migrations");
+    fs::create_dir_all(&migrations)?;
+    fs::write(migrations.join("0001_init.up.sql"), scenario.initial)?;
+    let fixture = Fixture {
+        module: scenario.name.to_owned(),
+        id: format!("kept/{}", scenario.name),
+        schema: migrations.clone(),
+        queries: None,
+        migrations: false,
+    };
+    let mut config = rok_sqlc::Config::default();
+    config.schema = vec![migrations.clone()];
+    config.output = db_dir().join(&fixture.id);
+    config.force = true;
+    rok_sqlc::generate(&config)
+        .with_context(|| format!("kept scenario `{}` failed to generate", scenario.name))?;
+
+    fs::write(migrations.join("0002_break.up.sql"), scenario.breaking)?;
+    config.lenient = true;
+    let report = rok_sqlc::generate(&config)
+        .with_context(|| format!("kept scenario `{}` failed to regenerate", scenario.name))?;
+    ensure!(
+        config.output.join("orders/models.rs").is_file(),
+        "kept scenario `{}` lost the kept `orders` files",
+        scenario.name
+    );
+    Ok(Outcome {
+        files: report.written.into_iter().chain(report.unchanged).collect(),
+        tables: report
+            .table_failures
+            .into_iter()
+            .map(|failure| (failure.table, failure.reason))
+            .collect(),
+        queries: Vec::new(),
+        functions: Vec::new(),
+        fixture,
+    })
 }
 
 fn app_dir() -> PathBuf {
@@ -188,6 +291,9 @@ fn generate_all() -> Result<Vec<Outcome>> {
     let mut outcomes = Vec::new();
     for fixture in discover()? {
         outcomes.push(generate_fixture(fixture)?);
+    }
+    for scenario in KEPT {
+        outcomes.push(generate_kept(scenario)?);
     }
 
     let mut groups: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
