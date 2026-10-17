@@ -7,6 +7,71 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-17
+
+Validated bodies and HTTP extractors (ADR 0015). A run without the new
+`validate` derive and `extractors` key generates byte-for-byte what 0.2.1
+generates.
+
+### Added
+
+- `derive = ["serde", "validate"]` (`-d validate`, `Derive::Validate`) adds
+  `validator::Validate` (validator 0.21) to every create input and update
+  patch, with rules taken from the schema and English messages naming the
+  column (`"name must be at most 80 characters"`):
+  - `VARCHAR(n)`, `CHARACTER VARYING(n)`, `CHAR(n)` and `CHARACTER(n)` give
+    `length(max = n)`, counted in characters;
+  - a single-column `CHECK` comparing `char_length(col)`,
+    `character_length(col)` or `length(col)` with an integer gives a
+    `length` bound, combined with the declared length (the tighter bounds
+    win, and `equal` when they meet);
+  - a single-column `CHECK` comparing an integer or float column with a
+    literal (`>=`, `>`, `<=`, `<`, either side), `BETWEEN`, or an `AND` of
+    these gives `range`. A strict bound on an integer becomes inclusive
+    (`> 0` is `min = 1`); on a float it stays strict (`exclusive_min`), and
+    one that can't be represented exactly is dropped;
+  - on a `NUMERIC` column the range is a `custom` rule calling a generated
+    `<field>_in_range` function, with the code `range` and `range`'s
+    `min`/`max` params, since validator's `range` can't compare `Decimal`;
+  - a typed id over text whose column has a length rule implements
+    `validator::ValidateLength<u64>`, so the rule applies through the id and
+    through foreign keys using it. Typed-id fields get no `range` rule.
+
+  Patch fields are checked only when present. Other `CHECK`s, `NOT NULL`,
+  enums and value lists are not rules. `db/mod.rs` names the `validator`
+  dependency. `validate` without `serde` fails the run.
+- `extractors = ["axum", "actix_web"]` (the JSON payload's `extractors`, the
+  repeatable `-e`/`--extractor <axum|actix_web>` flag, and
+  `Config::extractors` with the new `#[non_exhaustive]` `Extractor`, part of
+  the stable library API) generates `db/http/`, which needs `validate`:
+  - `db::http::axum::ValidatedJson<T>` (axum 0.8) and
+    `db::http::actix_web::ValidatedJson<T>` (actix-web 4), extractors for
+    any `T: DeserializeOwned + Validate`: a generated input or patch, or a
+    hand-written request type;
+  - `BodyRejection`, answered in the Rok error envelope
+    `{"success": false, "error": {"message", "code", "details"?}}`: `400`
+    `MALFORMED_BODY` for a missing or wrong `Content-Type`, bad JSON syntax,
+    or a body that can't be read (over the framework's own size limit, with
+    the message `"the request body is over the size limit"` from both); `422`
+    `VALIDATION_FAILED` with serde's message and no `details` for JSON that
+    doesn't fit the type; `422` `VALIDATION_FAILED` with validator's errors
+    as `details` for a broken rule;
+  - `ErrorBody`, `ErrorPayload`, the two codes, `is_json`, and
+    `validated::<T>(bytes)`, which both extractors share, so they answer the
+    same body with the same status, code and message.
+
+  With actix-web, no `JsonConfig` error handler is needed. `db/mod.rs` names
+  the `axum`, `actix-web` and `serde_json` dependencies. `extractors` without
+  `validate` fails the run, and an unknown framework lists the valid ones.
+  With `extractors`, `http` is a reserved module name: a table whose module
+  would be `http` fails with an error that says so (rename it with
+  `[modules]`). Without `extractors`, such a table generates as before.
+- The schema model keeps each text column's declared length and the simple
+  `CHECK` bounds above, through `CREATE TABLE`, `ADD COLUMN`, `ALTER COLUMN …
+  TYPE` (which replaces or clears them), `ADD CONSTRAINT`, and renames.
+- The README has a "Validated bodies and HTTP extractors" section, from the
+  new example crate `docs/examples/validated-api`.
+
 ## [0.2.1] - 2026-10-17
 
 Additive: everything that generated with 0.2.0 generates the same way.
@@ -419,7 +484,8 @@ that break code written against earlier development snapshots.
   paths under the current directory relative to it (also when they come
   from `rok-sqlc.toml`).
 
-[Unreleased]: https://github.com/ateeq1999/rok-sqlc/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/ateeq1999/rok-sqlc/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/ateeq1999/rok-sqlc/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ateeq1999/rok-sqlc/releases/tag/v0.1.0

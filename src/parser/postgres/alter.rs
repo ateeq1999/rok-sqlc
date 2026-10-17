@@ -4,13 +4,14 @@ use std::collections::HashSet;
 
 use sqlparser::ast::{AlterColumnOperation, AlterTableOperation, ColumnDef, ObjectName};
 
+use super::checks::apply_range_check;
 use super::constraints::{add_constraint, add_key_constraint};
 use super::enums::{EnumRegistry, restrict_to_values};
 use super::names::{
     find_table, ident_name, normalize_schema, object_leaf_name, object_schema_name,
 };
 use super::table::{build_column, field_taken, rust_type};
-use super::types::{is_serial_type, map_type_in};
+use super::types::{declared_length, is_serial_type, map_type_in};
 use crate::parser::diagnostics::TableFailure;
 use crate::parser::naming;
 use crate::schema::{BaseType, Column, Shape, Table, UniqueKey};
@@ -144,10 +145,19 @@ fn alter_column(
             }
             let (base_type, sqlx_type) = map_type_in(data_type, enums).map_err(column_fail)?;
             column.rust_type = rust_type(&base_type, column.nullable);
+            // The value range was fitted to the old type (`> 0` on an integer
+            // is `>= 1`), so it holds only while the Rust type is the same.
+            // Dropping it loosens the rule; the database keeps the check.
+            if column.sqlx_type != sqlx_type {
+                column.value_range = None;
+            }
             column.sqlx_type = sqlx_type;
-            // A value list restricts text only; one on another type is no enum.
+            column.declared_length = declared_length(data_type);
+            // A value list restricts text only; one on another type is no
+            // enum. A length range, too, holds for text only.
             if column.base_type() != BaseType::Text {
                 column.value_list = None;
+                column.length_range = None;
             }
         }
         AlterColumnOperation::SetNotNull => set_nullable(column, false),
@@ -247,6 +257,11 @@ fn add_column(
     for (column, labels) in built.value_lists {
         if let Some(index) = column_index(table, &column) {
             restrict_to_values(&mut table.columns[index], labels);
+        }
+    }
+    for check in built.range_checks {
+        if let Some(index) = column_index(table, &check.column) {
+            apply_range_check(&mut table.columns[index], check);
         }
     }
     Ok(())

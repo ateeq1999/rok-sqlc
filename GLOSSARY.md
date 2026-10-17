@@ -122,6 +122,18 @@ _Avoid_: optional column
 The `NewXxx` struct a caller passes to `create` (`Xxx` is the singular row struct name, e.g. `NewProduct` for `products`); generated columns are omitted and defaulted columns are optional, so an omitted value lets the database default apply.
 _Avoid_: insert model, DTO
 
+**Validated body**:
+A request body an HTTP handler receives only after it has been read and every field has passed its validation rules; either a create input, an update patch, or a hand-written request type.
+_Avoid_: DTO, validated JSON (in user-facing text)
+
+**Validation rule**:
+A constraint a field must meet before any statement runs, such as a maximum length. Rules for create inputs and update patches come from the schema; a hand-written request type declares its own.
+_Avoid_: constraint (that is the database's own check), validator
+
+**Validation failure**:
+The rejection of a body whose fields break validation rules, reported to the caller field by field with a stable code.
+_Avoid_: validation error (in user-facing text), 422
+
 **Update patch**:
 The `UpdateXxx` struct a caller passes to `update`; each field is optional, where `None` means "leave unchanged" and, for a nullable column, `Some(None)` means "set NULL".
 _Avoid_: update model, diff

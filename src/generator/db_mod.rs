@@ -1,9 +1,9 @@
 //! The root `db/mod.rs`, with its dependency hints, and the `db/schema.rs`
 //! snapshot.
 
-use super::{HEADER, QueriesModule, queries, sql, write};
-use crate::IdGeneration;
+use super::{DeriveOptions, HEADER, QueriesModule, queries, sql, write};
 use crate::schema::{BaseType, Table, rust_type};
+use crate::{Extractor, IdGeneration};
 
 /// What `db/mod.rs` declares besides the resource modules.
 #[derive(Debug, Clone, Copy)]
@@ -13,8 +13,11 @@ pub struct DbMod<'a> {
     /// Whether `session.rs` is generated.
     pub has_session: bool,
     pub queries: QueriesModule<'a>,
-    /// Whether `derive = ["serde"]` is on, which adds `nullable.rs`.
-    pub serde: bool,
+    /// What `derive` asks for: `serde` adds `nullable.rs`, and `validate`
+    /// needs `validator`.
+    pub derives: DeriveOptions,
+    /// The frameworks `http/` has an extractor for; none leaves `http/` out.
+    pub extractors: &'a [Extractor],
 }
 
 /// Renders `db/mod.rs`: the dependency hints, a module per table of
@@ -25,7 +28,8 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
         has_types,
         has_session,
         queries,
-        serde,
+        derives,
+        extractors,
     } = *db_mod;
     let mut types: Vec<String> = tables
         .iter()
@@ -45,7 +49,7 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
         .flat_map(|table| &table.columns)
         .filter_map(|column| Some((column.id_generation?, column.base_type())))
         .collect();
-    output.push_str(&dependency_hints(&types, &ids, serde));
+    output.push_str(&dependency_hints(&types, &ids, derives, extractors));
     output.push('\n');
     // Sorted the way rustfmt sorts `mod` declarations.
     let mut modules: Vec<&str> = tables
@@ -54,11 +58,14 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
         .collect();
     modules.push("schema");
     modules.push("search");
-    if serde {
+    if derives.serde {
         modules.push("nullable");
     }
     if has_types {
         modules.push("types");
+    }
+    if !extractors.is_empty() {
+        modules.push("http");
     }
     if has_session {
         modules.push("session");
@@ -94,7 +101,16 @@ pub enum UpdateOutcome<T> {
 
 /// The `Cargo.toml` lines the generated code needs. With `serde`, the crates
 /// whose types appear in serialized items need their `serde` feature.
-fn dependency_hints(types: &[String], ids: &[(IdGeneration, BaseType)], serde: bool) -> String {
+/// With `validate`, `validator`; with `extractors`, `serde_json` (to read
+/// JSON bodies) and each framework.
+fn dependency_hints(
+    types: &[String],
+    ids: &[(IdGeneration, BaseType)],
+    derives: DeriveOptions,
+    extractors: &[Extractor],
+) -> String {
+    let serde = derives.serde;
+    let json_bodies = !extractors.is_empty();
     let uses = |needle: &str| types.iter().any(|rust_type| rust_type.contains(needle));
     let uses_uuid = uses("uuid::");
     // `PgTimeTz` is encoded and decoded through SQLx's `chrono` feature, and
@@ -142,7 +158,7 @@ fn dependency_hints(types: &[String], ids: &[(IdGeneration, BaseType)], serde: b
     if uses_chrono {
         hints.push_str(&crate_hint("chrono", "0.4"));
     }
-    if uses_serde_json {
+    if uses_serde_json || json_bodies {
         hints.push_str("//   serde_json = \"1\"\n");
     }
     if uses_rust_decimal {
@@ -161,6 +177,15 @@ fn dependency_hints(types: &[String], ids: &[(IdGeneration, BaseType)], serde: b
             .any(|(ids, base)| *ids == IdGeneration::Ulid && *base == BaseType::Uuid);
         let features: &[&str] = if on_uuid { &["uuid"] } else { &[] };
         hints.push_str(&crate_hint_with("ulid", "1", false, features));
+    }
+    if derives.validate {
+        hints.push_str("//   validator = { version = \"0.21\", features = [\"derive\"] }\n");
+    }
+    if extractors.contains(&Extractor::Axum) {
+        hints.push_str("//   axum = \"0.8\"\n");
+    }
+    if extractors.contains(&Extractor::ActixWeb) {
+        hints.push_str("//   actix-web = \"4\"\n");
     }
     hints
 }
@@ -204,7 +229,11 @@ mod tests {
                 has_types: false,
                 has_session: false,
                 queries,
-                serde,
+                derives: DeriveOptions {
+                    serde,
+                    validate: false,
+                },
+                extractors: &[],
             },
         )
     }
@@ -243,6 +272,29 @@ mod tests {
             db_mod(&tables, QueriesModule::None, true)
                 .contains("pub mod nullable;\npub mod schema;\npub mod search;\npub mod users;")
         );
+    }
+
+    #[test]
+    fn db_mod_hints_validator_with_validate() {
+        let tables = vec![table(vec![column("id", "i64")], &["id"])];
+        let hint = "//   serde = { version = \"1\", features = [\"derive\"] }\n//   validator = { version = \"0.21\", features = [\"derive\"] }\n";
+        let render = |validate| {
+            render_db_mod(
+                &tables,
+                &DbMod {
+                    has_types: false,
+                    has_session: false,
+                    queries: QueriesModule::None,
+                    derives: DeriveOptions {
+                        serde: true,
+                        validate,
+                    },
+                    extractors: &[],
+                },
+            )
+        };
+        assert!(render(true).contains(hint), "{}", render(true));
+        assert!(!render(false).contains("validator"));
     }
 
     #[test]

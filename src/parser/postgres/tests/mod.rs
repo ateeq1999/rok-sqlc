@@ -4,6 +4,7 @@ use super::*;
 
 mod alter_column;
 mod alter_table;
+mod check_rules;
 mod create_table;
 mod enums;
 mod recovered;

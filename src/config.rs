@@ -53,6 +53,11 @@ pub struct Config {
     /// Extra derives for the generated rows, typed ids, key structs, enums,
     /// inputs, and patches (ADR 0013). Empty by default.
     pub derive: Vec<Derive>,
+    /// HTTP frameworks to generate validated-body extractors for, into
+    /// `http/` of the output: `mod.rs` and a module per framework (ADR 0015).
+    /// Needs [`Derive::Validate`], and reserves the module name `http`. Empty
+    /// by default.
+    pub extractors: Vec<Extractor>,
     /// Renames and opt-outs of inferred relationships (ADR 0014), by table
     /// (its SQL name, schema-qualified name, or module name) and then by the
     /// relationship's inferred name. Empty by default.
@@ -103,6 +108,10 @@ pub enum Derive {
     /// `serde` feature of `uuid`, `chrono`, and `rust_decimal` where the
     /// generated code uses them; the generated `mod.rs` lists them.
     Serde,
+    /// `validator::Validate` for create inputs and update patches, with
+    /// rules derived from the schema (ADR 0015). Needs [`Derive::Serde`].
+    /// The consuming crate needs `validator` with its `derive` feature.
+    Validate,
 }
 
 impl Derive {
@@ -110,6 +119,30 @@ impl Derive {
     pub fn name(self) -> &'static str {
         match self {
             Derive::Serde => "serde",
+            Derive::Validate => "validate",
+        }
+    }
+}
+
+/// An HTTP framework to generate a validated-body extractor for
+/// ([`Config::extractors`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Extractor {
+    /// axum: `http::axum::ValidatedJson<T>`. The consuming crate needs
+    /// `axum`.
+    Axum,
+    /// actix-web: `http::actix_web::ValidatedJson<T>`. The consuming crate
+    /// needs `actix-web`.
+    ActixWeb,
+}
+
+impl Extractor {
+    /// The name the config file, the JSON payload, and `--extractor` use.
+    pub fn name(self) -> &'static str {
+        match self {
+            Extractor::Axum => "axum",
+            Extractor::ActixWeb => "actix_web",
         }
     }
 }
@@ -127,6 +160,7 @@ impl Default for Config {
             lenient: false,
             conventions: Conventions::default(),
             derive: Vec::new(),
+            extractors: Vec::new(),
             relationships: BTreeMap::new(),
             modules: BTreeMap::new(),
         }

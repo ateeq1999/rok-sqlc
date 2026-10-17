@@ -1,6 +1,9 @@
 //! SQL types to Rust types.
 
-use sqlparser::ast::{ArrayElemTypeDef, DataType, ExactNumberInfo, ObjectName, TimezoneInfo};
+use sqlparser::ast::{
+    ArrayElemTypeDef, CharLengthUnits, CharacterLength, DataType, ExactNumberInfo, ObjectName,
+    TimezoneInfo,
+};
 
 use super::enums::{EnumEntry, EnumRegistry};
 use super::names::object_leaf_name;
@@ -101,6 +104,28 @@ fn custom_type_leaf(name: &ObjectName) -> std::result::Result<&'static str, Stri
         "INET" | "CIDR" => Ok(rust_type::IP_NETWORK),
         "MACADDR" => Ok(rust_type::MAC_ADDRESS),
         other => Err(format!("type `{other}` is not supported yet")),
+    }
+}
+
+/// The length, in characters, a character type declares: `n` for
+/// `VARCHAR(n)`, `CHARACTER VARYING(n)`, `CHAR(n)`, and `CHARACTER(n)`, and
+/// 1 for `CHAR` and `CHARACTER`, which PostgreSQL reads as `CHAR(1)`. `None`
+/// for `VARCHAR` without a length, which has no limit, and for other types.
+pub(super) fn declared_length(data_type: &DataType) -> Option<u32> {
+    let length = match data_type {
+        DataType::Varchar(length) | DataType::CharacterVarying(length) => (*length)?,
+        DataType::Char(length) | DataType::Character(length) => match length {
+            Some(length) => *length,
+            None => return Some(1),
+        },
+        _ => return None,
+    };
+    match length {
+        CharacterLength::IntegerLength {
+            length,
+            unit: None | Some(CharLengthUnits::Characters),
+        } => u32::try_from(length).ok(),
+        CharacterLength::IntegerLength { .. } | CharacterLength::Max => None,
     }
 }
 

@@ -1,6 +1,6 @@
 //! The shared `db/search.rs` runtime module every resource's search uses.
 
-use crate::generator::{HEADER, push_serde_derive, push_serde_snake_case};
+use crate::generator::{HEADER, push_derives, push_serde_snake_case, serde_derives};
 
 /// Renders the shared `db/search.rs`. With `serde`, the types an API layer
 /// takes a search from (`Direction`, `Sort`, and the condition enums) derive
@@ -10,7 +10,7 @@ pub fn render_shared(serde: bool) -> String {
     let mut output = format!("{HEADER}\n");
     for (part, next) in SHARED.iter().zip(SHARED.iter().skip(1)) {
         output.push_str(part);
-        push_serde_derive(&mut output, serde);
+        push_derives(&mut output, serde_derives(serde));
         if serde && next.starts_with("pub enum ") {
             push_serde_snake_case(&mut output);
         }

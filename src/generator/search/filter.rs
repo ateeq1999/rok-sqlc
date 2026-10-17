@@ -10,8 +10,8 @@ use super::{
 };
 use crate::generator::sql::{ident, live_condition, str_literal};
 use crate::generator::{
-    HEADER, MAX_WIDTH, conventions, doc_name, keys, push_doc, push_serde_derive,
-    push_serde_snake_case, use_paths,
+    HEADER, MAX_WIDTH, conventions, doc_name, keys, push_derives, push_doc, push_serde_snake_case,
+    serde_derives, use_paths,
 };
 
 /// Renders the resource's `filter.rs`, or `None` when the resource has no
@@ -114,7 +114,7 @@ pub fn render_filter(table: &Table, tables: &[Table], serde: bool) -> Option<Str
     }
     push_doc(&mut output, 0, &doc);
     output.push_str("#[derive(Debug, Clone, Default, PartialEq)]\n");
-    push_serde_derive(&mut output, serde);
+    push_derives(&mut output, serde_derives(serde));
     if serde {
         output.push_str("#[serde(default)]\n");
     }
@@ -211,7 +211,7 @@ pub fn render_filter(table: &Table, tables: &[Table], serde: bool) -> Option<Str
     output.push('\n');
     push_doc(&mut output, 0, &["Columns `search` may sort by."]);
     output.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
-    push_serde_derive(&mut output, serde);
+    push_derives(&mut output, serde_derives(serde));
     if serde {
         push_serde_snake_case(&mut output);
     }

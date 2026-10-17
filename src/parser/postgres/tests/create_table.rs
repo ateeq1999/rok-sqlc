@@ -317,6 +317,16 @@ fn rejects_tables_named_after_generated_modules() {
     );
 }
 
+/// `db/http/` is generated only with `extractors`, so the parser leaves the
+/// name free; a run with extractors rejects it (`generator::table_failures`).
+#[test]
+fn keeps_a_table_named_http() {
+    let parsed = parse("CREATE TABLE http (id BIGSERIAL PRIMARY KEY);");
+    assert!(parsed.failures.is_empty(), "{:?}", parsed.failures);
+    assert_eq!(parsed.schema.tables.len(), 1);
+    assert_eq!(parsed.schema.tables[0].module_name, "http");
+}
+
 #[test]
 fn rejects_module_name_collisions() {
     let parsed = parse(
