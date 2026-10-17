@@ -3,6 +3,7 @@
 //! `validated_schema.sql`). No database needed.
 
 use rok_sqlc_fixture_app::validated_db::players::models::{NewPlayer, UpdatePlayer};
+use rok_sqlc_fixture_app::validated_db::seasons::models::{NewSeason, SeasonId, UpdateSeason};
 use rok_sqlc_fixture_app::validated_db::teams::models::{NewTeam, TeamId, UpdateTeam};
 use rust_decimal::Decimal;
 use validator::{Validate, ValidationErrors};
@@ -195,4 +196,52 @@ fn a_patch_checks_only_the_values_it_sets() {
         name: Some("Northern".to_owned()),
     };
     assert_eq!(team.validate(), Ok(()));
+}
+
+#[test]
+fn a_typed_integer_key_keeps_its_range_rule() {
+    let season = NewSeason {
+        year: SeasonId(2024),
+        previous_year: Some(SeasonId(2023)),
+        title: "Spring".to_owned(),
+    };
+    assert_eq!(season.validate(), Ok(()));
+
+    let season = NewSeason {
+        year: SeasonId(1850),
+        previous_year: Some(SeasonId(1849)),
+        title: "Spring".to_owned(),
+    };
+    let errors = season.validate().expect_err("both ranges are broken");
+    assert_eq!(
+        failures(&errors),
+        [
+            failure(
+                "previous_year",
+                "range",
+                "previous_year must be at least 1900"
+            ),
+            failure("year", "range", "year must be between 1900 and 2100"),
+        ]
+    );
+    // The error carries the number inside the id as its `value`.
+    assert_eq!(
+        errors.field_errors()["year"][0].params["value"],
+        serde_json::json!(1850)
+    );
+
+    // A patch checks the id only when it sets one.
+    assert_eq!(UpdateSeason::default().validate(), Ok(()));
+    let patch = UpdateSeason {
+        previous_year: Some(Some(SeasonId(1899))),
+        ..UpdateSeason::default()
+    };
+    assert_eq!(
+        failures(&patch.validate().expect_err("the range is broken")),
+        [failure(
+            "previous_year",
+            "range",
+            "previous_year must be at least 1900"
+        )]
+    );
 }

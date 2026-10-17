@@ -341,6 +341,10 @@ fn extractors_generate_the_http_module() -> Result<()> {
     let db_mod = &generated[Path::new("mod.rs")];
     assert!(db_mod.contains("pub mod http;"), "{db_mod}");
     assert!(db_mod.contains("//   axum = \"0.8\"\n"), "{db_mod}");
+    assert!(
+        db_mod.contains("//   serde_path_to_error = \"0.1\"\n"),
+        "{db_mod}"
+    );
     assert!(db_mod.contains("//   serde_json = \"1\"\n"), "{db_mod}");
     // Everything else is what the same run without `extractors` generates.
     for (path, text) in &plain {

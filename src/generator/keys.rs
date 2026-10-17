@@ -327,8 +327,14 @@ pub fn render_key_type(output: &mut String, table: &Table, derives: DeriveOption
                 .filter(|id| id.module == table.module_name)
             {
                 render_typed_id(output, table, key, &id.name, serde);
-                if validate && key.base_type() == BaseType::Text {
-                    super::validate::push_measured_id(output, &id.name);
+                if validate {
+                    match key.base_type() {
+                        BaseType::Text => super::validate::push_measured_id(output, &id.name),
+                        BaseType::Integer => {
+                            super::validate::push_ranged_id(output, &id.name, &key.sqlx_type);
+                        }
+                        _ => {}
+                    }
                 }
             }
         }

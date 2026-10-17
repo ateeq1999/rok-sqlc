@@ -43,16 +43,16 @@ fn render_mod(extractors: &[Extractor]) -> String {
 }
 
 const MOD_DOC: &str = "//! Validated bodies for HTTP handlers: the Rok error envelope, and the
-//! rules that turn a request body into a validated body or a
-//! [`BodyRejection`], shared by each framework's extractor.
+//! rules that turn a framework's JSON body, or its rejection, into a
+//! validated body or a [`BodyRejection`], shared by each framework's
+//! extractor.
 ";
 
 /// What every framework's extractor shares: the envelope, the codes, the
-/// rejection and its status and body, and the reading of a body.
+/// rejection and its status and body, and the checking of a body.
 const SHARED: &str = r#"use std::borrow::Cow;
 use std::fmt;
 
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::error::Category;
 use validator::{Validate, ValidationError, ValidationErrors, ValidationErrorsKind};
@@ -61,12 +61,18 @@ use validator::{Validate, ValidationError, ValidationErrors, ValidationErrorsKin
 /// `Content-Type`, or a body that could not be read.
 pub const MALFORMED_BODY: &str = "MALFORMED_BODY";
 
+/// The `code` of a body over the framework's size limit.
+pub const PAYLOAD_TOO_LARGE: &str = "PAYLOAD_TOO_LARGE";
+
 /// The `code` of a JSON body that does not fit the type or breaks a
 /// validation rule.
 pub const VALIDATION_FAILED: &str = "VALIDATION_FAILED";
 
 /// The message of a body breaking validation rules, which `details` lists.
 const FAILED_RULES: &str = "the request body failed validation";
+
+/// The message of a body over the framework's size limit.
+const OVER_LIMIT: &str = "the request body is over the size limit";
 
 /// Where [`BodyRejection::unfit`] records serde's message: validator's key
 /// for errors about the whole struct.
@@ -89,7 +95,8 @@ pub struct ErrorBody {
 pub struct ErrorPayload {
     /// A message for people.
     pub message: String,
-    /// A code for programs: [`MALFORMED_BODY`] or [`VALIDATION_FAILED`].
+    /// A code for programs: [`MALFORMED_BODY`], [`PAYLOAD_TOO_LARGE`] or
+    /// [`VALIDATION_FAILED`].
     pub code: String,
     /// The broken validation rules by field, as validator serializes them,
     /// when there are any.
@@ -108,6 +115,10 @@ pub enum BodyRejection {
         /// What is wrong with the body.
         message: String,
     },
+    /// The body is over the framework's size limit (axum's
+    /// `DefaultBodyLimit`, actix-web's `JsonConfig`). Answered `413` with
+    /// [`PAYLOAD_TOO_LARGE`].
+    TooLarge,
     /// The body is JSON but not a valid value of the type: it breaks
     /// validation rules, or it does not fit the type (a missing field, a
     /// wrong type, an unknown label). Answered `422` with
@@ -127,18 +138,25 @@ impl BodyRejection {
         }
     }
 
-    /// The rejection of a body that could not be read: over the framework's
-    /// size limit when `over_limit`, or cut short. Both frameworks answer it
-    /// with the same message.
+    /// The rejection of a body that could not be read, other than one over
+    /// the size limit.
     #[must_use]
-    pub fn unreadable(over_limit: bool) -> Self {
-        let message = if over_limit {
-            "the request body is over the size limit"
-        } else {
-            "the request body could not be read"
-        };
+    pub fn unreadable() -> Self {
         BodyRejection::Malformed {
-            message: message.to_owned(),
+            message: "the request body could not be read".to_owned(),
+        }
+    }
+
+    /// The rejection of a body serde could not parse as the type: bad
+    /// syntax, or well-formed JSON that does not fit the type, with serde's
+    /// own message, which both frameworks give alike.
+    #[must_use]
+    pub fn from_serde(error: &serde_json::Error) -> Self {
+        match error.classify() {
+            Category::Data => BodyRejection::unfit(error.to_string()),
+            Category::Io | Category::Syntax | Category::Eof => BodyRejection::Malformed {
+                message: format!("the request body is not valid JSON: {error}"),
+            },
         }
     }
 
@@ -155,12 +173,13 @@ impl BodyRejection {
     }
 
     /// The HTTP status code answering the rejection: `400` for
-    /// [`BodyRejection::Malformed`], `422` for
-    /// [`BodyRejection::ValidationFailure`].
+    /// [`BodyRejection::Malformed`], `413` for [`BodyRejection::TooLarge`],
+    /// `422` for [`BodyRejection::ValidationFailure`].
     #[must_use]
     pub fn status(&self) -> u16 {
         match self {
             BodyRejection::Malformed { .. } => 400,
+            BodyRejection::TooLarge => 413,
             BodyRejection::ValidationFailure(_) => 422,
         }
     }
@@ -170,6 +189,7 @@ impl BodyRejection {
     pub fn body(&self) -> ErrorBody {
         let (message, code, details) = match self {
             BodyRejection::Malformed { message } => (message.clone(), MALFORMED_BODY, None),
+            BodyRejection::TooLarge => (OVER_LIMIT.to_owned(), PAYLOAD_TOO_LARGE, None),
             BodyRejection::ValidationFailure(errors) => match unfit_message(errors) {
                 Some(message) => (message.to_owned(), VALIDATION_FAILED, None),
                 None => (
@@ -213,34 +233,13 @@ fn unfit_message(errors: &ValidationErrors) -> Option<&str> {
     }
 }
 
-/// Whether a `Content-Type` value names JSON: `application/json` or
-/// `application/<anything>+json`, whatever its parameters.
-#[must_use]
-pub fn is_json(content_type: &str) -> bool {
-    let essence = content_type
-        .split(';')
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-    essence == "application/json"
-        || (essence.starts_with("application/") && essence.ends_with("+json"))
-}
-
-/// Reads a JSON request body as a validated `T`.
+/// Checks a deserialized body against its validation rules.
 ///
 /// # Errors
 ///
-/// [`BodyRejection::Malformed`] when `bytes` is not JSON, and
-/// [`BodyRejection::ValidationFailure`] when it does not fit `T` or breaks a
-/// validation rule.
-pub fn validated<T: DeserializeOwned + Validate>(bytes: &[u8]) -> Result<T, BodyRejection> {
-    let body: T = serde_json::from_slice(bytes).map_err(|error| match error.classify() {
-        Category::Data => BodyRejection::unfit(error.to_string()),
-        Category::Io | Category::Syntax | Category::Eof => BodyRejection::Malformed {
-            message: format!("the request body is not valid JSON: {error}"),
-        },
-    })?;
+/// [`BodyRejection::ValidationFailure`] when `body` breaks a validation
+/// rule.
+pub fn validated<T: Validate>(body: T) -> Result<T, BodyRejection> {
     body.validate().map_err(BodyRejection::ValidationFailure)?;
     Ok(body)
 }
@@ -249,13 +248,17 @@ pub fn validated<T: DeserializeOwned + Validate>(bytes: &[u8]) -> Result<T, Body
 /// `db/http/axum.rs`.
 const AXUM: &str = r"//! The axum extractor: [`ValidatedJson<T>`] takes a validated body, and
 //! [`BodyRejection`] answers anything else in the Rok error envelope.
+//!
+//! The body goes through `axum::Json<T>`, so the router's `DefaultBodyLimit`
+//! applies (2 MiB unless set). A body over it is answered `413`.
 
+use std::error::Error;
 use std::ops::Deref;
 
 use axum::Json;
-use axum::body::Bytes;
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRequest, Request};
-use axum::http::{StatusCode, header};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::de::DeserializeOwned;
 use validator::Validate;
@@ -292,21 +295,49 @@ where
     type Rejection = BodyRejection;
 
     async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let is_json = request
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .is_some_and(super::is_json);
-        if !is_json {
-            return Err(BodyRejection::not_json());
-        }
-        let bytes = Bytes::from_request(request, state)
+        let Json(body) = Json::<T>::from_request(request, state)
             .await
-            .map_err(|rejection| {
-                BodyRejection::unreadable(rejection.status() == StatusCode::PAYLOAD_TOO_LARGE)
-            })?;
-        super::validated(&bytes).map(Self)
+            .map_err(|rejection| rejected(&rejection))?;
+        super::validated(body).map(Self)
     }
+}
+
+/// The [`BodyRejection`] answering axum's own rejection.
+fn rejected(rejection: &JsonRejection) -> BodyRejection {
+    match rejection {
+        JsonRejection::MissingJsonContentType(_) => BodyRejection::not_json(),
+        JsonRejection::BytesRejection(rejection)
+            if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE =>
+        {
+            BodyRejection::TooLarge
+        }
+        JsonRejection::JsonDataError(_) | JsonRejection::JsonSyntaxError(_) => {
+            match serde_error(rejection) {
+                Some(error) => BodyRejection::from_serde(error),
+                None => BodyRejection::Malformed {
+                    message: rejection.body_text(),
+                },
+            }
+        }
+        _ => BodyRejection::unreadable(),
+    }
+}
+
+/// serde's own error inside axum's rejection. axum wraps a parse error in
+/// `serde_path_to_error`'s, whose message adds the field path, so the
+/// message comes from serde's error inside it, as actix-web gives it.
+fn serde_error(rejection: &JsonRejection) -> Option<&serde_json::Error> {
+    let mut source = rejection.source();
+    while let Some(error) = source {
+        if let Some(error) = error.downcast_ref::<serde_json::Error>() {
+            return Some(error);
+        }
+        if let Some(error) = error.downcast_ref::<serde_path_to_error::Error<serde_json::Error>>() {
+            return Some(error.inner());
+        }
+        source = error.source();
+    }
+    None
 }
 
 impl IntoResponse for BodyRejection {
@@ -321,15 +352,20 @@ impl IntoResponse for BodyRejection {
 const ACTIX_WEB: &str = r"//! The actix-web extractor: [`ValidatedJson<T>`] takes a validated body,
 //! and [`BodyRejection`] answers anything else in the Rok error envelope, so
 //! no `JsonConfig` error handler is needed.
+//!
+//! The body goes through `web::Json<T>`, so the app's `JsonConfig` applies:
+//! its limit (2 MiB unless set; a body over it is answered `413`) and its
+//! `Content-Type` predicate. Leave its error handler unset: an error it
+//! returns is answered as a malformed body with that error's message.
 
 use std::future::Future;
 use std::ops::Deref;
 use std::pin::Pin;
 
 use actix_web::dev::Payload;
-use actix_web::http::{StatusCode, header};
-use actix_web::web::Bytes;
-use actix_web::{FromRequest, HttpRequest, HttpResponse, ResponseError};
+use actix_web::error::JsonPayloadError;
+use actix_web::http::StatusCode;
+use actix_web::{FromRequest, HttpRequest, HttpResponse, ResponseError, web};
 use serde::de::DeserializeOwned;
 use validator::Validate;
 
@@ -337,8 +373,7 @@ pub use super::BodyRejection;
 
 /// A JSON request body that deserialized into `T` and passed every
 /// validation rule. Any `T: DeserializeOwned + Validate` works: a generated
-/// create input or update patch, or a hand-written request type. The body is
-/// read within the limit of the app's `PayloadConfig`.
+/// create input or update patch, or a hand-written request type.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ValidatedJson<T>(pub T);
 
@@ -366,24 +401,34 @@ where
     type Future = Pin<Box<dyn Future<Output = Result<Self, BodyRejection>>>>;
 
     fn from_request(request: &HttpRequest, payload: &mut Payload) -> Self::Future {
-        let is_json = request
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .is_some_and(super::is_json);
-        // Read only a JSON body, within the app's `PayloadConfig` limit.
-        let bytes = is_json.then(|| Bytes::from_request(request, payload));
+        let body = web::Json::<T>::from_request(request, payload);
         Box::pin(async move {
-            let Some(bytes) = bytes else {
-                return Err(BodyRejection::not_json());
-            };
-            let bytes = bytes.await.map_err(|error| {
-                BodyRejection::unreadable(
-                    error.as_response_error().status_code() == StatusCode::PAYLOAD_TOO_LARGE,
-                )
-            })?;
-            super::validated(&bytes).map(Self)
+            let web::Json(body) = body.await.map_err(|error| rejected(&error))?;
+            super::validated(body).map(Self)
         })
+    }
+}
+
+/// The [`BodyRejection`] answering actix-web's own error.
+fn rejected(error: &actix_web::Error) -> BodyRejection {
+    let Some(error) = error.as_error::<JsonPayloadError>() else {
+        // What a `JsonConfig` error handler returned.
+        return BodyRejection::Malformed {
+            message: error.to_string(),
+        };
+    };
+    match error {
+        JsonPayloadError::OverflowKnownLength { .. } | JsonPayloadError::Overflow { .. } => {
+            BodyRejection::TooLarge
+        }
+        JsonPayloadError::Payload(error)
+            if error.status_code() == StatusCode::PAYLOAD_TOO_LARGE =>
+        {
+            BodyRejection::TooLarge
+        }
+        JsonPayloadError::ContentType => BodyRejection::not_json(),
+        JsonPayloadError::Deserialize(error) => BodyRejection::from_serde(error),
+        _ => BodyRejection::unreadable(),
     }
 }
 

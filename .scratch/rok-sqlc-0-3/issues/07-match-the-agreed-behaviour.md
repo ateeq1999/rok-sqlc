@@ -16,8 +16,12 @@ Update ADR 0015, the README section, and the CHANGELOG `[0.3.0]` (0.3.0 is not r
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Fixture tests for both frameworks: a configured limit gives 413 `PAYLOAD_TOO_LARGE` with identical bodies; actix's `JsonConfig` limit and axum's `DefaultBodyLimit` are honoured; every earlier rejection case still matches across frameworks.
-- [ ] A typed-id field with a range rule rejects out-of-range values in the fixture's `validate()` tests.
-- [ ] The full suite passes, including PostgreSQL and the README drift tests.
+- [x] Fixture tests for both frameworks: a configured limit gives 413 `PAYLOAD_TOO_LARGE` with identical bodies; actix's `JsonConfig` limit and axum's `DefaultBodyLimit` are honoured; every earlier rejection case still matches across frameworks.
+- [x] A typed-id field with a range rule rejects out-of-range values in the fixture's `validate()` tests.
+- [x] The full suite passes, including PostgreSQL and the README drift tests.
+
+## Comments
+
+- Implemented on branch `rok-sqlc-0-3-agreed`. Both extractors go through `axum::Json` / `web::Json` and take the message from serde's own error (axum: downcast to `serde_path_to_error::Error<serde_json::Error>`, since its `source()` skips serde's error; the consuming crate now needs `serde_path_to_error = "0.1"` with axum). Over-limit bodies answer 413 `PAYLOAD_TOO_LARGE` (`BodyRejection::TooLarge`). Integer typed ids implement `validator::ValidateRange`. Correction: actix-web 4.17's `JsonConfig` default limit is 2 MiB (`DEFAULT_LIMIT = 2_097_152`), the same as axum's, not 32 KB; the docs say so. Still different by framework: which `Content-Type`s count as JSON (actix-web also accepts `text/json` and its `JsonConfig` predicate; axum only `application/json` and `application/*+json`).

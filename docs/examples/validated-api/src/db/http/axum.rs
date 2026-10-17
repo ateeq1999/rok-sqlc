@@ -2,13 +2,17 @@
 
 //! The axum extractor: [`ValidatedJson<T>`] takes a validated body, and
 //! [`BodyRejection`] answers anything else in the Rok error envelope.
+//!
+//! The body goes through `axum::Json<T>`, so the router's `DefaultBodyLimit`
+//! applies (2 MiB unless set). A body over it is answered `413`.
 
+use std::error::Error;
 use std::ops::Deref;
 
 use axum::Json;
-use axum::body::Bytes;
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRequest, Request};
-use axum::http::{StatusCode, header};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::de::DeserializeOwned;
 use validator::Validate;
@@ -45,21 +49,49 @@ where
     type Rejection = BodyRejection;
 
     async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let is_json = request
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .is_some_and(super::is_json);
-        if !is_json {
-            return Err(BodyRejection::not_json());
-        }
-        let bytes = Bytes::from_request(request, state)
+        let Json(body) = Json::<T>::from_request(request, state)
             .await
-            .map_err(|rejection| {
-                BodyRejection::unreadable(rejection.status() == StatusCode::PAYLOAD_TOO_LARGE)
-            })?;
-        super::validated(&bytes).map(Self)
+            .map_err(|rejection| rejected(&rejection))?;
+        super::validated(body).map(Self)
     }
+}
+
+/// The [`BodyRejection`] answering axum's own rejection.
+fn rejected(rejection: &JsonRejection) -> BodyRejection {
+    match rejection {
+        JsonRejection::MissingJsonContentType(_) => BodyRejection::not_json(),
+        JsonRejection::BytesRejection(rejection)
+            if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE =>
+        {
+            BodyRejection::TooLarge
+        }
+        JsonRejection::JsonDataError(_) | JsonRejection::JsonSyntaxError(_) => {
+            match serde_error(rejection) {
+                Some(error) => BodyRejection::from_serde(error),
+                None => BodyRejection::Malformed {
+                    message: rejection.body_text(),
+                },
+            }
+        }
+        _ => BodyRejection::unreadable(),
+    }
+}
+
+/// serde's own error inside axum's rejection. axum wraps a parse error in
+/// `serde_path_to_error`'s, whose message adds the field path, so the
+/// message comes from serde's error inside it, as actix-web gives it.
+fn serde_error(rejection: &JsonRejection) -> Option<&serde_json::Error> {
+    let mut source = rejection.source();
+    while let Some(error) = source {
+        if let Some(error) = error.downcast_ref::<serde_json::Error>() {
+            return Some(error);
+        }
+        if let Some(error) = error.downcast_ref::<serde_path_to_error::Error<serde_json::Error>>() {
+            return Some(error.inner());
+        }
+        source = error.source();
+    }
+    None
 }
 
 impl IntoResponse for BodyRejection {

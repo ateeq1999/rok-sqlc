@@ -16,6 +16,15 @@ pub fn push_measured_id(output: &mut String, name: &str) {
     ));
 }
 
+/// Appends `validator::ValidateRange<inner>` for the typed id `name` over
+/// the integer `inner`, comparing the number inside, so a `range` rule
+/// applies through the id.
+pub fn push_ranged_id(output: &mut String, name: &str, inner: &str) {
+    output.push_str(&format!(
+        "impl validator::ValidateRange<{inner}> for {name} {{\n    fn greater_than(&self, max: {inner}) -> Option<bool> {{\n        validator::ValidateRange::greater_than(&self.0, max)\n    }}\n\n    fn less_than(&self, min: {inner}) -> Option<bool> {{\n        validator::ValidateRange::less_than(&self.0, min)\n    }}\n}}\n\n"
+    ));
+}
+
 /// rustfmt's default `attr_fn_like_width`: the arguments of a rule longer
 /// than this go one per line.
 const ATTR_FN_LIKE_WIDTH: usize = 70;
@@ -64,13 +73,15 @@ impl RuleKind {
 const DECIMAL: &str = "rust_decimal::Decimal";
 
 /// The `range` rule of a numeric column, from its range checks. A typed id
-/// field has none: `validator` cannot compare the id with a number.
+/// over an integer implements `validator::ValidateRange` (see
+/// [`push_ranged_id`]), so its field takes the rule too; a typed id over a
+/// decimal gets none, since the decimal check takes a `Decimal`.
 fn range_rule(column: &Column) -> Option<Rule> {
     let range = column.value_range.as_ref()?;
-    if column.typed_id.is_some() {
+    let base = column.base_type();
+    if column.typed_id.is_some() && base == BaseType::Decimal {
         return None;
     }
-    let base = column.base_type();
     let (float, decimal) = (base == BaseType::Float, base == BaseType::Decimal);
     if !(float || decimal || base == BaseType::Integer) {
         return None;

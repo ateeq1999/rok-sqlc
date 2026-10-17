@@ -3,15 +3,20 @@
 //! The actix-web extractor: [`ValidatedJson<T>`] takes a validated body,
 //! and [`BodyRejection`] answers anything else in the Rok error envelope, so
 //! no `JsonConfig` error handler is needed.
+//!
+//! The body goes through `web::Json<T>`, so the app's `JsonConfig` applies:
+//! its limit (2 MiB unless set; a body over it is answered `413`) and its
+//! `Content-Type` predicate. Leave its error handler unset: an error it
+//! returns is answered as a malformed body with that error's message.
 
 use std::future::Future;
 use std::ops::Deref;
 use std::pin::Pin;
 
 use actix_web::dev::Payload;
-use actix_web::http::{StatusCode, header};
-use actix_web::web::Bytes;
-use actix_web::{FromRequest, HttpRequest, HttpResponse, ResponseError};
+use actix_web::error::JsonPayloadError;
+use actix_web::http::StatusCode;
+use actix_web::{FromRequest, HttpRequest, HttpResponse, ResponseError, web};
 use serde::de::DeserializeOwned;
 use validator::Validate;
 
@@ -19,8 +24,7 @@ pub use super::BodyRejection;
 
 /// A JSON request body that deserialized into `T` and passed every
 /// validation rule. Any `T: DeserializeOwned + Validate` works: a generated
-/// create input or update patch, or a hand-written request type. The body is
-/// read within the limit of the app's `PayloadConfig`.
+/// create input or update patch, or a hand-written request type.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ValidatedJson<T>(pub T);
 
@@ -48,24 +52,34 @@ where
     type Future = Pin<Box<dyn Future<Output = Result<Self, BodyRejection>>>>;
 
     fn from_request(request: &HttpRequest, payload: &mut Payload) -> Self::Future {
-        let is_json = request
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .is_some_and(super::is_json);
-        // Read only a JSON body, within the app's `PayloadConfig` limit.
-        let bytes = is_json.then(|| Bytes::from_request(request, payload));
+        let body = web::Json::<T>::from_request(request, payload);
         Box::pin(async move {
-            let Some(bytes) = bytes else {
-                return Err(BodyRejection::not_json());
-            };
-            let bytes = bytes.await.map_err(|error| {
-                BodyRejection::unreadable(
-                    error.as_response_error().status_code() == StatusCode::PAYLOAD_TOO_LARGE,
-                )
-            })?;
-            super::validated(&bytes).map(Self)
+            let web::Json(body) = body.await.map_err(|error| rejected(&error))?;
+            super::validated(body).map(Self)
         })
+    }
+}
+
+/// The [`BodyRejection`] answering actix-web's own error.
+fn rejected(error: &actix_web::Error) -> BodyRejection {
+    let Some(error) = error.as_error::<JsonPayloadError>() else {
+        // What a `JsonConfig` error handler returned.
+        return BodyRejection::Malformed {
+            message: error.to_string(),
+        };
+    };
+    match error {
+        JsonPayloadError::OverflowKnownLength { .. } | JsonPayloadError::Overflow { .. } => {
+            BodyRejection::TooLarge
+        }
+        JsonPayloadError::Payload(error)
+            if error.status_code() == StatusCode::PAYLOAD_TOO_LARGE =>
+        {
+            BodyRejection::TooLarge
+        }
+        JsonPayloadError::ContentType => BodyRejection::not_json(),
+        JsonPayloadError::Deserialize(error) => BodyRejection::from_serde(error),
+        _ => BodyRejection::unreadable(),
     }
 }
 

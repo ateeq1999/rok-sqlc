@@ -37,6 +37,16 @@ impl std::fmt::Display for MemberId {
     }
 }
 
+impl validator::ValidateRange<i64> for MemberId {
+    fn greater_than(&self, max: i64) -> Option<bool> {
+        validator::ValidateRange::greater_than(&self.0, max)
+    }
+
+    fn less_than(&self, min: i64) -> Option<bool> {
+        validator::ValidateRange::less_than(&self.0, min)
+    }
+}
+
 /// A row of the `members` table.
 #[derive(Debug, Clone, PartialEq, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
 pub struct Member {
