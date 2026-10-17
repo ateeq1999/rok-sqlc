@@ -2703,7 +2703,8 @@ mod tests {
             (
                 "0002.up.sql",
                 "ALTER TABLE readings ALTER COLUMN id TYPE BIGINT, ALTER COLUMN code SET DATA TYPE UUID USING code::uuid;
-                 ALTER TABLE readings ALTER amount TYPE NUMERIC(12, 2) USING amount::numeric;",
+                 ALTER TABLE readings ALTER amount TYPE NUMERIC(12, 2) USING amount::numeric;
+                 ALTER TABLE readings ALTER COLUMN note TYPE BYTEA USING convert_to(note, 'UTF8');",
             ),
         ]);
         assert!(parsed.failures.is_empty(), "{:?}", parsed.failures);
@@ -2725,7 +2726,7 @@ mod tests {
                 ("i64", "i64", false),
                 ("Option<uuid::Uuid>", "uuid::Uuid", true),
                 ("rust_decimal::Decimal", "rust_decimal::Decimal", false),
-                ("Option<String>", "String", true),
+                ("Option<Vec<u8>>", "Vec<u8>", true),
             ]
         );
         assert_eq!(table.primary_key, ["id"]);
@@ -2824,8 +2825,8 @@ mod tests {
     fn rejects_alter_column_changes_it_cannot_apply_with_their_location() {
         let cases = [
             (
-                "ALTER TABLE notes ALTER COLUMN body TYPE INTERVAL;",
-                "ALTER COLUMN: column `body`: type `INTERVAL` is not supported yet",
+                "ALTER TABLE notes ALTER COLUMN body TYPE INET;",
+                "ALTER COLUMN: column `body`: type `INET` is not supported yet",
             ),
             (
                 "ALTER TABLE notes ALTER COLUMN body TYPE BIGSERIAL;",
