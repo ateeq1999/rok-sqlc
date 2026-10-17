@@ -1,6 +1,6 @@
-
 use super::super::test_support::{column, table};
 use super::*;
+
 /// Renders `table` as if generated on its own.
 fn render_alone(table: &Table) -> String {
     render(table, &[])
