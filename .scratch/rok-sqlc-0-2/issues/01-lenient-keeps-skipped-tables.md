@@ -4,8 +4,12 @@
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Generate a table once, break it in a later migration, then regenerate with `--lenient`. Its files are unchanged byte for byte, and the warning names the table (CLI seam).
-- [ ] A dropped table is still removed in a lenient run.
-- [ ] A strict run that hits the same failure writes nothing.
+- [x] Generate a table once, break it in a later migration, then regenerate with `--lenient`. Its files are unchanged byte for byte, and the warning names the table (CLI seam).
+- [x] A dropped table is still removed in a lenient run.
+- [x] A strict run that hits the same failure writes nothing.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-2`. Review fixes in 760d008..e2255b5, large-file refactor up to 6fa10e3, release prep in the 0.2.0 commit. See CHANGELOG.md [0.2.0] and the ADRs.

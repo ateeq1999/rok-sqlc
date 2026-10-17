@@ -8,7 +8,11 @@
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] A query-file function with an enum cast parameter compiles and runs against PostgreSQL.
-- [ ] A migration that renames an enum generates the new name, and the fixture decodes it against PostgreSQL.
+- [x] A query-file function with an enum cast parameter compiles and runs against PostgreSQL.
+- [x] A migration that renames an enum generates the new name, and the fixture decodes it against PostgreSQL.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-2`. Review fixes in 760d008..e2255b5, large-file refactor up to 6fa10e3, release prep in the 0.2.0 commit. See CHANGELOG.md [0.2.0] and the ADRs.

@@ -14,7 +14,11 @@ This interacts with ticket 03: dropping a default can make a managed column fail
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] A migration that widens a type, adds NOT NULL and drops a default produces a model whose generated code round-trips against PostgreSQL with the final shape.
-- [ ] Unsupported ALTER COLUMN forms still fail with path:line.
+- [x] A migration that widens a type, adds NOT NULL and drops a default produces a model whose generated code round-trips against PostgreSQL with the final shape.
+- [x] Unsupported ALTER COLUMN forms still fail with path:line.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-2`. Review fixes in 760d008..e2255b5, large-file refactor up to 6fa10e3, release prep in the 0.2.0 commit. See CHANGELOG.md [0.2.0] and the ADRs.

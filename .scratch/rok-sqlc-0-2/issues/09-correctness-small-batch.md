@@ -7,8 +7,12 @@
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] A table with 62-character column names gets a working joined read against PostgreSQL.
-- [ ] `ON CONFLICT ON CONSTRAINT` resolves default constraint names across two tables the way PostgreSQL does (CLI seam).
-- [ ] The README drift test still passes with the corrected flag text.
+- [x] A table with 62-character column names gets a working joined read against PostgreSQL.
+- [x] `ON CONFLICT ON CONSTRAINT` resolves default constraint names across two tables the way PostgreSQL does (CLI seam).
+- [x] The README drift test still passes with the corrected flag text.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-2`. Review fixes in 760d008..e2255b5, large-file refactor up to 6fa10e3, release prep in the 0.2.0 commit. See CHANGELOG.md [0.2.0] and the ADRs.

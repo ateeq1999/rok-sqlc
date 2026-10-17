@@ -12,9 +12,13 @@ In that case the table fails with a `path:line` diagnostic. The diagnostic names
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] At the CLI seam:
+- [x] At the CLI seam:
   - a NOT NULL managed column with no default and no trigger fails;
   - the same column with a default, an identity, or a BEFORE INSERT trigger generates.
-- [ ] Running the `rok` preset over the corpus changes `EXPECTED` only for tables that really have no source of values. The report lists any such tables.
+- [x] Running the `rok` preset over the corpus changes `EXPECTED` only for tables that really have no source of values. The report lists any such tables.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-2`. Review fixes in 760d008..e2255b5, large-file refactor up to 6fa10e3, release prep in the 0.2.0 commit. See CHANGELOG.md [0.2.0] and the ADRs.

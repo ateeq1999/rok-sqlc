@@ -20,8 +20,12 @@ Update the README's type table and limitations.
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] A fixture table with all three types round-trips create/get/update/search against PostgreSQL.
-- [ ] The corpus `hr` legacy `employees` table (`tenure INTERVAL`) now generates. Update `EXPECTED`.
-- [ ] Query-file casts to these types infer the mapped types.
+- [x] A fixture table with all three types round-trips create/get/update/search against PostgreSQL.
+- [x] The corpus `hr` legacy `employees` table (`tenure INTERVAL`) now generates. Update `EXPECTED`.
+- [x] Query-file casts to these types infer the mapped types.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-2`. Review fixes in 760d008..e2255b5, large-file refactor up to 6fa10e3, release prep in the 0.2.0 commit. See CHANGELOG.md [0.2.0] and the ADRs.

@@ -7,6 +7,8 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-17
+
 ### Breaking changes to the generated API
 
 - On a table with the tenant column, `{Table}Filter` has no field for the
@@ -363,5 +365,6 @@ that break code written against earlier development snapshots.
   paths under the current directory relative to it (also when they come
   from `rok-sqlc.toml`).
 
-[Unreleased]: https://github.com/ateeq1999/rok-sqlc/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ateeq1999/rok-sqlc/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ateeq1999/rok-sqlc/releases/tag/v0.1.0

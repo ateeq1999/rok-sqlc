@@ -14,8 +14,12 @@
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] An enum-keyed table gets an id type, and a foreign key into it uses it (PostgreSQL seam).
-- [ ] With a module rename, `core.users` and `audit.users` both generate (CLI seam).
-- [ ] Each collision case fails with a diagnostic.
+- [x] An enum-keyed table gets an id type, and a foreign key into it uses it (PostgreSQL seam).
+- [x] With a module rename, `core.users` and `audit.users` both generate (CLI seam).
+- [x] Each collision case fails with a diagnostic.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-2`. Review fixes in 760d008..e2255b5, large-file refactor up to 6fa10e3, release prep in the 0.2.0 commit. See CHANGELOG.md [0.2.0] and the ADRs.

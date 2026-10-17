@@ -12,7 +12,11 @@ Update ADR 0013.
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Against PostgreSQL, deserializing `{}` leaves a column untouched, and `{"col": null}` sets it to NULL.
-- [ ] A filter round-trips through JSON and returns the same rows.
+- [x] Against PostgreSQL, deserializing `{}` leaves a column untouched, and `{"col": null}` sets it to NULL.
+- [x] A filter round-trips through JSON and returns the same rows.
+
+## Comments
+
+Resolved on integration branch `rok-sqlc-0-2`. Review fixes in 760d008..e2255b5, large-file refactor up to 6fa10e3, release prep in the 0.2.0 commit. See CHANGELOG.md [0.2.0] and the ADRs.
