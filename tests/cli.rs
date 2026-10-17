@@ -2834,3 +2834,49 @@ fn an_unparsable_statement_stops_the_run_at_its_line() -> Result<()> {
     );
     Ok(())
 }
+
+/// Two tables whose struct names agree (`category` and `categories`) both
+/// define `Category` and `CategoryFilter`; a resource whose files would
+/// import both fails the run, even when neither is a typed id.
+#[test]
+fn a_file_importing_two_items_of_one_name_fails_generation() -> Result<()> {
+    let dir = TempDir::new()?;
+    let schema = dir.path().join("schema.sql");
+    fs::write(
+        &schema,
+        "CREATE TABLE category (code TEXT NOT NULL UNIQUE, label TEXT NOT NULL);\n\
+         CREATE TABLE categories (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL);\n\
+         CREATE TABLE products (\n\
+             id BIGSERIAL PRIMARY KEY,\n\
+             category_code TEXT NOT NULL REFERENCES category (code),\n\
+             category_id BIGINT NOT NULL REFERENCES categories (id)\n\
+         );\n",
+    )?;
+    let out = output_dir(&dir);
+
+    let output = run_binary(&[
+        "g",
+        "-s",
+        schema.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+        "--json",
+        r#"{"relationships": {"products": {"category": "coded_category"}}}"#,
+    ]);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(
+            "would import two items named `CategoryFilter`, from `categories` and `category`"
+        ) || stderr
+            .contains("would import two items named `Category`, from `categories` and `category`"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("`[modules]`") && stderr.contains("`[relationships]`"),
+        "{stderr}"
+    );
+    assert!(!out.exists());
+    Ok(())
+}

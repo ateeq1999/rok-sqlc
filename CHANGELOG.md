@@ -44,8 +44,9 @@ the *generated* API count as breaking (see ADR 0012).
   table, or a name that isn't a snake_case Rust identifier, fails the run.
 - Generation fails with a diagnostic when a resource would import two typed
   ids of one name (from tables like `user` and `users`), or an imported typed
-  id named like one of the resource's own items. Before, the generated code
-  didn't compile.
+  id named like one of the resource's own items, or any file would import
+  two other items of one name (the row structs and filters of `category` and
+  `categories`, say). Before, the generated code didn't compile.
 - `INTERVAL` maps to `sqlx::postgres::types::PgInterval`, `BYTEA` to
   `Vec<u8>` (borrowed as `&[u8]` in key, lookup, and query parameters), and
   `TIME WITH TIME ZONE`/`TIMETZ` to `sqlx::postgres::types::PgTimeTz`, in

@@ -305,8 +305,11 @@ its raw type. An enum primary key's typed id wraps the enum
 (`PriorityNoteId(pub types::TicketPriority)`). Like the enum, it is neither
 `Ord` nor `Display`. Two tables whose struct names agree (`user` and `users`)
 both define `UserId`. A file that would import both, or an imported id named
-like one of the file's own items, fails the run. Rename one table under
-[`[modules]`](#rok-sqlctoml).
+like one of the file's own items, fails the run. So does any other pair of
+imported items of one name, such as the row structs and filters of `category`
+and `categories`. Rename one table under [`[modules]`](#rok-sqlctoml), or
+rename or opt out the relationship that needs the import under
+[`[relationships]`](#rok-sqlctoml).
 
 **Create inputs and update patches.** `NewProduct` leaves out generated
 columns (serial, identity, `GENERATED`); a serial column is `NOT NULL` in the

@@ -11,9 +11,7 @@ pub mod sql;
 pub mod types;
 pub mod write;
 
-#[cfg(test)]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::parser::Rejection;
 use crate::queries::AnalyzedQuery;
@@ -265,7 +263,72 @@ pub fn plan_files_with_queries(
     files.push((output.join("mod.rs"), render_db_mod(tables, &db_mod)));
     files.push((output.join("schema.rs"), render_schema_snapshot(schema_sql)));
 
+    for (path, text) in &files {
+        check_imports(output, path, text)?;
+    }
     Ok(files)
+}
+
+/// Fails when the generated file at `path` would import two items of one
+/// name from different modules: row structs, filters, typed ids, or key
+/// structs of two tables whose struct names agree (`category` and
+/// `categories` both define `Category`). Reads the file's `use` declarations,
+/// which the renderers write in one of two shapes: `use a::b::Item;` and
+/// `use a::b::{One, Two};`, possibly wrapped over several lines.
+fn check_imports(output: &Path, path: &Path, text: &str) -> Result<(), String> {
+    let mut imported: Vec<(String, String)> = Vec::new();
+    let mut lines = text.lines();
+    while let Some(line) = lines.next() {
+        let Some(start) = line.strip_prefix("use ") else {
+            continue;
+        };
+        let mut declaration = start.to_owned();
+        while !declaration.ends_with(';') {
+            let Some(next) = lines.next() else {
+                break;
+            };
+            declaration.push_str(next.trim());
+        }
+        let declaration = declaration.trim_end_matches(';');
+        let (prefix, items) = match declaration.split_once("::{") {
+            Some((prefix, items)) => (prefix, items.trim_end_matches('}')),
+            None => declaration.rsplit_once("::").unwrap_or(("", declaration)),
+        };
+        for item in items
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            imported.push((item.to_owned(), prefix.to_owned()));
+        }
+    }
+    imported.sort();
+    imported.dedup();
+    let Some(pair) = imported.windows(2).find(|pair| pair[0].0 == pair[1].0) else {
+        return Ok(());
+    };
+    let file = path.strip_prefix(output).unwrap_or(path);
+    let own_module = file
+        .parent()
+        .and_then(Path::file_name)
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    // `super::super::category::models` is `category`; `super::models` is the
+    // file's own resource.
+    let module = |prefix: &str| {
+        prefix
+            .split("::")
+            .filter(|segment| !matches!(*segment, "super" | "models" | "filter"))
+            .last()
+            .map_or_else(|| own_module.clone(), str::to_owned)
+    };
+    Err(format!(
+        "`{}` would import two items named `{}`, from `{}` and `{}`; rename one of the modules under `[modules]`, or rename or opt out the relationship that needs it under `[relationships]`",
+        file.display().to_string().replace('\\', "/"),
+        pair[0].0,
+        module(&pair[0].1),
+        module(&pair[1].1)
+    ))
 }
 
 /// Checks that every type the serde-deriving items hold implements serde's
