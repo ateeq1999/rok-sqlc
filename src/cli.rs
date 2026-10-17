@@ -75,8 +75,8 @@ enum Command {
         /// Also derive this for the generated types: `serde` adds
         /// `Serialize`/`Deserialize`; repeatable [default: `derive` from
         /// rok-sqlc.toml]
-        #[arg(short, long, value_name = "NAME", value_parser = ["serde"])]
-        derive: Vec<String>,
+        #[arg(short, long, value_name = "NAME", value_enum)]
+        derive: Vec<DeriveArg>,
     },
 }
 
@@ -135,7 +135,7 @@ where
                 resource,
                 conventions: Default::default(),
                 derive: (!derive.is_empty())
-                    .then(|| derive.iter().map(|name| derive_named(name)).collect()),
+                    .then(|| derive.into_iter().map(Derive::from).collect()),
                 relationships: Default::default(),
             };
             // Flags override the JSON payload, which overrides the file,
@@ -164,11 +164,18 @@ where
     }
 }
 
-/// The derive a `--derive` value names; clap has already checked the name.
-fn derive_named(name: &str) -> Derive {
-    match name {
-        "serde" => Derive::Serde,
-        other => unreachable!("clap rejects `--derive {other}`"),
+/// A `--derive` value. It mirrors [`Derive`], which stays free of clap
+/// because it is part of the stable library API (ADR 0012).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum DeriveArg {
+    Serde,
+}
+
+impl From<DeriveArg> for Derive {
+    fn from(arg: DeriveArg) -> Self {
+        match arg {
+            DeriveArg::Serde => Derive::Serde,
+        }
     }
 }
 
