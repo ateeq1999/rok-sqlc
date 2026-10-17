@@ -805,14 +805,10 @@ rok-sqlc g --check
 Run it in CI after installing rok-sqlc to catch migrations or queries that
 were changed without regenerating.
 
-Generated files use `\n` line endings, and the schema snapshot embeds your
-migrations verbatim. If Git checks files out with CRLF (Windows,
-`core.autocrlf`), `--check` reports them as changed. Pin the line endings
-in `.gitattributes`, as the examples do:
-
-```text
-* text=auto eol=lf
-```
+Line endings don't count as drift. rok-sqlc reads migrations and query
+files with CRLF as LF and writes `\n`, and it compares generated files the
+same way. A checkout with CRLF line endings (Windows, `core.autocrlf`)
+therefore generates the same code and passes `--check`.
 
 ## Supported SQL and type mapping
 

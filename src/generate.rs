@@ -213,7 +213,8 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
 
 /// Reads the schema inputs in order: a file as is, a directory as its
 /// `*.sql` files in filename order without `*.down.sql`. Returns each file's
-/// path and SQL.
+/// path and SQL, with line endings normalized to `\n` so the schema
+/// snapshot is the same whichever way the files were checked out.
 fn read_schema(config: &Config) -> anyhow::Result<Vec<(PathBuf, String)>> {
     if config.schema.is_empty() {
         bail!("no schema input given");
@@ -236,11 +237,21 @@ fn read_schema(config: &Config) -> anyhow::Result<Vec<(PathBuf, String)>> {
     files
         .into_iter()
         .map(|path| {
-            let sql = std::fs::read_to_string(&path)
+            let sql = read_text(&path)
                 .with_context(|| format!("failed to read schema `{}`", path.display()))?;
             Ok((path, sql))
         })
         .collect()
+}
+
+/// Reads a text input with CRLF line endings normalized to `\n`.
+fn read_text(path: &Path) -> std::io::Result<String> {
+    let text = std::fs::read_to_string(path)?;
+    Ok(if text.contains("\r\n") {
+        text.replace("\r\n", "\n")
+    } else {
+        text
+    })
 }
 
 /// The up migrations in `dir` (not its subdirectories), in filename order.
@@ -363,7 +374,7 @@ fn analyze_query_file(
     parsed: &parser::ParsedSchema,
     selected: &[Table],
 ) -> anyhow::Result<(Vec<AnalyzedQuery>, Vec<QueryFailure>)> {
-    let text = std::fs::read_to_string(path)
+    let text = read_text(path)
         .with_context(|| format!("failed to read query file `{}`", path.display()))?;
 
     let (defs, mut failures) = queries::parse_query_file(&text);

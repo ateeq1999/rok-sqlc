@@ -208,6 +208,10 @@ against earlier development snapshots.
 - `-k/--check` reports drift without writing and exits 1 when generated
   files are missing, changed, or stale. Successful runs remove stale
   generated files.
+- Generation and `--check` ignore line endings: migrations and query files
+  are read with CRLF normalized to LF (so the schema snapshot is the same on
+  every platform), and generated files that differ only in CRLF/LF count as
+  unchanged.
 - Every generated public item is documented, and generated code passes
   `missing_docs` and `cargo clippy -- -D warnings` with a selected set of
   pedantic lints; both fixture crates enforce the bar (ADR 0013).

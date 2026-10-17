@@ -22,8 +22,17 @@ pub fn is_generated_file(path: &Path) -> bool {
         .is_ok_and(|()| prefix == GENERATED_MARKER.as_bytes())
 }
 
+/// Whether a file's `existing` text is the planned `contents`. Generated
+/// files use `\n`; a checkout that turned them into CRLF (Git's
+/// `core.autocrlf`) holds the same code, so line endings are ignored.
+fn same_text(existing: &[u8], contents: &str) -> bool {
+    existing == contents.as_bytes()
+        || std::str::from_utf8(existing)
+            .is_ok_and(|existing| existing.replace("\r\n", "\n") == contents)
+}
+
 /// Planned files that do not exist yet, and planned files whose contents
-/// differ from the plan. Touches nothing.
+/// differ from the plan, ignoring line endings. Touches nothing.
 pub fn compare_files(files: &[(PathBuf, String)]) -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
     let (mut missing, mut changed) = (Vec::new(), Vec::new());
     for (path, contents) in files {
@@ -33,7 +42,7 @@ pub fn compare_files(files: &[(PathBuf, String)]) -> Result<(Vec<PathBuf>, Vec<P
         }
         let existing = fs::read(path)
             .with_context(|| format!("failed to read existing file `{}`", path.display()))?;
-        if existing != contents.as_bytes() {
+        if !same_text(&existing, contents) {
             changed.push(path.clone());
         }
     }
@@ -148,7 +157,7 @@ fn classify(path: &Path, contents: &str, force: bool) -> Result<Action> {
         ));
     }
 
-    if existing == contents {
+    if same_text(existing.as_bytes(), contents) {
         return Ok(Action::Unchanged);
     }
 
