@@ -57,6 +57,15 @@ the *generated* API count as breaking (see ADR 0012).
   name (schema-prefixed only on a clash, as for `CREATE TYPE`), its
   `sqlx(type_name)` becomes `y`, and the columns using it keep working. The
   clause used to fail every table using the type.
+- `ALTER TABLE … ALTER COLUMN` is applied instead of failing the table:
+  `[SET DATA] TYPE` (with or without `USING`), `SET`/`DROP NOT NULL`,
+  `SET`/`DROP DEFAULT`, and `ADD GENERATED … AS IDENTITY`. The column ends
+  up in its final shape, and its primary key, unique keys, and typed id
+  follow a type change. A change rok-sqlc can't apply (a type with no
+  mapping, a serial type, `DROP NOT NULL` on a primary key column, identity
+  on a nullable column, a missing column) still fails the table with a
+  `path:line` diagnostic. Dropping a managed column's default can now leave
+  it without a source of values, which fails its table.
 
 ### Changed
 
@@ -95,18 +104,6 @@ the *generated* API count as breaking (see ADR 0012).
   generates: the tenant column has no `*_is_null` filter field and no sort
   key variant, so it collides with nothing. The check now runs after the
   conventions are applied.
-
-### Added
-
-- `ALTER TABLE … ALTER COLUMN` is applied instead of failing the table:
-  `[SET DATA] TYPE` (with or without `USING`), `SET`/`DROP NOT NULL`,
-  `SET`/`DROP DEFAULT`, and `ADD GENERATED … AS IDENTITY`. The column ends
-  up in its final shape, and its primary key, unique keys, and typed id
-  follow a type change. A change rok-sqlc can't apply (a type with no
-  mapping, a serial type, `DROP NOT NULL` on a primary key column, identity
-  on a nullable column, a missing column) still fails the table with a
-  `path:line` diagnostic. Dropping a managed column's default can now leave
-  it without a source of values, which fails its table.
 
 ## [0.1.0] - 2026-10-17
 
