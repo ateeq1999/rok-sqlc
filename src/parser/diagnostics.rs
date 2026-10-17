@@ -11,6 +11,9 @@ pub struct TableFailure {
     /// 1-based line, in its file, of the statement that failed the table: its
     /// `CREATE TABLE`, or an `ALTER TABLE` that could not be applied.
     pub line: Option<usize>,
+    /// The failed table's schema qualifier as written, when known, so a later
+    /// `DROP TABLE` can forget the failure.
+    pub schema: Option<String>,
 }
 
 impl fmt::Display for TableFailure {

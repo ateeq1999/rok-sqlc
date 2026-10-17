@@ -86,6 +86,12 @@ against earlier development snapshots.
 - `--schema` accepts files or migration directories and can be repeated;
   `ALTER TABLE` statements in later migrations change earlier tables.
   Diagnostics print `path:line:`.
+- `DROP TABLE` (also `IF EXISTS`, schema-qualified, or several names) in a
+  later migration removes the table, so its generated files are stale and
+  get removed. Foreign keys other tables hold to it are dropped as with
+  `CASCADE`: the column keeps its raw type and makes no relationship.
+  `DROP TYPE` removes an enum. With `CASCADE`, its columns are dropped too.
+  Without it, tables still using the type fail.
 - `--queries` accepts files or directories and can be repeated.
 - `rok-sqlc.toml` discovery (or `-c/--config`) and a `-j/--json`
   configuration payload, layered as flags > payload > file > defaults.

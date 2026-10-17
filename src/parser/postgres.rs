@@ -5,8 +5,8 @@ use anyhow::{Context, Result, bail};
 use sqlparser::ast::{
     AlterTableOperation, AlterType, AlterTypeAddValue, AlterTypeAddValuePosition,
     AlterTypeOperation, ArrayElemTypeDef, ColumnDef, ColumnOption, CreateIndex, CreateTable,
-    DataType, ExactNumberInfo, Expr, Ident, IndexColumn, ObjectName, ObjectNamePart, Spanned,
-    Statement, TableConstraint, TimezoneInfo, UserDefinedTypeRepresentation, Value,
+    DataType, ExactNumberInfo, Expr, Ident, IndexColumn, ObjectName, ObjectNamePart, ObjectType,
+    Spanned, Statement, TableConstraint, TimezoneInfo, UserDefinedTypeRepresentation, Value,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -51,6 +51,8 @@ pub fn parse_schema(sql: &str) -> Result<ParsedSchema> {
 /// renames columns and adds primary key, unique, foreign key, and value-list
 /// check constraints, and `CREATE UNIQUE INDEX` on plain columns records a unique
 /// key. Any other `ALTER TABLE` clause on a known table fails that table.
+/// `DROP TABLE` removes a table, together with the foreign keys other tables
+/// hold to it (as `CASCADE` would), and `DROP TYPE` removes an enum type.
 /// Statements that leave the model unchanged (row-level security, policies,
 /// non-unique indexes, grants, triggers, comments, functions, `SELECT`
 /// calls) and statements on unknown tables are ignored on purpose.
@@ -78,6 +80,55 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
         for statement in statements {
             let line = usize::try_from(statement.span().start.line).ok();
             let failure = match statement {
+                Statement::Drop {
+                    object_type: ObjectType::Table,
+                    names,
+                    ..
+                } => {
+                    for name in &names {
+                        drop_table(&mut tables, &mut failures, name, |table| {
+                            seen_modules.remove(&table.module_name);
+                            created.remove(&table.module_name);
+                        });
+                    }
+                    continue;
+                }
+                Statement::Drop {
+                    object_type: ObjectType::Type,
+                    names,
+                    cascade,
+                    ..
+                } => {
+                    for name in &names {
+                        let Some(rust_path) = enums.drop(name) else {
+                            continue;
+                        };
+                        // sqlparser gives `DROP` no span of its own; each name has one.
+                        let line = usize::try_from(name.span().start.line).ok();
+                        let (failed, kept) = std::mem::take(&mut tables)
+                            .into_iter()
+                            .partition(|table| !cascade && uses_type(table, &rust_path));
+                        tables = kept;
+                        for table in &mut tables {
+                            drop_columns_of_type(table, &rust_path);
+                        }
+                        for table in failed {
+                            failures.push(TableFailure {
+                                path: Some(source.path.to_path_buf()),
+                                line,
+                                schema: table.schema.clone(),
+                                ..table_failure(
+                                    &table.sql_name,
+                                    format!(
+                                        "DROP TYPE `{}`: a column still uses the type; drop the column first or use CASCADE",
+                                        object_leaf_name(name)
+                                    ),
+                                )
+                            });
+                        }
+                    }
+                    continue;
+                }
                 Statement::CreateTable(create) => match build_table(&create, &enums) {
                     Ok(table) if GENERATED_MODULES.contains(&table.module_name.as_str()) => {
                         table_failure(
@@ -101,7 +152,10 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
                             table.module_name
                         ),
                     ),
-                    Err(failure) => failure,
+                    Err(failure) => TableFailure {
+                        schema: object_schema_name(&create.name),
+                        ..failure
+                    },
                 },
                 Statement::AlterTable {
                     name, operations, ..
@@ -113,7 +167,10 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
                         Ok(()) => continue,
                         Err(reason) => {
                             let table = tables.remove(index);
-                            table_failure(&table.sql_name, reason)
+                            TableFailure {
+                                schema: table.schema.clone(),
+                                ..table_failure(&table.sql_name, reason)
+                            }
                         }
                     }
                 }
@@ -143,6 +200,7 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
                         failures.push(TableFailure {
                             path: Some(source.path.to_path_buf()),
                             line,
+                            schema: table.schema.clone(),
                             ..table_failure(&table.sql_name, reason.reason.clone())
                         });
                     }
@@ -191,9 +249,15 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
 /// Whether any column of the table has the enum type at `rust_path`, alone
 /// or as an array element.
 fn uses_type(table: &Table, rust_path: &str) -> bool {
-    table.columns.iter().any(|column| {
-        column.sqlx_type == rust_path || column.sqlx_type == format!("Vec<{rust_path}>")
-    })
+    table
+        .columns
+        .iter()
+        .any(|column| uses_type_column(column, rust_path))
+}
+
+/// Whether the column has the enum type at `rust_path`, alone or in an array.
+fn uses_type_column(column: &Column, rust_path: &str) -> bool {
+    column.sqlx_type == rust_path || column.sqlx_type == format!("Vec<{rust_path}>")
 }
 
 /// Turns every value-list column into an enum named after its table and
@@ -418,6 +482,13 @@ impl EnumRegistry {
         })
     }
 
+    /// Applies a `DROP TYPE` to one name: a known enum is forgotten, and its
+    /// column type returned so the tables using it can follow.
+    fn drop(&mut self, name: &ObjectName) -> Option<String> {
+        let index = self.position(name)?;
+        Some(self.entries.remove(index).enum_type.rust_path())
+    }
+
     /// The enums the `types` module generates.
     fn into_generatable(self) -> Vec<EnumType> {
         self.entries
@@ -502,6 +573,50 @@ fn find_table(tables: &[Table], name: &ObjectName) -> Option<usize> {
     tables.iter().position(|table| {
         table.sql_name == leaf && normalize(table.schema.as_deref()) == normalize(schema.as_deref())
     })
+}
+
+/// Applies a `DROP TABLE` to one name. A known table is removed (`removed`
+/// sees it first), and so is every foreign key another table holds to it, as
+/// `CASCADE` would: the referencing column stays, with its raw type. A table
+/// that failed earlier is forgotten, failure included. Unknown names are
+/// ignored, like `IF EXISTS`.
+fn drop_table(
+    tables: &mut Vec<Table>,
+    failures: &mut Vec<TableFailure>,
+    name: &ObjectName,
+    removed: impl FnOnce(&Table),
+) {
+    let leaf = object_leaf_name(name);
+    let schema = normalize_schema(object_schema_name(name));
+    failures.retain(|failure| {
+        failure.table != leaf || normalize_schema(failure.schema.clone()) != schema
+    });
+    let Some(index) = find_table(tables, name) else {
+        return;
+    };
+    let table = tables.remove(index);
+    removed(&table);
+    for other in tables.iter_mut() {
+        other.foreign_keys.retain(|key| {
+            key.referenced_table != leaf
+                || normalize_schema(key.referenced_schema.clone()) != schema
+        });
+    }
+}
+
+/// Drops every column of the enum type at `rust_path` (or an array of it),
+/// as `DROP TYPE … CASCADE` does.
+fn drop_columns_of_type(table: &mut Table, rust_path: &str) {
+    let doomed: Vec<String> = table
+        .columns
+        .iter()
+        .filter(|column| uses_type_column(column, rust_path))
+        .map(|column| column.sql_name.clone())
+        .collect();
+    for name in doomed {
+        // The column exists, so dropping it cannot fail.
+        let _ = drop_column(table, &name, true);
+    }
 }
 
 /// Applies an `ALTER TABLE`'s clauses to a known table, in order. An error
@@ -1063,6 +1178,7 @@ fn table_failure(table: &str, reason: String) -> TableFailure {
         reason,
         path: None,
         line: None,
+        schema: None,
     }
 }
 
@@ -1924,6 +2040,47 @@ mod tests {
                 ("Archived", "Archived"),
             ]
         );
+    }
+
+    #[test]
+    fn drop_type_removes_the_enum_and_cascades_to_its_columns() {
+        let parsed = parse(
+            "CREATE TYPE app.state AS ENUM ('open', 'closed');
+             CREATE TYPE mood AS ENUM ('ok');
+             CREATE TABLE tickets (id BIGSERIAL PRIMARY KEY, state app.state NOT NULL, title TEXT);
+             CREATE TABLE notes (id BIGSERIAL PRIMARY KEY, mood mood);
+             DROP TYPE IF EXISTS app.state, missing CASCADE;
+             DROP TYPE mood;",
+        );
+        let names: Vec<&str> = parsed
+            .schema
+            .enums
+            .iter()
+            .map(|enum_type| enum_type.sql_name.as_str())
+            .collect();
+        assert!(names.is_empty(), "{names:?}");
+        let tickets = &parsed.schema.tables[0];
+        assert_eq!(column_names(tickets), ["id", "title"]);
+        assert_eq!(parsed.failures.len(), 1, "{:?}", parsed.failures);
+        assert_eq!(parsed.failures[0].table, "notes");
+        assert_eq!(parsed.failures[0].line, Some(6));
+        assert!(
+            parsed.failures[0].reason.contains("DROP TYPE `mood`"),
+            "{}",
+            parsed.failures[0].reason
+        );
+    }
+
+    #[test]
+    fn drop_table_forgets_a_table_that_failed_earlier() {
+        let parsed = parse(
+            "CREATE TABLE users (id BIGSERIAL PRIMARY KEY);
+             CREATE TABLE app.spans (id BIGSERIAL PRIMARY KEY, length INTERVAL);
+             CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, length INTERVAL);
+             DROP TABLE app.spans;",
+        );
+        assert_eq!(parsed.failures.len(), 1, "{:?}", parsed.failures);
+        assert_eq!(parsed.failures[0].line, Some(3));
     }
 
     #[test]

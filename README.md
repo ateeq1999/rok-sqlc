@@ -841,9 +841,14 @@ typed id.
   lookup. A partial index over live rows (`WHERE deleted_at IS NULL`) counts
   under the soft-delete convention. Expression indexes are ignored.
 - `CREATE TYPE … AS ENUM`, and `ALTER TYPE … ADD VALUE`/`RENAME VALUE`.
+- `DROP TABLE`, which removes the table, so its generated files become stale
+  and are removed. Foreign keys other tables hold to it go too, as with
+  `CASCADE`: those columns keep their raw type and lose the relationship.
+- `DROP TYPE` of an enum. With `CASCADE`, the columns using it are dropped.
+  Without it, a table that still uses the type fails.
 
-All other statements (functions, triggers, policies, views, grants,
-`DROP TABLE`, and so on) are skipped without comment. Schema qualifiers are
+All other statements (functions, triggers, policies, views, grants, and so
+on) are skipped without comment. Schema qualifiers are
 kept (`catalog.products`), and `public.` is the same as no qualifier.
 
 **What is rejected, and why.** Generation is strict by default
@@ -893,8 +898,7 @@ fails. With `--resource`, only that table's problems count.
 - Keyset pagination (`search_after`) follows primary-key order only. Array
   and JSON columns get only null checks in filters.
 - `WITH RECURSIVE` and data-modifying CTEs are rejected in query files.
-- `ALTER COLUMN` changes fail the table, and `DROP TABLE` is ignored. To drop
-  a table, remove its `CREATE TABLE`.
+- `ALTER COLUMN` changes fail the table.
 - Typed ids and relationships cover only the tables generated together. A
   foreign key into another migration set keeps its raw type and makes no
   relationship.

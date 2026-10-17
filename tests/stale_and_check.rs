@@ -341,3 +341,74 @@ fn check_reports_drift_through_the_library() -> Result<()> {
     assert!(stale.is_file());
     Ok(())
 }
+
+/// Generates from a migrations directory holding `files` (name, SQL) into
+/// `<dir>/out`.
+fn generate_migrations(dir: &Path, files: &[(&str, &str)]) -> Result<()> {
+    let migrations = dir.join("migrations");
+    fs::create_dir_all(&migrations)?;
+    for (name, sql) in files {
+        fs::write(migrations.join(name), sql)?;
+    }
+    rok_sqlc::cli::run_from([
+        "rok-sqlc".to_owned(),
+        "g".to_owned(),
+        "-s".to_owned(),
+        migrations.display().to_string(),
+        "-o".to_owned(),
+        dir.join("out").display().to_string(),
+    ])
+}
+
+const BLOG: &str = "CREATE TABLE app.posts (id BIGSERIAL PRIMARY KEY, title TEXT NOT NULL);\n\
+     CREATE TABLE comments (\n\
+         id BIGSERIAL PRIMARY KEY,\n\
+         post_id BIGINT NOT NULL REFERENCES app.posts (id),\n\
+         body TEXT NOT NULL\n\
+     );\n";
+
+#[test]
+fn a_table_dropped_by_a_later_migration_is_removed_with_its_files() -> Result<()> {
+    let dir = TempDir::new()?;
+    generate_migrations(dir.path(), &[("0001_init.up.sql", BLOG)])?;
+    let out = dir.path().join("out");
+    assert!(out.join("posts/models.rs").is_file());
+
+    generate_migrations(
+        dir.path(),
+        &[(
+            "0002_drop_posts.up.sql",
+            "DROP TABLE IF EXISTS app.posts CASCADE;\nDROP TABLE IF EXISTS never_existed;\n",
+        )],
+    )?;
+
+    assert!(!out.join("posts").exists(), "posts was not removed");
+    let db_mod = fs::read_to_string(out.join("mod.rs"))?;
+    assert!(!db_mod.contains("pub mod posts;"), "{db_mod}");
+    // The foreign key went with the table (as with CASCADE): the column keeps
+    // its raw type and no relationship points at the dropped table.
+    let comments = fs::read_to_string(out.join("comments/models.rs"))?;
+    assert!(comments.contains("pub post_id: i64,"), "{comments}");
+    assert!(!out.join("comments/relationships.rs").exists());
+    Ok(())
+}
+
+#[test]
+fn a_table_can_be_recreated_after_it_was_dropped() -> Result<()> {
+    let dir = TempDir::new()?;
+    generate_migrations(
+        dir.path(),
+        &[
+            ("0001_init.up.sql", BLOG),
+            ("0002_drop.up.sql", "DROP TABLE comments;"),
+            (
+                "0003_recreate.up.sql",
+                "CREATE TABLE comments (id BIGSERIAL PRIMARY KEY, text TEXT NOT NULL);",
+            ),
+        ],
+    )?;
+    let comments = fs::read_to_string(dir.path().join("out/comments/models.rs"))?;
+    assert!(comments.contains("pub text: String,"), "{comments}");
+    assert!(!comments.contains("post_id"), "{comments}");
+    Ok(())
+}
