@@ -572,7 +572,7 @@ preset = "rok"
 
 | Key | `rok` preset | Effect on tables that have the column |
 |---|---|---|
-| `tenant_column` | `organization_id` | Every function takes the tenant right after the executor and adds `organization_id = $tenant` to every statement. The column is left out of inputs and patches. |
+| `tenant_column` | `organization_id` | Every function takes the tenant right after the executor and adds `organization_id = $tenant` to every statement. The column is left out of inputs, patches, search filters, and sort keys. |
 | `tenant_setting` | `app.organization_id` | Generates `db::session::set_tenant`, for row-level security policies. |
 | `user_setting` | `app.user_id` | Generates `db::session::set_user`, for audit triggers. |
 | `soft_delete_column` | `deleted_at` | `delete` sets it, `restore` clears it, and `delete_permanently` removes the row. Reads skip deleted rows, and filters get `include_deleted`. It must be a nullable `TIMESTAMP`/`TIMESTAMPTZ`. |

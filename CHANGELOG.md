@@ -7,6 +7,13 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+### Breaking changes to the generated API
+
+- On a table with the tenant column, `{Table}Filter` has no field for the
+  column (including its `*_is_null` field) and `{Table}SortKey` no variant
+  for it. `search` is already scoped to the tenant parameter, so these could
+  only repeat the scope or match nothing. Relationship filters are unchanged.
+
 ### Changed
 
 - A managed column with no source of values fails its table with a

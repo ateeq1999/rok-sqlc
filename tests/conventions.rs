@@ -49,8 +49,13 @@ fn run(args: &[&str]) -> Result<()> {
 /// A temp dir holding `schema.sql` and a `rok-sqlc.toml` that generates it
 /// into `out/` with the given extra TOML appended.
 fn project(extra_toml: &str) -> Result<(TempDir, PathBuf)> {
+    project_with(SCHEMA, extra_toml)
+}
+
+/// `project`, generating `schema` instead of `SCHEMA`.
+fn project_with(schema: &str, extra_toml: &str) -> Result<(TempDir, PathBuf)> {
     let dir = TempDir::new()?;
-    fs::write(dir.path().join("schema.sql"), SCHEMA)?;
+    fs::write(dir.path().join("schema.sql"), schema)?;
     let config = dir.path().join("rok-sqlc.toml");
     fs::write(
         &config,
@@ -525,6 +530,73 @@ fn session_settings_generate_transaction_local_helpers() -> Result<()> {
     assert_eq!(
         signatures(&session),
         ["set_tenant(connection: &mut sqlx::PgConnection, id: impl std::fmt::Display)"]
+    );
+    Ok(())
+}
+
+/// The variant names of `pub enum {name}` in `source`, in order.
+fn enum_variants(source: &str, name: &str) -> Vec<String> {
+    let start = source
+        .find(&format!("pub enum {name} {{"))
+        .unwrap_or_else(|| panic!("no enum {name} in:\n{source}"));
+    let body = &source[start..];
+    let body = &body[body.find('{').unwrap() + 1..body.find("\n}").unwrap()];
+    body.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("///"))
+        .map(|line| line.trim_end_matches(',').to_owned())
+        .collect()
+}
+
+#[test]
+fn the_tenant_column_is_neither_a_filter_field_nor_a_sort_key() -> Result<()> {
+    let (dir, config) = project(TENANT)?;
+
+    generate(&config)?;
+
+    let notes = resource_file(&dir, "notes", "filter.rs")?;
+    assert_eq!(struct_fields(&notes, "NoteFilter"), ["id", "code", "body"]);
+    assert_eq!(enum_variants(&notes, "NoteSortKey"), ["Id", "Code", "Body"]);
+    assert!(!notes.contains("organization_id"), "{notes}");
+    let members = resource_file(&dir, "members", "filter.rs")?;
+    assert_eq!(struct_fields(&members, "MemberFilter"), ["id", "email"]);
+    assert_eq!(enum_variants(&members, "MemberSortKey"), ["Id", "Email"]);
+    Ok(())
+}
+
+#[test]
+fn a_nullable_tenant_column_gets_no_null_check_field() -> Result<()> {
+    let (dir, config) = project_with(
+        "CREATE TABLE notes (id UUID PRIMARY KEY, organization_id UUID, body TEXT);",
+        TENANT,
+    )?;
+
+    generate(&config)?;
+
+    let notes = resource_file(&dir, "notes", "filter.rs")?;
+    assert_eq!(
+        struct_fields(&notes, "NoteFilter"),
+        ["id", "body", "body_is_null"]
+    );
+    assert_eq!(enum_variants(&notes, "NoteSortKey"), ["Id", "Body"]);
+    assert!(!notes.contains("organization_id"), "{notes}");
+    Ok(())
+}
+
+#[test]
+fn without_the_tenant_convention_the_column_is_filtered_and_sorted() -> Result<()> {
+    let (dir, config) = project("")?;
+
+    generate(&config)?;
+
+    let notes = resource_file(&dir, "notes", "filter.rs")?;
+    assert_eq!(
+        struct_fields(&notes, "NoteFilter"),
+        ["id", "organization_id", "code", "body"]
+    );
+    assert_eq!(
+        enum_variants(&notes, "NoteSortKey"),
+        ["Id", "OrganizationId", "Code", "Body"]
     );
     Ok(())
 }
