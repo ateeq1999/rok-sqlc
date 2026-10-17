@@ -28,6 +28,11 @@ the *generated* API count as breaking (see ADR 0012).
   fields), `{Table}SortKey`, and `Direction`, `Sort`, `Ordered`, `Equality`,
   and `Text` in `db::search` derive `Serialize` and `Deserialize`. A filter
   field absent from the JSON adds no condition.
+- A `SERIAL`, `BIGSERIAL`, or `SMALLSERIAL` column off the primary key is
+  `NOT NULL`, as in PostgreSQL: its row field is `i32`/`i64`/`i16` instead
+  of `Option<…>`, and inserts still leave it to its sequence. After
+  `ALTER COLUMN … DROP DEFAULT` it is a required `NOT NULL` input, and a
+  managed one has no source of values, which fails its table.
 
 ### Added
 

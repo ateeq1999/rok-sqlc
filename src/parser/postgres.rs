@@ -1458,13 +1458,15 @@ fn build_column(
     let column_name = ident_name(&column_def.name);
     let column_fail = |reason: String| format!("column `{column_name}`: {reason}");
 
-    let mut nullable = true;
+    // A serial column is `NOT NULL` with a sequence default, on or off the
+    // primary key.
+    let mut is_generated = is_serial_type(&column_def.data_type);
+    let mut has_default = is_generated;
+    let mut nullable = !is_generated;
     let mut primary_key = None;
     let mut unique = None;
     let mut foreign_key = None;
     let mut value_lists = Vec::new();
-    let mut is_generated = is_serial_type(&column_def.data_type);
-    let mut has_default = is_generated;
     for option in &column_def.options {
         match &option.option {
             ColumnOption::NotNull => nullable = false,

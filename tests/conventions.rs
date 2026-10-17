@@ -758,6 +758,23 @@ fn alter_column_changes_whether_a_managed_column_has_a_source_of_values() -> Res
     let located = "error: migrations/0001_step.sql:1: table `audits`: managed column `updated_at` is NOT NULL with no DEFAULT";
     assert!(stderr.contains(located), "{stderr}");
 
+    // A serial column is NOT NULL, so dropping its sequence default leaves
+    // a managed one without a source of values.
+    let dir = TempDir::new()?;
+    let (success, stderr) = generate_migrations(
+        &dir,
+        &[
+            "CREATE TABLE audits (id UUID PRIMARY KEY, updated_at BIGSERIAL);",
+            "ALTER TABLE audits ALTER COLUMN updated_at DROP DEFAULT;",
+        ],
+        false,
+    )?;
+    assert!(!success, "{stderr}");
+    assert!(
+        stderr.contains("table `audits`: managed column `updated_at` is NOT NULL with no DEFAULT"),
+        "{stderr}"
+    );
+
     for fix in [
         "ALTER TABLE audits ALTER COLUMN updated_at SET DEFAULT now();",
         "ALTER TABLE audits ALTER COLUMN updated_at DROP NOT NULL;",

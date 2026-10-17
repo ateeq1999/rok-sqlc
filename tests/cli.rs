@@ -405,6 +405,51 @@ fn generates_write_helpers_with_defaults_and_serial() -> Result<()> {
     Ok(())
 }
 
+/// A serial column is `NOT NULL` in PostgreSQL even off the primary key: the
+/// row holds the value, and the insert input leaves it to the sequence.
+/// Once its default is dropped, the input must supply it.
+#[test]
+fn a_serial_column_is_not_null_and_defaulted_until_its_default_is_dropped() -> Result<()> {
+    let dir = TempDir::new()?;
+    let migrations = dir.path().join("migrations");
+    fs::create_dir_all(&migrations)?;
+    fs::write(
+        migrations.join("0001_tickets.sql"),
+        "CREATE TABLE tickets (
+            id UUID PRIMARY KEY,
+            number BIGSERIAL,
+            position SERIAL,
+            rank SMALLSERIAL
+        );",
+    )?;
+    fs::write(
+        migrations.join("0002_rank.sql"),
+        "ALTER TABLE tickets ALTER COLUMN rank DROP DEFAULT;",
+    )?;
+
+    run(&[
+        "generate",
+        "--schema",
+        migrations.to_str().unwrap(),
+        "--output",
+        output_dir(&dir).to_str().unwrap(),
+    ])?;
+
+    let models = fs::read_to_string(output_dir(&dir).join("tickets/models.rs"))?;
+    let row = &models[models.find("pub struct Ticket {").unwrap()..];
+    let row = &row[..row.find("\n}").unwrap()];
+    assert!(row.contains("pub number: i64,"), "{row}");
+    assert!(row.contains("pub position: i32,"), "{row}");
+    assert!(row.contains("pub rank: i16,"), "{row}");
+    let input = &models[models.find("pub struct NewTicket {").unwrap()..];
+    let input = &input[..input.find("\n}").unwrap()];
+    // The sequence supplies a serial column, so inserts leave it out.
+    assert!(!input.contains("pub number"), "{input}");
+    assert!(!input.contains("pub position"), "{input}");
+    assert!(input.contains("pub rank: i16,"), "{input}");
+    Ok(())
+}
+
 #[test]
 fn generates_products_fixture_with_singular_names_and_schema_qualified_sql() -> Result<()> {
     let dir = TempDir::new()?;

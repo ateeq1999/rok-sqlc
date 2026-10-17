@@ -309,7 +309,8 @@ like one of the file's own items, fails the run. Rename one table under
 [`[modules]`](#rok-sqlctoml).
 
 **Create inputs and update patches.** `NewProduct` leaves out generated
-columns (serial, identity, `GENERATED`). A column with a default becomes an
+columns (serial, identity, `GENERATED`); a serial column is `NOT NULL` in the
+row, on or off the primary key. A column with a default becomes an
 `Option`, and `None` lets the database default apply. `UpdateProduct` makes
 every column optional: `None` leaves the column unchanged, and for a
 nullable column `Some(None)` sets it to `NULL`. An empty patch issues no

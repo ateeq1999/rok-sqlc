@@ -4,7 +4,7 @@
 >
 > **Superseded in part by [ADR 0007](0007-generated-sql-and-naming.md):** struct names are now singular (`NewX` for `products` is `NewProduct`), and `create`/`update` build their dynamic statements with `sqlx::QueryBuilder` instead of hand-numbered placeholders. A defaulted insert falls back to `DEFAULT VALUES` only when every insertable column is defaulted.
 
-Phase 5 adds writes to each resource's `write.rs`, driven by two column flags the parser now records: `has_default` (the database can supply a value: `DEFAULT`, serial, identity, or `GENERATED`) and `is_generated` (the database always owns the value: serial, identity, or `GENERATED`).
+Phase 5 adds writes to each resource's `write.rs`, driven by two column flags the parser now records: `has_default` (the database can supply a value: `DEFAULT`, serial, identity, or `GENERATED`) and `is_generated` (the database always owns the value: serial, identity, or `GENERATED`). A serial column is `NOT NULL` wherever it sits, as in PostgreSQL; after `DROP DEFAULT` it is an ordinary required column (0.2).
 
 `create(pool, input: NewX) -> Result<X, sqlx::Error>` inserts one row and returns it via `RETURNING`. `NewX` omits every generated column and turns every defaulted column into an `Option<T>`; when such an option is `None` the column is left out of the `INSERT` entirely so the database default applies. Columns without a default are required fields. The column list and placeholders are built at runtime, and when every column is optional an empty set falls back to `INSERT ... DEFAULT VALUES`.
 
