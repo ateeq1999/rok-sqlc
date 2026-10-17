@@ -139,7 +139,7 @@ pub fn plan_files_with_queries(
 
     for table in tables {
         let dir = output.join(&table.module_name);
-        let filter = search::render_filter(table, tables);
+        let filter = search::render_filter(table, tables, serde);
         let loaders = relationships::render(table, tables, serde);
         files.push((
             dir.join("mod.rs"),
@@ -175,7 +175,10 @@ pub fn plan_files_with_queries(
         }
         QueriesModule::None | QueriesModule::Keep => {}
     }
-    files.push((output.join("search.rs"), search::render_shared()));
+    files.push((output.join("search.rs"), search::render_shared(serde)));
+    if serde {
+        files.push((output.join("nullable.rs"), models::render_nullable()));
+    }
     if !enums.is_empty() {
         files.push((output.join("types.rs"), types::render(enums, serde)));
     }
@@ -510,6 +513,9 @@ pub fn render_db_mod(
         .collect();
     modules.push("schema");
     modules.push("search");
+    if serde {
+        modules.push("nullable");
+    }
     if has_types {
         modules.push("types");
     }
@@ -719,6 +725,19 @@ pub mod users;"
         assert!(
             render_db_mod(&tables, false, false, QueriesModule::Generate(&[]), false)
                 .contains("pub mod queries;")
+        );
+    }
+
+    #[test]
+    fn db_mod_declares_the_nullable_helper_with_serde() {
+        let tables = vec![table(vec![column("id", "i64")], &["id"])];
+        assert!(
+            !render_db_mod(&tables, false, false, QueriesModule::None, false)
+                .contains("pub mod nullable;")
+        );
+        assert!(
+            render_db_mod(&tables, false, false, QueriesModule::None, true)
+                .contains("pub mod nullable;\npub mod schema;\npub mod search;\npub mod users;")
         );
     }
 

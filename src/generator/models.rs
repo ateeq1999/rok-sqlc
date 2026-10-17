@@ -10,6 +10,55 @@ fn column_doc(column: &Column) -> String {
     format!("The {} column.", doc_name(&column.sql_name))
 }
 
+/// The `#[serde(...)]` attribute of an `Option` field of an input or patch
+/// (ADR 0013): serializing skips `None`, and an `Option<Option<T>>`
+/// (`double`) reads `null` as `Some(None)` through the generated
+/// `db::nullable` helper. `default` makes an absent field `None` in a struct
+/// without `#[serde(default)]`.
+fn push_option_serde(output: &mut String, double: bool, default: bool) {
+    if !double {
+        output.push_str("    #[serde(skip_serializing_if = \"Option::is_none\")]\n");
+        return;
+    }
+    output.push_str("    #[serde(\n");
+    if default {
+        output.push_str("        default,\n");
+    }
+    output.push_str(&format!(
+        "        deserialize_with = \"{NULLABLE_DESERIALIZE}\",\n        skip_serializing_if = \"Option::is_none\"\n    )]\n"
+    ));
+}
+
+/// The generated `db/nullable.rs` deserializer, from a resource's `models.rs`.
+const NULLABLE_DESERIALIZE: &str = "super::super::nullable::deserialize";
+
+/// Renders `db/nullable.rs`, generated with `derive = ["serde"]`: the
+/// deserializer telling an absent `Option<Option<T>>` field from `null`.
+pub fn render_nullable() -> String {
+    format!("{HEADER}\n{NULLABLE}")
+}
+
+const NULLABLE: &str = r"//! Serde support for `Option<Option<T>>` fields, which tell an absent
+//! field (`None`) from `null` (`Some(None)`).
+
+use serde::{Deserialize, Deserializer};
+
+/// Deserializes a field that is present, `null` included, as `Some`: `null`
+/// becomes `Some(None)` and a value `Some(Some(value))`. An absent field never
+/// reaches this function; `#[serde(default)]` makes it `None`.
+///
+/// # Errors
+///
+/// The deserializer's error when the field is neither `null` nor a `T`.
+pub fn deserialize<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+";
+
 pub fn render(table: &Table, serde: bool) -> String {
     let mut output = format!("{HEADER}\n");
     let mut imports = keys::id_imports(table, &table.columns, true);
@@ -105,6 +154,11 @@ fn render_insert_input(output: &mut String, table: &Table, columns: &[&Column], 
         } else {
             push_doc(output, 4, &[&doc]);
         }
+        // Plain serde reads both an absent field and `null` as `None`, which
+        // would make `Some(None)` unreachable from JSON.
+        if serde && column.is_omittable_on_insert() && column.nullable {
+            push_option_serde(output, true, true);
+        }
         output.push_str(&format!(
             "    pub {}: {},\n",
             column.rust_name,
@@ -116,13 +170,20 @@ fn render_insert_input(output: &mut String, table: &Table, columns: &[&Column], 
 
 fn render_update_patch(output: &mut String, table: &Table, columns: &[&Column], serde: bool) {
     output.push('\n');
-    push_doc(
-        output,
-        0,
-        &["Partial update for `update`: `None` leaves a column unchanged."],
-    );
+    let mut doc = vec!["Partial update for `update`: `None` leaves a column unchanged."];
+    if serde {
+        doc.extend([
+            "",
+            "From JSON, an absent field is `None` and `null` is `Some(None)`, which sets",
+            "the column to `NULL`; serializing skips the `None` fields.",
+        ]);
+    }
+    push_doc(output, 0, &doc);
     output.push_str("#[derive(Debug, Clone, Default, PartialEq)]\n");
     push_serde_derive(output, serde);
+    if serde {
+        output.push_str("#[serde(default)]\n");
+    }
     output.push_str(&format!("pub struct Update{} {{\n", table.struct_name));
     for column in columns {
         let doc = format!(
@@ -137,6 +198,9 @@ fn render_update_patch(output: &mut String, table: &Table, columns: &[&Column], 
             );
         } else {
             push_doc(output, 4, &[&doc]);
+        }
+        if serde {
+            push_option_serde(output, column.nullable, false);
         }
         output.push_str(&format!(
             "    pub {}: {},\n",
@@ -179,12 +243,59 @@ mod tests {
         let serde = "serde::Serialize, serde::Deserialize)]\n";
         assert!(!render(&users).contains("serde"));
         let rendered = super::render(&users, true);
-        for item in ["User", "NewUser", "UpdateUser"] {
+        for item in ["", "pub struct User {", "pub struct NewUser {"] {
             assert!(
-                rendered.contains(&format!("{serde}pub struct {item} {{")),
+                rendered.contains(&format!("{serde}{item}")),
                 "{item}:\n{rendered}"
             );
         }
+        assert!(
+            rendered.contains(&format!(
+                "{serde}#[serde(default)]\npub struct UpdateUser {{"
+            )),
+            "{rendered}"
+        );
+    }
+
+    /// Plain serde reads both an absent field and `null` as `None`; the
+    /// generated `db::nullable` helper reads `null` as `Some(None)`.
+    #[test]
+    fn serde_patches_and_inputs_tell_absent_from_null() {
+        let users = table(
+            vec![
+                column("id", "i64"),
+                column("email", "String"),
+                nullable("note", "String"),
+                defaulted(nullable("tag", "String")),
+            ],
+            &["id"],
+        );
+        let rendered = super::render(&users, true);
+        let patch = rendered.split("pub struct UpdateUser {").nth(1).unwrap();
+        assert!(patch.contains(
+            "    #[serde(skip_serializing_if = \"Option::is_none\")]\n    pub email: Option<String>,\n"
+        ), "{patch}");
+        assert!(patch.contains(
+            "    #[serde(\n        deserialize_with = \"super::super::nullable::deserialize\",\n        skip_serializing_if = \"Option::is_none\"\n    )]\n    pub note: Option<Option<String>>,\n"
+        ), "{patch}");
+
+        let input = rendered.split("pub struct NewUser {").nth(1).unwrap();
+        let input = input.split("\n}\n").next().unwrap();
+        assert!(input.contains(
+            "    #[serde(\n        default,\n        deserialize_with = \"super::super::nullable::deserialize\",\n        skip_serializing_if = \"Option::is_none\"\n    )]\n    pub tag: Option<Option<String>>,"
+        ), "{input}");
+        // Only the `Option<Option<T>>` input field needs the helper.
+        assert_eq!(input.matches("#[serde(").count(), 1, "{input}");
+    }
+
+    #[test]
+    fn nullable_helper_reads_null_as_some_none() {
+        let rendered = render_nullable();
+        assert!(rendered.starts_with(HEADER));
+        assert!(rendered.contains(
+            "pub fn deserialize<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>"
+        ));
+        assert!(rendered.contains("Option::<T>::deserialize(deserializer).map(Some)"));
     }
 
     #[test]

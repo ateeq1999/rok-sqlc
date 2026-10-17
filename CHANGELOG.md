@@ -13,6 +13,16 @@ the *generated* API count as breaking (see ADR 0012).
   column (including its `*_is_null` field) and `{Table}SortKey` no variant
   for it. `search` is already scoped to the tenant parameter, so these could
   only repeat the scope or match nothing. Relationship filters are unchanged.
+- With `derive = ["serde"]`, a patch deserialized from JSON tells an absent
+  field (leave the column alone) from `null` (set it to `NULL`); before, both
+  read as `None`. Serializing a patch skips its `None` fields, so `{}` is an
+  empty patch. A nullable input field with a default reads `null` as
+  `Some(None)` (insert `NULL`) the same way. Both use the new generated
+  `db/nullable.rs`, so a table can no longer be named `nullable`.
+- With `derive = ["serde"]`, `{Table}Filter` (including its relationship
+  fields), `{Table}SortKey`, and `Direction`, `Sort`, `Ordered`, `Equality`,
+  and `Text` in `db::search` derive `Serialize` and `Deserialize`. A filter
+  field absent from the JSON adds no condition.
 
 ## [0.1.0] - 2026-10-17
 

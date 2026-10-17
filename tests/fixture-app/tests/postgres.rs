@@ -71,6 +71,7 @@ async fn generated_crud_against_postgres() {
     versioned_updates_detect_concurrent_edits(&pool).await;
     text_keys_are_borrowed(&pool).await;
     rows_round_trip_through_json(&pool).await;
+    patches_from_json_tell_absent_from_null(&pool).await;
     soft_deleted_rows_are_hidden_restored_and_removed(&pool).await;
     tenant_rows_are_invisible_to_other_tenants(&pool).await;
     a_tenant_in_the_primary_key_is_passed_once(&pool).await;
@@ -305,6 +306,56 @@ async fn search_filters_and_pages(pool: &PgPool) {
     null_checks_and_equality_filters(pool, category).await;
     sorting_is_allowlisted_and_stable(pool, category).await;
     keyset_pagination_follows_the_primary_key(pool, category).await;
+    filters_round_trip_through_json(pool, category).await;
+}
+
+/// With `derive = ["serde"]`, a filter, its sort, and its conditions
+/// (including a relationship filter) go to JSON and back, and the filter
+/// read back finds the same rows.
+async fn filters_round_trip_through_json(pool: &PgPool, category: CategoryId) {
+    use db::categories::filter::CategoryFilter;
+    use db::products::filter::{ProductFilter, ProductSortKey};
+    use db::products::read::search;
+    use db::search::{Equality, Ordered, Page, Sort, Text};
+
+    let filter = ProductFilter {
+        category_id: vec![Ordered::Eq(category)],
+        price_cents: vec![Ordered::Between(50, 350), Ordered::Ne(200)],
+        name: vec![Text::Contains("l".to_owned())],
+        discontinued: vec![Equality::Eq(false)],
+        weight_kg_is_null: Some(false),
+        category: Some(Box::new(CategoryFilter {
+            name: vec![Text::Eq("search".to_owned())],
+            ..Default::default()
+        })),
+        ..Default::default()
+    };
+    let sort = Sort::desc(ProductSortKey::PriceCents);
+    let expected = search(pool, filter.clone(), sort, Page::first(10))
+        .await
+        .unwrap();
+    assert_eq!(skus(&expected), ["S-3", "S-1"]);
+
+    let json = serde_json::to_string(&(&filter, &sort)).unwrap();
+    let (decoded, decoded_sort): (ProductFilter, Sort<ProductSortKey>) =
+        serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, filter);
+    assert_eq!(decoded_sort, sort);
+    let found = search(pool, decoded, decoded_sort, Page::first(10))
+        .await
+        .unwrap();
+    assert_eq!(found, expected);
+
+    // Fields left out of the JSON keep their defaults.
+    let sparse: ProductFilter =
+        serde_json::from_str(r#"{"price_cents": [{"Ge": 400}]}"#).unwrap();
+    assert_eq!(
+        sparse,
+        ProductFilter {
+            price_cents: vec![Ordered::Ge(400)],
+            ..Default::default()
+        }
+    );
 }
 
 async fn keyset_pagination_follows_the_primary_key(pool: &PgPool, category: CategoryId) {
@@ -1806,6 +1857,44 @@ async fn rows_round_trip_through_json(pool: &PgPool) {
     let json = serde_json::to_value(very_high).unwrap();
     assert_eq!(json["priority"], "Very High");
     assert_eq!(&serde_json::from_value::<Ticket>(json).unwrap(), very_high);
+}
+
+/// A patch deserialized from JSON leaves the columns absent from it alone
+/// and sets those given as `null` to `NULL`; serializing skips absent fields.
+async fn patches_from_json_tell_absent_from_null(pool: &PgPool) {
+    use db::patch_targets::write;
+
+    let before = write::create(pool, base_patch_target()).await.unwrap();
+    assert_eq!(before.note.as_deref(), Some("n0"));
+
+    let untouched: UpdatePatchTarget = serde_json::from_str("{}").unwrap();
+    assert!(untouched.is_empty());
+    assert_eq!(serde_json::to_string(&untouched).unwrap(), "{}");
+    let row = write::update(pool, before.id, untouched)
+        .await
+        .unwrap()
+        .expect("row exists");
+    assert_eq!(row, before, "an empty patch changes nothing");
+
+    let cleared: UpdatePatchTarget =
+        serde_json::from_str(r#"{"note": null, "score": 9}"#).unwrap();
+    assert_eq!(cleared.note, Some(None));
+    assert_eq!(cleared.tag, None);
+    assert_eq!(
+        serde_json::to_value(&cleared).unwrap(),
+        serde_json::json!({"note": null, "score": 9})
+    );
+    let row = write::update(pool, before.id, cleared)
+        .await
+        .unwrap()
+        .expect("row exists");
+    assert_eq!(row.note, None, "`null` sets the column to NULL");
+    assert_eq!(row.score, 9);
+    assert_eq!(row.tag, before.tag, "an absent column is left alone");
+    assert_eq!(row.label, before.label);
+
+    let set: UpdatePatchTarget = serde_json::from_str(r#"{"note": "again"}"#).unwrap();
+    assert_eq!(set.note, Some(Some("again".to_owned())));
 }
 
 /// `soft_notes` is generated with `deleted_at` as its soft-delete column:
