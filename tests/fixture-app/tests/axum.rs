@@ -4,6 +4,7 @@
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
+use axum::extract::DefaultBodyLimit;
 use axum::http::{Request, StatusCode, header};
 use axum::routing::post;
 use rok_sqlc_fixture_app::validated_db::http::axum::ValidatedJson;
@@ -137,6 +138,40 @@ async fn a_missing_or_wrong_content_type_is_a_malformed_body() {
     }
 }
 
+/// The extractor reads the body through `axum::Json`, so the router's
+/// `DefaultBodyLimit` applies, and a body over it is answered `413`.
+#[tokio::test]
+async fn a_body_over_the_default_body_limit_is_too_large() {
+    let body = r#"{"code": "NORTH", "name": "Northern"}"#;
+    let send = |limit: usize| async move {
+        let request = Request::post("/teams")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = app()
+            .layer(DefaultBodyLimit::max(limit))
+            .oneshot(request)
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        (status, String::from_utf8(bytes.to_vec()).unwrap())
+    };
+    let (status, text) = send(8).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        serde_json::from_str::<Value>(&text).unwrap(),
+        envelope(
+            "the request body is over the size limit",
+            "PAYLOAD_TOO_LARGE"
+        )
+    );
+    assert_eq!(
+        send(body.len()).await,
+        (StatusCode::OK, "NORTH Northern".to_owned())
+    );
+}
+
 #[tokio::test]
 async fn json_that_does_not_fit_the_type_fails_validation_without_details() {
     assert_eq!(
@@ -217,7 +252,11 @@ async fn a_hand_written_type_goes_through_the_same_extractor() {
     );
     // An unknown label is a data error: no details.
     assert_eq!(
-        post_json("/signups", r#"{"email": "ada@example.com", "plan": "gold"}"#).await,
+        post_json(
+            "/signups",
+            r#"{"email": "ada@example.com", "plan": "gold"}"#
+        )
+        .await,
         (
             StatusCode::UNPROCESSABLE_ENTITY,
             envelope(

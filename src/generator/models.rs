@@ -513,8 +513,14 @@ mod tests {
                 assert!(part.contains(&expected), "{expected}\n{part}");
             }
         }
-        // The typed id field keeps its range to the database.
-        assert_eq!(rendered.matches("#[validate(").count(), 10, "{rendered}");
+        // The typed id field takes its range too, through `ValidateRange`.
+        let id_rule = "    #[validate(range(min = 1, message = \"id must be at least 1\"))]\n    pub id: UserId,";
+        assert!(input.contains(id_rule), "{input}");
+        assert!(
+            rendered.contains("impl validator::ValidateRange<i64> for UserId {"),
+            "{rendered}"
+        );
+        assert_eq!(rendered.matches("#[validate(").count(), 11, "{rendered}");
         assert!(
             rendered.ends_with(
                 "/// The range rule of the `price` column.
@@ -611,16 +617,30 @@ impl validator::ValidateLength<u64> for UserId {
             .contains("validat")
         );
 
+        // A typed id over an integer compares the number inside instead.
         let numbered = table(vec![typed(column("id", "i64"), "UserId", "users")], &["id"]);
+        let rendered = super::render(
+            &numbered,
+            DeriveOptions {
+                serde: true,
+                validate: true,
+            },
+        );
+        assert!(!rendered.contains("ValidateLength"), "{rendered}");
         assert!(
-            !super::render(
-                &numbered,
-                DeriveOptions {
-                    serde: true,
-                    validate: true,
-                },
-            )
-            .contains("ValidateLength")
+            rendered.contains(
+                "impl validator::ValidateRange<i64> for UserId {
+    fn greater_than(&self, max: i64) -> Option<bool> {
+        validator::ValidateRange::greater_than(&self.0, max)
+    }
+
+    fn less_than(&self, min: i64) -> Option<bool> {
+        validator::ValidateRange::less_than(&self.0, min)
+    }
+}
+"
+            ),
+            "{rendered}"
         );
     }
 

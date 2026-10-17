@@ -22,3 +22,12 @@ CREATE TABLE players (
     -- Not a rule: only the database checks it.
     joined_year INTEGER CHECK (joined_year > 1900 OR joined_year IS NULL)
 );
+
+CREATE TABLE seasons (
+    -- An integer key with a range: `SeasonId` compares the number inside,
+    -- so the range rule applies through the typed id, here and on
+    -- `previous_year`.
+    year INTEGER PRIMARY KEY CHECK (year BETWEEN 1900 AND 2100),
+    previous_year INTEGER REFERENCES seasons (year) CHECK (previous_year >= 1900),
+    title VARCHAR(40) NOT NULL
+);

@@ -1,13 +1,20 @@
 //! The rejections the README shows, as `db::http` answers them on either
 //! framework.
 
-use rok_sqlc_validated_api::db::http::validated;
+use rok_sqlc_validated_api::db::http::{BodyRejection, validated};
 use rok_sqlc_validated_api::db::members::models::NewMember;
 use serde_json::{Value, json};
 
+/// `body` read as both extractors read it: serde's error classified by
+/// `BodyRejection::from_serde`, then the validation rules.
+fn read(body: &str) -> Result<NewMember, BodyRejection> {
+    let input = serde_json::from_str(body).map_err(|error| BodyRejection::from_serde(&error))?;
+    validated(input)
+}
+
 /// The response body rejecting `body`.
 fn rejection(body: &str) -> Value {
-    let rejection = validated::<NewMember>(body.as_bytes()).expect_err("a bad body");
+    let rejection = read(body).expect_err("a bad body");
     serde_json::to_value(rejection.body()).expect("the envelope serializes")
 }
 
@@ -69,6 +76,6 @@ fn a_body_that_is_not_json_gets_400() {
 #[test]
 fn a_valid_body_passes() {
     let body = r#"{"name": "Ada", "handle": "ada", "age": 36, "balance": "12.50"}"#;
-    let input = validated::<NewMember>(body.as_bytes()).expect("a valid body");
+    let input = read(body).expect("a valid body");
     assert_eq!(input.handle, "ada");
 }

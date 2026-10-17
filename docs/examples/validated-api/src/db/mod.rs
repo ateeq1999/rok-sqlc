@@ -10,6 +10,7 @@
 //   rust_decimal = { version = "1", features = ["serde"] }
 //   validator = { version = "0.21", features = ["derive"] }
 //   axum = "0.8"
+//   serde_path_to_error = "0.1"
 //   actix-web = "4"
 
 pub mod http;

@@ -27,7 +27,7 @@ pub mod with_axum {
     }
 
     /// Runs only for a validated body. Anything else was already answered
-    /// `400` or `422` in the Rok error envelope.
+    /// `400`, `413` or `422` in the Rok error envelope.
     async fn create_member(
         State(pool): State<PgPool>,
         ValidatedJson(input): ValidatedJson<NewMember>,

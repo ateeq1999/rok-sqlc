@@ -797,14 +797,15 @@ pub struct NewMember {
 | `VARCHAR(n)`, `CHAR(n)` (and `CHARACTER [VARYING](n)`) | `length(max = n)`, counted in characters as PostgreSQL counts them |
 | `CHECK (char_length(col) >= n)`, with `character_length` or `length`, any comparison | `length(min = n)` (or `max`); with a declared length, the tighter bounds, and `equal` when they meet |
 | `CHECK (col >= n)`, `>`, `<=`, `<`, the literal on either side, `BETWEEN a AND b`, an `AND` of these, on an integer or float column | `range(...)`. A strict bound on an integer becomes inclusive (`> 0` is `min = 1`); on a float it stays strict (`exclusive_min`) |
-| the same on a `NUMERIC` column (`Decimal`, which `range` can't compare) | `custom(function = "<field>_in_range", code = "range")`, a function generated next to the input, whose error carries `range`'s `min`/`max` params |
-| a typed id over text whose column has a length rule | `impl validator::ValidateLength<u64>` on the id, so the rule applies through it, also on foreign keys |
+| the same on a `NUMERIC` column (`Decimal`, which `range` can't compare, and which the orphan rule keeps from implementing validator's `ValidateRange`) | `custom(function = "<field>_in_range", code = "range")`, a function generated next to the input, whose error carries `range`'s `min`/`max` params |
+| a typed id over text | `impl validator::ValidateLength<u64>` on the id, so a length rule applies through it, also on foreign keys |
+| a typed id over an integer | `impl validator::ValidateRange<i64>` (the id's integer type) on the id, so a range rule applies through it, also on foreign keys |
 
 Each rule has an English message naming the column and validator's code
 (`length` or `range`). A patch field is checked only when it is present, so
 an absent field or `null` passes. Every other `CHECK`, `NOT NULL`, enums and
 value lists are not rules: the database or deserialization already enforces
-them. A typed-id field gets no range rule.
+them. A typed id over `NUMERIC` gets no range rule.
 
 `extractors` (which needs `validate`) generates `db/http/`: `mod.rs` holds
 the shared `BodyRejection` and the error envelope, and `axum.rs` and
@@ -846,7 +847,8 @@ frameworks:
 
 | The body | Status | `code` | `details` |
 |---|---|---|---|
-| no JSON `Content-Type`, bad JSON syntax, or unreadable (over the size limit, say) | `400` | `MALFORMED_BODY` | none |
+| no JSON `Content-Type`, bad JSON syntax, or unreadable | `400` | `MALFORMED_BODY` | none |
+| over the framework's size limit | `413` | `PAYLOAD_TOO_LARGE` | none |
 | JSON that doesn't fit the type (a missing field, a wrong type, an unknown label) | `422` | `VALIDATION_FAILED`, with serde's message | none |
 | breaks a validation rule | `422` | `VALIDATION_FAILED` | validator's errors by field |
 
@@ -879,19 +881,26 @@ frameworks:
 }
 ```
 
-The extractors read the body and parse it with `serde_json` themselves,
-rather than through `axum::Json` or `web::Json`, so both frameworks give the
-same messages. `BodyRejection` (`Malformed { message }` or
+The extractors read the body through `axum::Json` and `web::Json`, so each
+framework's settings apply: axum's `DefaultBodyLimit`, and actix-web's
+`JsonConfig` limit and `Content-Type` predicate (actix-web's `PayloadConfig`
+limit does not apply to JSON). Both limits default to 2 MiB (axum 0.8,
+actix-web 4); set the same limit on both to answer a large body the same way.
+A body over it gets `413` and `"the request body is over the size limit"`
+from either. A parse error's message is serde's own, taken from inside each
+framework's rejection, never the framework's text (axum's adds a field
+path), so both frameworks give the same messages. What counts as a JSON
+`Content-Type` is still each framework's call: axum takes
+`application/json` and `application/*+json`, actix-web also `text/json` and
+anything its `JsonConfig` predicate allows. `BodyRejection`
+(`Malformed { message }`, `TooLarge` or
 `ValidationFailure(validator::ValidationErrors)`) is public, with `status()`
-and `body()`, so an app that wants another response can match on it, and
-`db::http::validated::<T>(bytes)` applies the same rules outside a handler.
-Each framework's own body-size limit applies, and their defaults differ
-(axum's `DefaultBodyLimit` is 2 MiB, actix-web's `PayloadConfig` 256 KiB): set
-the same limit on both to answer a large body the same way. A body over it
-gets `"the request body is over the size limit"` from either.
-Only JSON bodies are covered: query strings, forms, and query-file
-parameters are not validated. `db/mod.rs` names the `validator`, `axum` and
-`actix-web` dependencies to add. The complete crate is in
+and `body()`, so an app that wants another response can match on it;
+`BodyRejection::from_serde` and `db::http::validated(body)` apply the same
+rules outside a handler. Only JSON bodies are covered: query strings, forms,
+and query-file parameters are not validated. `db/mod.rs` names the
+`validator`, `axum`, `serde_path_to_error` (axum wraps serde's error in it)
+and `actix-web` dependencies to add. The complete crate is in
 [`docs/examples/validated-api`](docs/examples/validated-api).
 
 ## Configuration

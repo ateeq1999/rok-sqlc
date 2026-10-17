@@ -102,7 +102,8 @@ pub enum UpdateOutcome<T> {
 /// The `Cargo.toml` lines the generated code needs. With `serde`, the crates
 /// whose types appear in serialized items need their `serde` feature.
 /// With `validate`, `validator`; with `extractors`, `serde_json` (to read
-/// JSON bodies) and each framework.
+/// serde's errors) and each framework, and for axum `serde_path_to_error`,
+/// whose error wraps serde's inside axum's rejection.
 fn dependency_hints(
     types: &[String],
     ids: &[(IdGeneration, BaseType)],
@@ -182,7 +183,7 @@ fn dependency_hints(
         hints.push_str("//   validator = { version = \"0.21\", features = [\"derive\"] }\n");
     }
     if extractors.contains(&Extractor::Axum) {
-        hints.push_str("//   axum = \"0.8\"\n");
+        hints.push_str("//   axum = \"0.8\"\n//   serde_path_to_error = \"0.1\"\n");
     }
     if extractors.contains(&Extractor::ActixWeb) {
         hints.push_str("//   actix-web = \"4\"\n");

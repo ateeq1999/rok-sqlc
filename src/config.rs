@@ -130,7 +130,7 @@ impl Derive {
 #[non_exhaustive]
 pub enum Extractor {
     /// axum: `http::axum::ValidatedJson<T>`. The consuming crate needs
-    /// `axum`.
+    /// `axum` and `serde_path_to_error`.
     Axum,
     /// actix-web: `http::actix_web::ValidatedJson<T>`. The consuming crate
     /// needs `actix-web`.

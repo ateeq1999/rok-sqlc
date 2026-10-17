@@ -49,18 +49,31 @@ async fn sign_up(ValidatedJson(signup): ValidatedJson<Signup>) -> String {
     describe_signup(&signup)
 }
 
-/// actix-web's default `PayloadConfig` limit.
-const DEFAULT_LIMIT: usize = 262_144;
+/// The default body limit of both frameworks: actix-web's `JsonConfig` and
+/// axum's `DefaultBodyLimit`, 2 MiB.
+const DEFAULT_LIMIT: usize = 2_097_152;
 
 /// A response as the tests compare it: status, `Content-Type`, body.
 type Answer = (u16, Option<String>, String);
 
 /// Posts `body` to `path` on the actix-web app with `content_type`, if any,
-/// and a `PayloadConfig` limit of `limit` bytes.
+/// and a `JsonConfig` limit of `limit` bytes.
 async fn actix_answer(path: &str, content_type: Option<&str>, body: &str, limit: usize) -> Answer {
+    let config = web::JsonConfig::default().limit(limit);
+    actix_answer_with(path, content_type, body, config).await
+}
+
+/// Posts `body` to `path` on the actix-web app with `content_type`, if any,
+/// and the app's `JsonConfig` `config`.
+async fn actix_answer_with(
+    path: &str,
+    content_type: Option<&str>,
+    body: &str,
+    config: web::JsonConfig,
+) -> Answer {
     let app = test::init_service(
         App::new()
-            .app_data(web::PayloadConfig::new(limit))
+            .app_data(config)
             .route("/teams", web::post().to(create_team))
             .route("/signups", web::post().to(sign_up)),
     )
@@ -208,25 +221,62 @@ async fn a_missing_or_wrong_content_type_is_a_malformed_body() {
     }
 }
 
-/// A body over the configured limit (actix-web's `PayloadConfig`, axum's
-/// `DefaultBodyLimit`) gets the same answer from both frameworks.
+/// A body over the configured limit (actix-web's `JsonConfig`, axum's
+/// `DefaultBodyLimit`) is answered `413` the same way by both frameworks.
 #[actix_web::test]
-async fn a_body_over_the_size_limit_is_a_malformed_body_in_both_frameworks() {
+async fn a_body_over_the_size_limit_is_too_large_in_both_frameworks() {
     let body = r#"{"code": "NORTH", "name": "Northern"}"#;
     let json = Some("application/json");
     let actix = actix_answer("/teams", json, body, 8).await;
     let axum = axum_answer("/teams", json, body, 8).await;
-    for (status, content_type, text) in [actix, axum] {
-        assert_eq!(status, 400);
-        assert_eq!(content_type.as_deref(), Some("application/json"));
-        assert_eq!(
-            serde_json::from_str::<Value>(&text).unwrap(),
-            envelope(
-                "the request body is over the size limit",
-                "MALFORMED_BODY"
-            )
-        );
-    }
+    assert_eq!(actix, axum);
+    let (status, content_type, text) = actix;
+    assert_eq!(status, 413);
+    assert_eq!(content_type.as_deref(), Some("application/json"));
+    assert_eq!(
+        serde_json::from_str::<Value>(&text).unwrap(),
+        envelope(
+            "the request body is over the size limit",
+            "PAYLOAD_TOO_LARGE"
+        )
+    );
+    // The same body within the limit is accepted.
+    let limit = body.len();
+    assert_eq!(actix_answer("/teams", json, body, limit).await.0, 200);
+    assert_eq!(axum_answer("/teams", json, body, limit).await.0, 200);
+}
+
+/// The extractor reads the body through `web::Json`, so the app's
+/// `JsonConfig` applies: its limit (above) and its `Content-Type` predicate.
+#[actix_web::test]
+async fn the_apps_json_config_applies() {
+    let body = r#"{"code": "NORTH", "name": "Northern"}"#;
+    let plain_text =
+        web::JsonConfig::default().content_type(|mime| mime.essence_str() == "text/plain");
+    assert_eq!(
+        actix_answer_with("/teams", Some("text/plain"), body, plain_text).await,
+        (
+            200,
+            Some("text/plain; charset=utf-8".to_owned()),
+            "NORTH Northern".to_owned()
+        )
+    );
+    // A `PayloadConfig` limit is not the JSON limit.
+    let app = test::init_service(
+        App::new()
+            .app_data(web::PayloadConfig::new(8))
+            .route("/teams", web::post().to(create_team)),
+    )
+    .await;
+    let request = test::TestRequest::post()
+        .uri("/teams")
+        .insert_header((CONTENT_TYPE, "application/json"))
+        .set_payload(body)
+        .to_request();
+    assert_eq!(
+        test::call_service(&app, request).await.status(),
+        StatusCode::OK
+    );
 }
 
 #[actix_web::test]
@@ -341,6 +391,7 @@ async fn both_frameworks_answer_the_same_input_with_the_same_body() {
         ("/teams", json, team),
         ("/teams", Some("application/merge-patch+json"), team),
         ("/teams", json, r#"{"code": "NORTH","#),
+        ("/teams", json, r#"{"code": "NORTH", "name": "Northern"} x"#),
         ("/teams", json, ""),
         ("/teams", None, team),
         ("/teams", Some("text/plain"), team),

@@ -33,9 +33,10 @@ generates.
   - on a `NUMERIC` column the range is a `custom` rule calling a generated
     `<field>_in_range` function, with the code `range` and `range`'s
     `min`/`max` params, since validator's `range` can't compare `Decimal`;
-  - a typed id over text whose column has a length rule implements
-    `validator::ValidateLength<u64>`, so the rule applies through the id and
-    through foreign keys using it. Typed-id fields get no `range` rule.
+  - a typed id over text implements `validator::ValidateLength<u64>`, and a
+    typed id over an integer `validator::ValidateRange`, so a column's
+    `length` or `range` rule applies through the id and through foreign keys
+    using it. A typed id over `NUMERIC` gets no range rule.
 
   Patch fields are checked only when present. Other `CHECK`s, `NOT NULL`,
   enums and value lists are not rules. `db/mod.rs` names the `validator`
@@ -47,21 +48,29 @@ generates.
   - `db::http::axum::ValidatedJson<T>` (axum 0.8) and
     `db::http::actix_web::ValidatedJson<T>` (actix-web 4), extractors for
     any `T: DeserializeOwned + Validate`: a generated input or patch, or a
-    hand-written request type;
+    hand-written request type. Each reads the body through its framework's
+    own JSON extractor (`axum::Json<T>`, `web::Json<T>`), so axum's
+    `DefaultBodyLimit` and actix-web's `JsonConfig` (limit and
+    `Content-Type` predicate) apply; both limits default to 2 MiB;
   - `BodyRejection`, answered in the Rok error envelope
     `{"success": false, "error": {"message", "code", "details"?}}`: `400`
     `MALFORMED_BODY` for a missing or wrong `Content-Type`, bad JSON syntax,
-    or a body that can't be read (over the framework's own size limit, with
-    the message `"the request body is over the size limit"` from both); `422`
+    or a body that can't be read; `413` `PAYLOAD_TOO_LARGE` for a body over
+    the framework's size limit, with the message
+    `"the request body is over the size limit"` from both; `422`
     `VALIDATION_FAILED` with serde's message and no `details` for JSON that
     doesn't fit the type; `422` `VALIDATION_FAILED` with validator's errors
-    as `details` for a broken rule;
-  - `ErrorBody`, `ErrorPayload`, the two codes, `is_json`, and
-    `validated::<T>(bytes)`, which both extractors share, so they answer the
-    same body with the same status, code and message.
+    as `details` for a broken rule. Each framework's rejection is classified
+    in its module, with the message taken from serde's own error (never the
+    framework's text), so both answer the same body with the same status,
+    code and message;
+  - `ErrorBody`, `ErrorPayload`, the three codes,
+    `BodyRejection::from_serde`, and `validated(body)`, which checks a
+    deserialized body against its rules.
 
   With actix-web, no `JsonConfig` error handler is needed. `db/mod.rs` names
-  the `axum`, `actix-web` and `serde_json` dependencies. `extractors` without
+  the `axum`, `serde_path_to_error` (whose error wraps serde's inside axum's
+  rejection), `actix-web` and `serde_json` dependencies. `extractors` without
   `validate` fails the run, and an unknown framework lists the valid ones.
   With `extractors`, `http` is a reserved module name: a table whose module
   would be `http` fails with an error that says so (rename it with
