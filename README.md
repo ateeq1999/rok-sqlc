@@ -851,8 +851,11 @@ typed id.
   and value-list `CHECK`s. Other `CHECK`s are ignored.
 - `ALTER TABLE`: `ADD COLUMN`, `DROP COLUMN`, `RENAME COLUMN`,
   `ADD CONSTRAINT` (primary key, unique, foreign key, value-list check;
-  other `CHECK`s are ignored, as in `CREATE TABLE`), and
-  `ENABLE`/`DISABLE ROW LEVEL SECURITY`.
+  other `CHECK`s are ignored, as in `CREATE TABLE`),
+  `ENABLE`/`DISABLE ROW LEVEL SECURITY`, and `ALTER COLUMN` with
+  `[SET DATA] TYPE` (with or without `USING`), `SET`/`DROP NOT NULL`,
+  `SET`/`DROP DEFAULT`, and `ADD GENERATED … AS IDENTITY`. The column ends up
+  in its final shape, and its keys follow a type change.
 - `CREATE UNIQUE INDEX` on plain columns, which becomes a unique key with a
   lookup. A partial index over live rows (`WHERE deleted_at IS NULL`) counts
   under the soft-delete convention. Expression indexes are ignored.
@@ -882,7 +885,7 @@ problems count.
 |---|---|
 | Column types not in the table above (`INTERVAL`, `BYTEA`, `TIME WITH TIME ZONE`, network types, …) | There is no chosen Rust mapping yet, and rok-sqlc doesn't guess one. |
 | `NUMERIC(p, s)` with `p` > 28 | `rust_decimal` holds 28 significant digits, so the value would fail to decode at runtime. |
-| Other `ALTER TABLE` clauses (`ALTER COLUMN … TYPE`/`SET NOT NULL`, `RENAME TO`, …) | The table's shape after the change is unknown, so the table fails. |
+| Other `ALTER TABLE` clauses (`RENAME TO`, `ALTER COLUMN … TYPE` to an unsupported type, `DROP NOT NULL` on a primary key column, …) | The table's shape after the change is unknown, so the table fails. |
 | Other `ALTER TYPE` clauses | The tables that use the type fail. |
 | A table whose module name is reserved or already taken | Its module would collide with a generated one. |
 | Columns whose filter or sort-key names collide (`weight` next to `weight_is_null`) | The generated code wouldn't compile. |
@@ -914,7 +917,9 @@ problems count.
 - Keyset pagination (`search_after`) follows primary-key order only. Array
   and JSON columns get only null checks in filters.
 - `WITH RECURSIVE` and data-modifying CTEs are rejected in query files.
-- `ALTER COLUMN` changes fail the table.
+- `ALTER COLUMN … DROP IDENTITY`, `SET STATISTICS`, `SET STORAGE`,
+  `DROP EXPRESSION`, and other `ALTER COLUMN` forms the SQL parser doesn't
+  know stop the run as a syntax error in their file, even with `--lenient`.
 - Typed ids and relationships cover only the tables generated together. A
   foreign key into another migration set keeps its raw type and makes no
   relationship.

@@ -64,6 +64,19 @@ CREATE TABLE revised_notes (
     legacy TEXT NOT NULL
 );
 
+-- Reshaped by alter_schema.sql's ALTER COLUMN changes: the key and `amount`
+-- widen to BIGINT, `code` (a unique key) becomes TEXT, `amount` gains
+-- NOT NULL, `label` loses its default, `note` loses NOT NULL, and `views`
+-- gains a default.
+CREATE TABLE meter_readings (
+    id INTEGER PRIMARY KEY,
+    code VARCHAR(16) UNIQUE,
+    amount INTEGER,
+    label TEXT NOT NULL DEFAULT 'unlabelled',
+    note TEXT NOT NULL,
+    views INTEGER NOT NULL
+);
+
 -- Foreign keys to two tables named `patch_targets` in different schemas.
 -- `app.patch_targets` is generated, so `target_id` uses its typed id;
 -- `legacy.patch_targets` is created by tests/fixture-app/tests/postgres.rs

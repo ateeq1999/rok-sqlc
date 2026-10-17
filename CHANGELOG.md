@@ -30,6 +30,18 @@ the *generated* API count as breaking (see ADR 0012).
   are now read to find those triggers (per table; function bodies are not
   inspected). Nullable managed columns are unaffected.
 
+### Added
+
+- `ALTER TABLE … ALTER COLUMN` is applied instead of failing the table:
+  `[SET DATA] TYPE` (with or without `USING`), `SET`/`DROP NOT NULL`,
+  `SET`/`DROP DEFAULT`, and `ADD GENERATED … AS IDENTITY`. The column ends
+  up in its final shape, and its primary key, unique keys, and typed id
+  follow a type change. A change rok-sqlc can't apply (a type with no
+  mapping, a serial type, `DROP NOT NULL` on a primary key column, identity
+  on a nullable column, a missing column) still fails the table with a
+  `path:line` diagnostic. Dropping a managed column's default can now leave
+  it without a source of values, which fails its table.
+
 ## [0.1.0] - 2026-10-17
 
 First release on crates.io. The entries below include generated-API changes

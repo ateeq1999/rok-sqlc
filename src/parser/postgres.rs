@@ -3,11 +3,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use sqlparser::ast::{
-    AlterTableOperation, AlterType, AlterTypeAddValue, AlterTypeAddValuePosition,
-    AlterTypeOperation, ArrayElemTypeDef, ColumnDef, ColumnOption, CreateIndex, CreateTable,
-    CreateTrigger, DataType, DropTrigger, ExactNumberInfo, Expr, Ident, IndexColumn, ObjectName,
-    ObjectNamePart, ObjectType, Spanned, Statement, TableConstraint, TimezoneInfo, TriggerEvent,
-    TriggerObject, TriggerPeriod, UserDefinedTypeRepresentation, Value,
+    AlterColumnOperation, AlterTableOperation, AlterType, AlterTypeAddValue,
+    AlterTypeAddValuePosition, AlterTypeOperation, ArrayElemTypeDef, ColumnDef, ColumnOption,
+    CreateIndex, CreateTable, CreateTrigger, DataType, DropTrigger, ExactNumberInfo, Expr, Ident,
+    IndexColumn, ObjectName, ObjectNamePart, ObjectType, Spanned, Statement, TableConstraint,
+    TimezoneInfo, TriggerEvent, TriggerObject, TriggerPeriod, UserDefinedTypeRepresentation, Value,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -696,6 +696,9 @@ fn apply_alter(
             AlterTableOperation::AddConstraint { constraint, .. } => {
                 add_constraint(table, constraint)?;
             }
+            AlterTableOperation::AlterColumn { column_name, op } => {
+                alter_column(table, &ident_name(column_name), op, enums)?;
+            }
             AlterTableOperation::EnableRowLevelSecurity
             | AlterTableOperation::DisableRowLevelSecurity => {}
             other => {
@@ -704,6 +707,87 @@ fn apply_alter(
         }
     }
     check_search_names(&table.columns)
+}
+
+/// Applies an `ALTER COLUMN` change, leaving the column in its final shape.
+/// Keys, unique keys, and foreign keys name their columns, so they follow a
+/// type change.
+///
+/// PostgreSQL rejects `SET DEFAULT` and `DROP DEFAULT` on identity and
+/// `GENERATED` columns, so a generated column they reach is a serial one:
+/// replacing or dropping its `nextval` default leaves it no longer generated.
+fn alter_column(
+    table: &mut Table,
+    name: &str,
+    operation: &AlterColumnOperation,
+    enums: &EnumRegistry,
+) -> std::result::Result<(), String> {
+    let index = column_index(table, name).ok_or_else(|| missing_column("ALTER COLUMN", name))?;
+    let is_key = table.primary_key.iter().any(|key| key == name);
+    let column = &mut table.columns[index];
+    let column_fail = |reason: String| format!("ALTER COLUMN: column `{name}`: {reason}");
+    match operation {
+        AlterColumnOperation::SetDataType { data_type, .. } => {
+            if is_serial_type(data_type) {
+                return Err(column_fail(format!(
+                    "type `{data_type}` exists only in CREATE TABLE and ADD COLUMN"
+                )));
+            }
+            let (base_type, sqlx_type) = map_type_in(data_type, enums).map_err(column_fail)?;
+            column.rust_type = rust_type(&base_type, column.nullable);
+            column.sqlx_type = sqlx_type;
+            // A value list restricts text only; one on another type is no enum.
+            if column.base_type() != BaseType::Text {
+                column.value_list = None;
+            }
+        }
+        AlterColumnOperation::SetNotNull => set_nullable(column, false),
+        AlterColumnOperation::DropNotNull => {
+            if is_key {
+                return Err(format!(
+                    "ALTER COLUMN: column `{name}` is in the primary key, so it cannot drop NOT NULL"
+                ));
+            }
+            set_nullable(column, true);
+        }
+        AlterColumnOperation::SetDefault { .. } => {
+            column.has_default = true;
+            column.is_generated = false;
+        }
+        AlterColumnOperation::DropDefault => {
+            column.has_default = false;
+            column.is_generated = false;
+        }
+        AlterColumnOperation::AddGenerated { .. } => {
+            if column.nullable {
+                return Err(format!(
+                    "ALTER COLUMN: column `{name}` must be NOT NULL before it can become an identity column"
+                ));
+            }
+            column.has_default = true;
+            column.is_generated = true;
+        }
+    }
+    Ok(())
+}
+
+/// Makes `column` nullable or required, wrapping or unwrapping its Rust type.
+fn set_nullable(column: &mut Column, nullable: bool) {
+    if column.nullable == nullable {
+        return;
+    }
+    let base_type = if column.nullable {
+        column
+            .rust_type
+            .strip_prefix("Option<")
+            .and_then(|inner| inner.strip_suffix('>'))
+            .unwrap_or(&column.rust_type)
+            .to_owned()
+    } else {
+        column.rust_type.clone()
+    };
+    column.rust_type = rust_type(&base_type, nullable);
+    column.nullable = nullable;
 }
 
 fn column_index(table: &Table, name: &str) -> Option<usize> {
@@ -2064,8 +2148,8 @@ mod tests {
                 "CREATE TABLE prices (id BIGSERIAL PRIMARY KEY, amount INTEGER NOT NULL);",
             ),
             (
-                "migrations/0002_widen.up.sql",
-                "-- widen prices\n\nALTER TABLE prices ALTER COLUMN amount TYPE BIGINT;",
+                "migrations/0002_rename.up.sql",
+                "-- rename prices\n\nALTER TABLE prices RENAME TO costs;",
             ),
         ]);
         assert!(parsed.schema.tables.is_empty());
@@ -2073,8 +2157,8 @@ mod tests {
         let message = parsed.failures[0].to_string();
         assert!(
             message.starts_with(&format!(
-                "{}:3: table `prices`: unsupported ALTER TABLE clause `ALTER COLUMN amount",
-                Path::new("migrations/0002_widen.up.sql").display()
+                "{}:3: table `prices`: unsupported ALTER TABLE clause `RENAME",
+                Path::new("migrations/0002_rename.up.sql").display()
             )),
             "{message}"
         );
@@ -2566,6 +2650,187 @@ mod tests {
         );
     }
 
+    fn column<'a>(table: &'a Table, name: &str) -> &'a Column {
+        table
+            .columns
+            .iter()
+            .find(|column| column.sql_name == name)
+            .unwrap_or_else(|| panic!("no column `{name}`"))
+    }
+
+    /// `TYPE`, with or without `USING`, gives the column its new type; keys
+    /// name columns, so they follow the change.
+    #[test]
+    fn alter_column_type_changes_the_column_and_its_keys() {
+        let parsed = parse_files(&[
+            (
+                "0001.up.sql",
+                "CREATE TABLE readings (id INTEGER PRIMARY KEY, code VARCHAR(8) UNIQUE, amount INTEGER NOT NULL, note TEXT);",
+            ),
+            (
+                "0002.up.sql",
+                "ALTER TABLE readings ALTER COLUMN id TYPE BIGINT, ALTER COLUMN code SET DATA TYPE UUID USING code::uuid;
+                 ALTER TABLE readings ALTER amount TYPE NUMERIC(12, 2) USING amount::numeric;",
+            ),
+        ]);
+        assert!(parsed.failures.is_empty(), "{:?}", parsed.failures);
+        let table = &parsed.schema.tables[0];
+        let types: Vec<(&str, &str, bool)> = table
+            .columns
+            .iter()
+            .map(|column| {
+                (
+                    column.rust_type.as_str(),
+                    column.sqlx_type.as_str(),
+                    column.nullable,
+                )
+            })
+            .collect();
+        assert_eq!(
+            types,
+            [
+                ("i64", "i64", false),
+                ("Option<uuid::Uuid>", "uuid::Uuid", true),
+                ("rust_decimal::Decimal", "rust_decimal::Decimal", false),
+                ("Option<String>", "String", true),
+            ]
+        );
+        assert_eq!(table.primary_key, ["id"]);
+        assert!(column(table, "id").is_primary_key);
+        assert_eq!(table.unique_keys, [UniqueKey::new(vec!["code".to_owned()])]);
+    }
+
+    /// `(Rust type, nullable, has a default, generated)` of each column.
+    fn shapes(table: &Table) -> Vec<(&str, &str, bool, bool, bool)> {
+        table
+            .columns
+            .iter()
+            .map(|column| {
+                (
+                    column.sql_name.as_str(),
+                    column.rust_type.as_str(),
+                    column.nullable,
+                    column.has_default,
+                    column.is_generated,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn alter_column_sets_and_drops_not_null_and_defaults() {
+        let table = one_table(
+            "CREATE TABLE notes (
+                 id BIGINT PRIMARY KEY,
+                 title TEXT,
+                 body TEXT NOT NULL DEFAULT '',
+                 views INTEGER,
+                 seq SERIAL NOT NULL
+             );
+             ALTER TABLE notes ALTER COLUMN title SET NOT NULL, ALTER COLUMN title TYPE VARCHAR(80);
+             ALTER TABLE notes ALTER COLUMN body DROP NOT NULL, ALTER COLUMN body DROP DEFAULT;
+             ALTER TABLE notes ALTER COLUMN views SET DEFAULT 0;
+             ALTER TABLE notes ALTER COLUMN seq DROP DEFAULT;",
+        );
+        assert_eq!(
+            shapes(&table),
+            [
+                ("id", "i64", false, false, false),
+                ("title", "String", false, false, false),
+                ("body", "Option<String>", true, false, false),
+                ("views", "Option<i32>", true, true, false),
+                ("seq", "i32", false, false, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn alter_column_add_identity_makes_the_column_generated() {
+        let table = one_table(
+            "CREATE TABLE notes (id BIGINT NOT NULL, other BIGINT NOT NULL);
+             ALTER TABLE notes ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY;
+             ALTER TABLE notes ALTER COLUMN other ADD GENERATED BY DEFAULT AS IDENTITY (START WITH 10);
+             ALTER TABLE notes ADD PRIMARY KEY (id);",
+        );
+        assert_eq!(
+            shapes(&table),
+            [
+                ("id", "i64", false, true, true),
+                ("other", "i64", false, true, true),
+            ]
+        );
+    }
+
+    /// A value list restricts text; a type change away from text drops it.
+    #[test]
+    fn alter_column_type_keeps_value_lists_only_on_text() {
+        let parsed = parse(
+            "CREATE TABLE orders (
+                 id BIGSERIAL PRIMARY KEY,
+                 state TEXT CHECK (state IN ('new', 'done')),
+                 grade TEXT CHECK (grade IN ('1', '2'))
+             );
+             ALTER TABLE orders ALTER COLUMN state TYPE VARCHAR(10);
+             ALTER TABLE orders ALTER COLUMN grade TYPE INTEGER USING grade::integer;",
+        );
+        assert!(parsed.failures.is_empty(), "{:?}", parsed.failures);
+        assert_eq!(
+            enum_summary(&parsed.schema),
+            [(
+                "OrderState".to_owned(),
+                Some("orders.state"),
+                vec!["new", "done"]
+            )]
+        );
+        let table = &parsed.schema.tables[0];
+        assert_eq!(column(table, "grade").rust_type, "Option<i32>");
+        assert_eq!(column(table, "grade").value_list, None);
+    }
+
+    #[test]
+    fn rejects_alter_column_changes_it_cannot_apply_with_their_location() {
+        let cases = [
+            (
+                "ALTER TABLE notes ALTER COLUMN body TYPE INTERVAL;",
+                "ALTER COLUMN: column `body`: type `INTERVAL` is not supported yet",
+            ),
+            (
+                "ALTER TABLE notes ALTER COLUMN body TYPE BIGSERIAL;",
+                "ALTER COLUMN: column `body`: type `BIGSERIAL` exists only in CREATE TABLE and ADD COLUMN",
+            ),
+            (
+                "ALTER TABLE notes ALTER COLUMN id DROP NOT NULL;",
+                "ALTER COLUMN: column `id` is in the primary key, so it cannot drop NOT NULL",
+            ),
+            (
+                "ALTER TABLE notes ALTER COLUMN body ADD GENERATED ALWAYS AS IDENTITY;",
+                "ALTER COLUMN: column `body` must be NOT NULL before it can become an identity column",
+            ),
+            (
+                "ALTER TABLE notes ALTER COLUMN title SET NOT NULL;",
+                "ALTER COLUMN: column `title` does not exist",
+            ),
+        ];
+        for (alter, reason) in cases {
+            let sql = format!("-- change notes\n{alter}");
+            let parsed = parse_files(&[
+                (
+                    "0001.up.sql",
+                    "CREATE TABLE notes (id BIGINT PRIMARY KEY, body TEXT);",
+                ),
+                ("0002.up.sql", &sql),
+            ]);
+            assert!(parsed.schema.tables.is_empty(), "{alter}");
+            assert_eq!(parsed.failures.len(), 1, "{alter}");
+            assert_eq!(parsed.failures[0].reason, reason, "{alter}");
+            assert_eq!(parsed.failures[0].line, Some(2), "{alter}");
+            assert_eq!(
+                parsed.failures[0].path.as_deref(),
+                Some(Path::new("0002.up.sql")),
+                "{alter}"
+            );
+        }
+    }
     #[test]
     fn value_lists_that_cannot_be_generated_fail_their_tables() {
         let parsed = parse(
