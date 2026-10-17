@@ -16,6 +16,10 @@ The read side gains `exists_by_id`, `list_page(limit, offset)`, and `count`. `li
 
 `products` now generates `Product`, `NewProduct`, and `UpdateProduct` (was `Products`, `NewProducts`, `UpdateProducts`). Only the head noun is singularized (`stock_levels` → `StockLevel`, `units_of_measure` → `UnitOfMeasure`) by a small rule set with irregular and uncountable lists; module names and SQL names are unchanged. This renames every generated type, a breaking change for consumers, accepted because the project is pre-1.0 and a row type named after one row reads correctly at every call site (`Option<Product>`, `Vec<Product>`).
 
+## Identifiers in dynamic SQL
+
+The relationship filters build `EXISTS` subqueries with `QueryBuilder`, and the shared `db::search::open_exists` and `correlate` push table names, aliases, and column names as SQL text (identifiers cannot be bound). They take only identifiers rok-sqlc generated and quoted (the `ident`/`table_ref` rules above, and the `_r<depth>` aliases), never caller input, and their doc comments say so. Every value is still bound.
+
 ## Considered Options
 
 - **A generated `Patch<T>` enum instead of `Option<Option<T>>`** — rejected for now: ADR 0005's `Option` encoding is unchanged and documented on each nullable field; a `Patch` type would add a shared runtime file to every output directory and a second, larger API break.

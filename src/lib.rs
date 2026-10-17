@@ -8,7 +8,7 @@
 //! ```no_run
 //! // build.rs
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     println!("cargo:rerun-if-changed=migrations");
+//!     println!("cargo::rerun-if-changed=migrations");
 //!     let mut config = rok_sqlc::Config::default();
 //!     config.schema = vec!["migrations/0001_init.sql".into()];
 //!     config.output = "src/db".into();

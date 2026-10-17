@@ -769,20 +769,21 @@ impl<T> Ordered<T> {
     {
         query.push(" AND ");
         query.push(column);
-        match self {
-            Ordered::Eq(value) => push_operator(query, " = ", value),
-            Ordered::Ne(value) => push_operator(query, " <> ", value),
-            Ordered::Lt(value) => push_operator(query, " < ", value),
-            Ordered::Le(value) => push_operator(query, " <= ", value),
-            Ordered::Gt(value) => push_operator(query, " > ", value),
-            Ordered::Ge(value) => push_operator(query, " >= ", value),
+        let shared = match self {
+            Ordered::Eq(value) => Equality::Eq(value),
+            Ordered::Ne(value) => Equality::Ne(value),
+            Ordered::In(values) => Equality::In(values),
+            Ordered::NotIn(values) => Equality::NotIn(values),
+            Ordered::Lt(value) => return push_operator(query, " < ", value),
+            Ordered::Le(value) => return push_operator(query, " <= ", value),
+            Ordered::Gt(value) => return push_operator(query, " > ", value),
+            Ordered::Ge(value) => return push_operator(query, " >= ", value),
             Ordered::Between(low, high) => {
                 push_operator(query, " BETWEEN ", low);
-                push_operator(query, " AND ", high);
+                return push_operator(query, " AND ", high);
             }
-            Ordered::In(values) => push_set(query, " = ANY(", values),
-            Ordered::NotIn(values) => push_set(query, " <> ALL(", values),
-        }
+        };
+        shared.push_condition(query);
     }
 }
 
@@ -809,6 +810,16 @@ impl<T> Equality<T> {
     {
         query.push(" AND ");
         query.push(column);
+        self.push_condition(query);
+    }
+
+    /// Appends the condition after its column. `Ordered` and `Text` share
+    /// these four conditions and push them through here.
+    fn push_condition(self, query: &mut QueryBuilder<Postgres>)
+    where
+        T: for<'q> sqlx::Encode<'q, Postgres> + sqlx::Type<Postgres>,
+        Vec<T>: for<'q> sqlx::Encode<'q, Postgres> + sqlx::Type<Postgres>,
+    {
         match self {
             Equality::Eq(value) => push_operator(query, " = ", value),
             Equality::Ne(value) => push_operator(query, " <> ", value),
@@ -845,6 +856,9 @@ pub const MAX_RELATIONSHIP_DEPTH: usize = 4;
 /// relationship filter nested in `depth` others, returning the alias. The
 /// caller appends the correlation and conditions, then `)`.
 ///
+/// `table` is pushed as SQL text, not bound: only the generated filters
+/// call this, with a table name rok-sqlc quoted. Never pass user input.
+///
 /// # Errors
 ///
 /// `sqlx::Error::InvalidArgument` when `depth` reaches
@@ -870,6 +884,10 @@ pub fn open_exists(
 }
 
 /// Appends ` AND <alias>.<column> = <outer>.<outer_column>`.
+///
+/// Every argument is pushed as SQL text, not bound: only the generated
+/// filters call this, with aliases and column names rok-sqlc generated and
+/// quoted. Never pass user input.
 #[doc(hidden)]
 pub fn correlate(
     alias: &str,
@@ -914,21 +932,16 @@ impl Text {
     pub fn push(self, column: &str, query: &mut QueryBuilder<Postgres>) {
         query.push(" AND ");
         query.push(column);
-        match self {
-            Text::Eq(value) => push_operator(query, " = ", value),
-            Text::Ne(value) => push_operator(query, " <> ", value),
-            Text::In(values) => push_set(query, " = ANY(", values),
-            Text::NotIn(values) => push_set(query, " <> ALL(", values),
-            Text::Contains(value) => {
-                push_operator(query, " LIKE ", format!("%{}%", escape_like(&value)));
-            }
-            Text::StartsWith(value) => {
-                push_operator(query, " LIKE ", format!("{}%", escape_like(&value)));
-            }
-            Text::EndsWith(value) => {
-                push_operator(query, " LIKE ", format!("%{}", escape_like(&value)));
-            }
-        }
+        let pattern = match self {
+            Text::Eq(value) => return Equality::Eq(value).push_condition(query),
+            Text::Ne(value) => return Equality::Ne(value).push_condition(query),
+            Text::In(values) => return Equality::In(values).push_condition(query),
+            Text::NotIn(values) => return Equality::NotIn(values).push_condition(query),
+            Text::Contains(value) => format!("%{}%", escape_like(&value)),
+            Text::StartsWith(value) => format!("{}%", escape_like(&value)),
+            Text::EndsWith(value) => format!("%{}", escape_like(&value)),
+        };
+        push_operator(query, " LIKE ", pattern);
     }
 }
 
