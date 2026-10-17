@@ -789,9 +789,10 @@ fn rename_column(table: &mut Table, old: &str, new: &str) -> std::result::Result
     Ok(())
 }
 
-/// Adds a primary key, unique, or foreign key constraint. Other constraint
-/// kinds fail, so a constraint that might change the model is never dropped
-/// silently.
+/// Adds a primary key, unique, or foreign key constraint, or a value-list
+/// check. Like in `CREATE TABLE`, any other check leaves the model unchanged.
+/// Other constraint kinds fail, so a constraint that might change the model
+/// is never dropped silently.
 fn add_constraint(
     table: &mut Table,
     constraint: &TableConstraint,
@@ -834,17 +835,14 @@ fn add_constraint(
                 .foreign_keys
                 .extend(constraint_foreign_key(constraint));
         }
-        // Not an `if let` guard: those need Rust 1.95, above the MSRV.
+        // Like in `CREATE TABLE`, a value list on a text column restricts it,
+        // and any other check leaves the model unchanged.
         TableConstraint::Check { expr, .. } => {
-            let target = value_list_check(expr).and_then(|(name, labels)| {
-                column_index(table, &name)
-                    .filter(|&index| table.columns[index].sqlx_type == "String")
-                    .map(|index| (index, labels))
-            });
-            let Some((index, labels)) = target else {
-                return Err(format!("unsupported ALTER TABLE clause `ADD {constraint}`"));
-            };
-            restrict_to_values(&mut table.columns[index], labels);
+            if let Some((name, labels)) = value_list_check(expr)
+                && let Some(index) = column_index(table, &name)
+            {
+                restrict_to_values(&mut table.columns[index], labels);
+            }
         }
         other => return Err(format!("unsupported ALTER TABLE clause `ADD {other}`")),
     }
@@ -2003,20 +2001,27 @@ mod tests {
         );
     }
 
+    /// Like a `CHECK` in `CREATE TABLE`, one added later changes the model
+    /// only when it is a value list on a text column.
     #[test]
-    fn rejects_constraints_that_are_not_keys() {
+    fn ignores_checks_added_later_that_are_not_value_lists() {
         let parsed = parse(
-            "CREATE TABLE prices (id BIGSERIAL PRIMARY KEY, amount INTEGER NOT NULL);
-             ALTER TABLE prices ADD CONSTRAINT positive CHECK (amount > 0);",
+            "CREATE TABLE prices (id BIGSERIAL PRIMARY KEY, amount INTEGER NOT NULL, code TEXT);
+             ALTER TABLE prices ADD CONSTRAINT positive CHECK (amount > 0);
+             ALTER TABLE prices ADD CHECK (amount IN (1, 2)), ADD CHECK (code <> '');
+             ALTER TABLE prices ADD CHECK (id IN ('1'));",
         );
-        assert!(parsed.schema.tables.is_empty());
+        assert!(parsed.failures.is_empty(), "{:?}", parsed.failures);
+        let table = &parsed.schema.tables[0];
         assert!(
-            parsed.failures[0]
-                .reason
-                .contains("unsupported ALTER TABLE clause `ADD CONSTRAINT positive CHECK"),
+            table
+                .columns
+                .iter()
+                .all(|column| column.value_list.is_none()),
             "{:?}",
-            parsed.failures
+            table.columns
         );
+        assert!(parsed.schema.enums.is_empty());
     }
 
     #[test]

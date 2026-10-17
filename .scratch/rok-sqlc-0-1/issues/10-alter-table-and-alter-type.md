@@ -1,8 +1,8 @@
 # 10: `ALTER TABLE` / `ALTER TYPE`: apply, ignore on purpose, or fail
 
 **What to build:** Migrations that change tables after creating them produce models matching the final shape.
-- **Applied:** `ADD COLUMN`, `DROP COLUMN`, `RENAME COLUMN`, and `ADD CONSTRAINT` (primary key, unique, foreign key).
-- **Ignored on purpose:** row-level security (`ENABLE ROW LEVEL SECURITY`), `CREATE POLICY`, non-unique indexes, grants, triggers, comments, function definitions, and `SELECT fn(…)` calls.
+- **Applied:** `ADD COLUMN`, `DROP COLUMN`, `RENAME COLUMN`, and `ADD CONSTRAINT` (primary key, unique, foreign key, and a value-list `CHECK`, which ticket 12 turns into an enum).
+- **Ignored on purpose:** row-level security (`ENABLE ROW LEVEL SECURITY`), `CREATE POLICY`, non-unique indexes, grants, triggers, comments, function definitions, `SELECT fn(…)` calls, and `ADD CONSTRAINT … CHECK` constraints that are not value lists (as in `CREATE TABLE`, they leave the model unchanged).
 - **Failing:** any other `ALTER TABLE` that targets a known table, with a `path:line` diagnostic naming the unsupported clause.
 - **Recorded:** unique indexes on plain columns, as input to unique keys (ticket 15).
 

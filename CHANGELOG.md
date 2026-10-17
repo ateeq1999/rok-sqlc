@@ -94,7 +94,9 @@ against earlier development snapshots.
   `<table>_<columns>_key`); otherwise the diagnostic lists the valid names.
 - `--schema` accepts files or migration directories and can be repeated;
   `ALTER TABLE` statements in later migrations change earlier tables.
-  Diagnostics print `path:line:`.
+  Diagnostics print `path:line:`. `ALTER TABLE … ADD CONSTRAINT … CHECK`
+  that is not a value list is ignored, like such a `CHECK` in `CREATE
+  TABLE`, instead of failing the table.
 - `DROP TABLE` (also `IF EXISTS`, schema-qualified, or several names) in a
   later migration removes the table, so its generated files are stale and
   get removed. Foreign keys other tables hold to it are dropped as with

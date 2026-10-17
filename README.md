@@ -845,7 +845,8 @@ typed id.
   inline and table-level `PRIMARY KEY`, `UNIQUE`, `REFERENCES`/`FOREIGN KEY`,
   and value-list `CHECK`s. Other `CHECK`s are ignored.
 - `ALTER TABLE`: `ADD COLUMN`, `DROP COLUMN`, `RENAME COLUMN`,
-  `ADD CONSTRAINT` (primary key, unique, foreign key, value-list check), and
+  `ADD CONSTRAINT` (primary key, unique, foreign key, value-list check;
+  other `CHECK`s are ignored, as in `CREATE TABLE`), and
   `ENABLE`/`DISABLE ROW LEVEL SECURITY`.
 - `CREATE UNIQUE INDEX` on plain columns, which becomes a unique key with a
   lookup. A partial index over live rows (`WHERE deleted_at IS NULL`) counts
@@ -873,7 +874,7 @@ fails. With `--resource`, only that table's problems count.
 |---|---|
 | Column types not in the table above (`INTERVAL`, `BYTEA`, `TIME WITH TIME ZONE`, network types, …) | There is no chosen Rust mapping yet, and rok-sqlc doesn't guess one. |
 | `NUMERIC(p, s)` with `p` > 28 | `rust_decimal` holds 28 significant digits, so the value would fail to decode at runtime. |
-| Other `ALTER TABLE` clauses (`ALTER COLUMN … TYPE`/`SET NOT NULL`, non-value-list `ADD CONSTRAINT … CHECK`, …) | The table's shape after the change is unknown, so the table fails. |
+| Other `ALTER TABLE` clauses (`ALTER COLUMN … TYPE`/`SET NOT NULL`, `RENAME TO`, …) | The table's shape after the change is unknown, so the table fails. |
 | Other `ALTER TYPE` clauses | The tables that use the type fail. |
 | A table whose module name is reserved or already taken | Its module would collide with a generated one. |
 | Columns whose filter or sort-key names collide (`weight` next to `weight_is_null`) | The generated code wouldn't compile. |
