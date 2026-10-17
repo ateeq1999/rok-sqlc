@@ -37,7 +37,19 @@ pub fn push_chain(output: &mut String, indent: usize, lead: &str, head: &str, ca
 /// `#[derive(...)]` line `output` ends with, laid out as rustfmt lays out a
 /// derive list: on one line when it fits, otherwise one derive per line.
 pub fn push_serde_derive(output: &mut String, serde: bool) {
-    if !serde {
+    if serde {
+        push_derives(output, &SERDE_DERIVES);
+    }
+}
+
+/// The derives `derive = ["serde"]` adds.
+pub const SERDE_DERIVES: [&str; 2] = ["serde::Serialize", "serde::Deserialize"];
+
+/// Adds `extra` derives to the `#[derive(...)]` line `output` ends with, laid
+/// out as rustfmt lays out a derive list: on one line when it fits,
+/// otherwise one derive per line. No `extra` derive leaves `output` as is.
+pub fn push_derives(output: &mut String, extra: &[&str]) {
+    if extra.is_empty() {
         return;
     }
     let without_newline = output.strip_suffix('\n').unwrap_or(output);
@@ -46,10 +58,10 @@ pub fn push_serde_derive(output: &mut String, serde: bool) {
         .trim_end()
         .strip_prefix("#[derive(")
         .and_then(|rest| rest.strip_suffix(")]"))
-        .expect("serde derives follow a `#[derive(...)]` line")
+        .expect("derives follow a `#[derive(...)]` line")
         .to_owned();
     output.truncate(start);
-    let derives = format!("{derives}, serde::Serialize, serde::Deserialize");
+    let derives = format!("{derives}, {}", extra.join(", "));
     // Like a use list, rustfmt keeps the list on one line only up to 98
     // columns, then on one indented line up to 99, then one per line.
     let one_line = format!("#[derive({derives})]");

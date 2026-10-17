@@ -315,7 +315,7 @@ pub fn id_imports<'a>(
 }
 
 /// Renders the table's typed id or key struct (before the row struct).
-pub fn render_key_type(output: &mut String, table: &Table, serde: bool) {
+pub fn render_key_type(output: &mut String, table: &Table, serde: bool, validate: bool) {
     let keys = table.key_columns();
     match keys.as_slice() {
         [] => {}
@@ -326,6 +326,9 @@ pub fn render_key_type(output: &mut String, table: &Table, serde: bool) {
                 .filter(|id| id.module == table.module_name)
             {
                 render_typed_id(output, table, key, &id.name, serde);
+                if validate && key.sqlx_type == "String" {
+                    super::validate::push_measured_id(output, &id.name);
+                }
             }
         }
         _ => render_key_struct(output, table, &keys, serde),

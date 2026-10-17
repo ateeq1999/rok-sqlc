@@ -11,7 +11,11 @@ The fixture app (`tests/fixture-app`) covers this: add a table with `VARCHAR(n)`
 
 **Blocked by:** 01, 02
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Generator tests show the attributes, messages and typed-id impls, and show that output without `validate` is unchanged.
-- [ ] The fixture app exercises `validate()` on an input and a patch, including `Some(None)` and absent fields.
+- [x] Generator tests show the attributes, messages and typed-id impls, and show that output without `validate` is unchanged.
+- [x] The fixture app exercises `validate()` on an input and a patch, including `Some(None)` and absent fields.
+
+## Comments
+
+- Implemented on branch `rok-sqlc-0-3-03`.

@@ -15,6 +15,8 @@ pub struct DbMod<'a> {
     pub queries: QueriesModule<'a>,
     /// Whether `derive = ["serde"]` is on, which adds `nullable.rs`.
     pub serde: bool,
+    /// Whether `derive = ["validate"]` is on, which needs `validator`.
+    pub validate: bool,
 }
 
 /// Renders `db/mod.rs`: the dependency hints, a module per table of
@@ -26,6 +28,7 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
         has_session,
         queries,
         serde,
+        validate,
     } = *db_mod;
     let mut types: Vec<String> = tables
         .iter()
@@ -46,6 +49,9 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
         .filter_map(|column| Some((column.id_generation?, column.base_type())))
         .collect();
     output.push_str(&dependency_hints(&types, &ids, serde));
+    if validate {
+        output.push_str("//   validator = { version = \"0.21\", features = [\"derive\"] }\n");
+    }
     output.push('\n');
     // Sorted the way rustfmt sorts `mod` declarations.
     let mut modules: Vec<&str> = tables
@@ -205,6 +211,7 @@ mod tests {
                 has_session: false,
                 queries,
                 serde,
+                validate: false,
             },
         )
     }
@@ -243,6 +250,26 @@ mod tests {
             db_mod(&tables, QueriesModule::None, true)
                 .contains("pub mod nullable;\npub mod schema;\npub mod search;\npub mod users;")
         );
+    }
+
+    #[test]
+    fn db_mod_hints_validator_with_validate() {
+        let tables = vec![table(vec![column("id", "i64")], &["id"])];
+        let hint = "//   serde = { version = \"1\", features = [\"derive\"] }\n//   validator = { version = \"0.21\", features = [\"derive\"] }\n";
+        let render = |validate| {
+            render_db_mod(
+                &tables,
+                &DbMod {
+                    has_types: false,
+                    has_session: false,
+                    queries: QueriesModule::None,
+                    serde: true,
+                    validate,
+                },
+            )
+        };
+        assert!(render(true).contains(hint), "{}", render(true));
+        assert!(!render(false).contains("validator"));
     }
 
     #[test]

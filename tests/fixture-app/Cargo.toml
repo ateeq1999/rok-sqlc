@@ -15,6 +15,8 @@ chrono = { version = "0.4", features = ["serde"] }
 rust_decimal = { version = "1", features = ["serde"] }
 # The fixture generates with `derive = ["serde"]` (ADR 0013).
 serde = { version = "1", features = ["derive"] }
+# `src/validated_db/` generates with `derive = ["serde", "validate"]` (ADR 0015).
+validator = { version = "0.21", features = ["derive"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

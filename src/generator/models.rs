@@ -1,9 +1,22 @@
 use crate::schema::{Column, Table, mentions_generated_type};
 
 use super::{
-    CHAIN_WIDTH, HEADER, doc_name, insert_field_type, keys, push_and_chain, push_chain, push_doc,
-    push_serde_derive, update_field_type, use_paths,
+    CHAIN_WIDTH, HEADER, SERDE_DERIVES, doc_name, insert_field_type, keys, push_and_chain,
+    push_chain, push_derives, push_doc, push_serde_derive, update_field_type, use_paths,
 };
+
+/// The derives a create input or update patch adds: serde's, and with
+/// `validate` (ADR 0015) `validator::Validate`.
+fn input_derives(serde: bool, validate: bool) -> Vec<&'static str> {
+    let mut derives = Vec::new();
+    if serde {
+        derives.extend(SERDE_DERIVES);
+    }
+    if validate {
+        derives.push("validator::Validate");
+    }
+    derives
+}
 
 /// The doc line of a row, input, or patch field: the column it holds.
 fn column_doc(column: &Column) -> String {
@@ -59,7 +72,7 @@ where
 }
 ";
 
-pub fn render(table: &Table, serde: bool) -> String {
+pub fn render(table: &Table, serde: bool, validate: bool) -> String {
     let mut output = format!("{HEADER}\n");
     let mut imports = keys::id_imports(table, &table.columns, true);
     // A column typed by another module's id (one wrapping an enum) does not
@@ -77,20 +90,26 @@ pub fn render(table: &Table, serde: bool) -> String {
         output.push_str(&use_paths(&imports));
         output.push('\n');
     }
-    keys::render_key_type(&mut output, table, serde);
+    keys::render_key_type(&mut output, table, serde, validate);
     render_row(&mut output, table, serde);
     keys::render_row_key(&mut output, table);
 
     let insert_columns = table.insert_columns();
     if !insert_columns.is_empty() {
-        render_insert_input(&mut output, table, &insert_columns, serde);
+        render_insert_input(&mut output, table, &insert_columns, serde, validate);
     }
 
-    let update_columns = table.update_columns();
+    let mut update_columns = table.update_columns();
     if !table.primary_key.is_empty() && !update_columns.is_empty() {
-        render_update_patch(&mut output, table, &update_columns, serde);
+        render_update_patch(&mut output, table, &update_columns, serde, validate);
+    } else {
+        update_columns.clear();
     }
 
+    if validate {
+        let fields = insert_columns.into_iter().chain(update_columns);
+        super::validate::push_decimal_checks(&mut output, fields);
+    }
     output
 }
 
@@ -117,7 +136,13 @@ fn render_row(output: &mut String, table: &Table, serde: bool) {
     output.push_str("}\n");
 }
 
-fn render_insert_input(output: &mut String, table: &Table, columns: &[&Column], serde: bool) {
+fn render_insert_input(
+    output: &mut String,
+    table: &Table,
+    columns: &[&Column],
+    serde: bool,
+    validate: bool,
+) {
     output.push('\n');
     let has_defaults = columns.iter().any(|column| column.is_omittable_on_insert());
     let mut doc = vec!["Input for `create`: every column the caller may supply."];
@@ -140,7 +165,7 @@ fn render_insert_input(output: &mut String, table: &Table, columns: &[&Column], 
     } else {
         output.push_str("#[derive(Debug, Clone, PartialEq)]\n");
     }
-    push_serde_derive(output, serde);
+    push_derives(output, &input_derives(serde, validate));
     output.push_str(&format!("pub struct New{} {{\n", table.struct_name));
     for column in columns {
         let doc = column_doc(column);
@@ -174,6 +199,9 @@ fn render_insert_input(output: &mut String, table: &Table, columns: &[&Column], 
         if serde && column.is_omittable_on_insert() && column.nullable {
             push_option_serde(output, true, true);
         }
+        if validate {
+            super::validate::push_field_rule(output, column);
+        }
         output.push_str(&format!(
             "    pub {}: {},\n",
             column.rust_name,
@@ -183,7 +211,13 @@ fn render_insert_input(output: &mut String, table: &Table, columns: &[&Column], 
     output.push_str("}\n");
 }
 
-fn render_update_patch(output: &mut String, table: &Table, columns: &[&Column], serde: bool) {
+fn render_update_patch(
+    output: &mut String,
+    table: &Table,
+    columns: &[&Column],
+    serde: bool,
+    validate: bool,
+) {
     output.push('\n');
     let mut doc = vec!["Partial update for `update`: `None` leaves a column unchanged."];
     if serde {
@@ -195,7 +229,7 @@ fn render_update_patch(output: &mut String, table: &Table, columns: &[&Column], 
     }
     push_doc(output, 0, &doc);
     output.push_str("#[derive(Debug, Clone, Default, PartialEq)]\n");
-    push_serde_derive(output, serde);
+    push_derives(output, &input_derives(serde, validate));
     if serde {
         output.push_str("#[serde(default)]\n");
     }
@@ -216,6 +250,9 @@ fn render_update_patch(output: &mut String, table: &Table, columns: &[&Column], 
         }
         if serde {
             push_option_serde(output, column.nullable, false);
+        }
+        if validate {
+            super::validate::push_field_rule(output, column);
         }
         output.push_str(&format!(
             "    pub {}: {},\n",
@@ -261,9 +298,10 @@ fn render_update_patch(output: &mut String, table: &Table, columns: &[&Column], 
 mod tests {
     use super::super::test_support::{column, defaulted, generated, nullable, table};
     use super::*;
+    use crate::schema::{LengthRange, NumberBound, TypedId, ValueRange};
 
     fn render(table: &Table) -> String {
-        super::render(table, false)
+        super::render(table, false, false)
     }
 
     #[test]
@@ -274,7 +312,7 @@ mod tests {
         );
         let serde = "serde::Serialize, serde::Deserialize)]\n";
         assert!(!render(&users).contains("serde"));
-        let rendered = super::render(&users, true);
+        let rendered = super::render(&users, true, false);
         for item in ["", "pub struct User {", "pub struct NewUser {"] {
             assert!(
                 rendered.contains(&format!("{serde}{item}")),
@@ -287,6 +325,232 @@ mod tests {
             )),
             "{rendered}"
         );
+    }
+
+    /// `validate` derives `validator::Validate` for the create input and the
+    /// update patch, and for nothing else (ADR 0015).
+    #[test]
+    fn validate_derives_only_inputs_and_patches() {
+        let users = table(
+            vec![column("id", "i64"), column("email", "String")],
+            &["id"],
+        );
+        let rendered = super::render(&users, true, true);
+        let derive = "serde::Serialize, serde::Deserialize, validator::Validate)]\n";
+        assert!(
+            rendered.contains(&format!("{derive}pub struct NewUser {{")),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "serde::Deserialize, validator::Validate,\n)]\n#[serde(default)]\npub struct UpdateUser {"
+            ),
+            "{rendered}"
+        );
+        assert_eq!(rendered.matches("validator::Validate").count(), 2);
+        assert!(!super::render(&users, true, false).contains("validat"));
+    }
+
+    /// A text column's declared length and length checks become a `length`
+    /// rule, counted in characters, on the input and the patch alike.
+    #[test]
+    fn validate_puts_length_rules_on_text_fields() {
+        let lengths = |declared: Option<u32>, min: Option<u32>, max: Option<u32>| {
+            move |mut column: Column| {
+                column.declared_length = declared;
+                if min.is_some() || max.is_some() {
+                    column.length_range = Some(LengthRange { min, max });
+                }
+                column
+            }
+        };
+        let users = table(
+            vec![
+                column("id", "i64"),
+                lengths(Some(80), None, None)(column("name", "String")),
+                lengths(Some(80), Some(1), Some(100))(column("title", "String")),
+                lengths(None, Some(3), None)(nullable("code", "String")),
+                lengths(Some(1), None, None)(column("grade", "String")),
+                lengths(Some(3), Some(3), None)(column("iso", "String")),
+                column("body", "String"),
+            ],
+            &["id"],
+        );
+        let rendered = super::render(&users, true, true);
+        let (input, patch) = rendered
+            .split_once("pub struct UpdateUser {")
+            .expect("a patch");
+        let rules = [
+            (
+                "name",
+                "#[validate(length(max = 80, message = \"name must be at most 80 characters\"))]",
+            ),
+            (
+                "title",
+                "#[validate(length(\n        min = 1,\n        max = 80,\n        message = \"title must be between 1 and 80 characters\"\n    ))]",
+            ),
+            (
+                "code",
+                "#[validate(length(min = 3, message = \"code must be at least 3 characters\"))]",
+            ),
+            (
+                "grade",
+                "#[validate(length(max = 1, message = \"grade must be at most 1 character\"))]",
+            ),
+            (
+                "iso",
+                "#[validate(length(equal = 3, message = \"iso must be exactly 3 characters\"))]",
+            ),
+        ];
+        for (field, rule) in rules {
+            for part in [input, patch] {
+                let expected = format!("    {rule}\n    pub {field}: ");
+                assert!(part.contains(&expected), "{expected}\n{part}");
+            }
+        }
+        assert_eq!(rendered.matches("#[validate(").count(), 10, "{rendered}");
+        assert!(!super::render(&users, true, false).contains("validat"));
+    }
+
+    /// A numeric column's range checks become a `range` rule; a decimal one,
+    /// which `validator` cannot compare, a `custom` rule with the stock
+    /// `range` code, checked by a function in `models.rs`.
+    #[test]
+    fn validate_puts_range_rules_on_numeric_fields() {
+        let bound = |value: &str, exclusive: bool| NumberBound {
+            value: value.to_owned(),
+            exclusive,
+        };
+        let ranged = |min: Option<NumberBound>, max: Option<NumberBound>| {
+            move |mut column: Column| {
+                column.value_range = Some(ValueRange { min, max });
+                column
+            }
+        };
+        let mut id = column("id", "i64");
+        id.typed_id = Some(TypedId {
+            module: "users".to_owned(),
+            name: "UserId".to_owned(),
+        });
+        let users = table(
+            vec![
+                ranged(Some(bound("1", false)), None)(id),
+                ranged(Some(bound("0", false)), None)(column("qty", "i32")),
+                ranged(Some(bound("1", false)), Some(bound("5", false)))(nullable("rating", "i16")),
+                ranged(Some(bound("0", true)), Some(bound("1", false)))(column("score", "f64")),
+                ranged(None, Some(bound("-0.5", true)))(column("ratio", "f32")),
+                ranged(Some(bound("0", false)), Some(bound("99.95", true)))(column(
+                    "price",
+                    "rust_decimal::Decimal",
+                )),
+            ],
+            &["id"],
+        );
+        let rendered = super::render(&users, true, true);
+        let (input, patch) = rendered
+            .split_once("pub struct UpdateUser {")
+            .expect("a patch");
+        let rules = [
+            (
+                "qty",
+                "#[validate(range(min = 0, message = \"qty must be at least 0\"))]",
+            ),
+            (
+                "rating",
+                "#[validate(range(min = 1, max = 5, message = \"rating must be between 1 and 5\"))]",
+            ),
+            (
+                "score",
+                "#[validate(range(\n        exclusive_min = 0.0,\n        max = 1.0,\n        message = \"score must be greater than 0 and at most 1\"\n    ))]",
+            ),
+            (
+                "ratio",
+                "#[validate(range(exclusive_max = -0.5, message = \"ratio must be less than -0.5\"))]",
+            ),
+            (
+                "price",
+                "#[validate(custom(\n        function = \"price_in_range\",\n        code = \"range\",\n        message = \"price must be at least 0 and less than 99.95\"\n    ))]",
+            ),
+        ];
+        for (field, rule) in rules {
+            for part in [input, patch] {
+                let expected = format!("    {rule}\n    pub {field}: ");
+                assert!(part.contains(&expected), "{expected}\n{part}");
+            }
+        }
+        // The typed id field keeps its range to the database.
+        assert_eq!(rendered.matches("#[validate(").count(), 10, "{rendered}");
+        assert!(
+            rendered.ends_with(
+                "/// The range rule of the `price` column.
+fn price_in_range(value: &rust_decimal::Decimal) -> Result<(), validator::ValidationError> {
+    if *value < rust_decimal::Decimal::from_i128_with_scale(0, 0)
+        || *value >= rust_decimal::Decimal::from_i128_with_scale(9995, 2)
+    {
+        return Err(validator::ValidationError::new(\"range\"));
+    }
+    Ok(())
+}
+"
+            ),
+            "{rendered}"
+        );
+        assert!(!super::render(&users, true, false).contains("validat"));
+    }
+
+    /// A typed id over text measures the text inside, so a key column, or a
+    /// foreign key using the id, keeps its length rule.
+    #[test]
+    fn validate_makes_text_typed_ids_measurable() {
+        let typed = |mut column: Column, name: &str, module: &str| {
+            column.typed_id = Some(TypedId {
+                module: module.to_owned(),
+                name: name.to_owned(),
+            });
+            column.declared_length = Some(12);
+            column
+        };
+        let users = table(
+            vec![
+                typed(column("code", "String"), "UserId", "users"),
+                typed(nullable("team_code", "String"), "TeamId", "teams"),
+            ],
+            &["code"],
+        );
+        let rendered = super::render(&users, true, true);
+        assert!(
+            rendered.contains(
+                "        std::fmt::Display::fmt(&self.0, formatter)
+    }
+}
+
+impl validator::ValidateLength<u64> for UserId {
+    fn length(&self) -> Option<u64> {
+        validator::ValidateLength::length(&self.0)
+    }
+}
+"
+            ),
+            "{rendered}"
+        );
+        assert_eq!(
+            rendered.matches("impl validator::").count(),
+            1,
+            "{rendered}"
+        );
+        for field in ["code: UserId", "team_code: Option<TeamId>"] {
+            assert!(
+                rendered.contains(&format!(
+                    "message = \"{} must be at most 12 characters\"))]\n    pub {field}",
+                    field.split(':').next().unwrap()
+                )),
+                "{field}\n{rendered}"
+            );
+        }
+        assert!(!super::render(&users, true, false).contains("validat"));
+
+        let numbered = table(vec![typed(column("id", "i64"), "UserId", "users")], &["id"]);
+        assert!(!super::render(&numbered, true, true).contains("ValidateLength"));
     }
 
     /// Plain serde reads both an absent field and `null` as `None`; the
@@ -302,7 +566,7 @@ mod tests {
             ],
             &["id"],
         );
-        let rendered = super::render(&users, true);
+        let rendered = super::render(&users, true, false);
         let patch = rendered.split("pub struct UpdateUser {").nth(1).unwrap();
         assert!(patch.contains(
             "    #[serde(skip_serializing_if = \"Option::is_none\")]\n    pub email: Option<String>,\n"
