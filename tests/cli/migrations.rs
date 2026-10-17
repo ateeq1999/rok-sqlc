@@ -37,7 +37,7 @@ fn migration_directory_generates_from_up_migrations_in_filename_order() -> Resul
     // A down migration that would fail generation if it were read.
     fs::write(
         migrations.join("0001_users.down.sql"),
-        "CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, duration INET NOT NULL);\n",
+        "CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, duration POINT NOT NULL);\n",
     )?;
     let out = output_dir(&dir);
 
@@ -103,7 +103,7 @@ fn unsupported_table_in_a_migration_cites_its_file_and_line() -> Result<()> {
          \n\
          CREATE TABLE spans (\n\
          \x20   id BIGSERIAL PRIMARY KEY,\n\
-         \x20   duration INET NOT NULL\n\
+         \x20   duration POINT NOT NULL\n\
          );\n",
     )?;
     let out = output_dir(&dir);
@@ -137,9 +137,10 @@ fn unsupported_table_in_a_migration_cites_its_file_and_line() -> Result<()> {
     Ok(())
 }
 
-/// `ALTER COLUMN` forms the SQL parser cannot read fail only the table they
-/// alter, at their `path:line`: a lenient run skips it and parses on, and a
-/// strict run fails naming it.
+/// `ALTER TABLE` forms neither the SQL parser nor rok-sqlc can read fail
+/// only the table they alter, at their `path:line`: a lenient run skips it
+/// and parses on, and a strict run fails naming it. Readable forms around
+/// them (`SET STATISTICS`, `DROP IDENTITY`) leave their tables generating.
 #[test]
 fn an_unparsable_alter_table_fails_only_its_table() -> Result<()> {
     let dir = TempDir::new()?;
@@ -153,10 +154,11 @@ fn an_unparsable_alter_table_fails_only_its_table() -> Result<()> {
     fs::write(
         migrations.join("0002_alter.sql"),
         "ALTER TABLE notes ADD COLUMN title TEXT;\n\
-         ALTER TABLE tags\n    ALTER COLUMN label SET STATISTICS 100;\n\
-         CREATE TABLE pins (id UUID PRIMARY KEY);\n\
-         ALTER TABLE notes ALTER COLUMN body SET STORAGE EXTERNAL;\n\
-         ALTER TABLE unknown ALTER COLUMN id DROP IDENTITY;\n",
+         ALTER TABLE tags\n    SET SCHEMA archive;\n\
+         CREATE TABLE pins (id UUID PRIMARY KEY, label TEXT);\n\
+         ALTER TABLE notes ATTACH PARTITION notes_2026 FOR VALUES IN (1);\n\
+         ALTER TABLE unknown ALTER COLUMN id DROP IDENTITY;\n\
+         ALTER TABLE pins ALTER COLUMN label SET STATISTICS 100;\n",
     )?;
     let out = output_dir(&dir);
     let args = |lenient: bool| {

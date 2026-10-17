@@ -6,8 +6,8 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use sqlparser::ast::{
-    AlterColumnOperation, AlterTableOperation, ObjectName, ObjectType, Spanned, Statement,
-    UserDefinedTypeRepresentation,
+    AlterColumnOperation, AlterIndexOperation, AlterTableOperation, ObjectName, ObjectType,
+    Spanned, Statement, UserDefinedTypeRepresentation,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::keywords::Keyword;
@@ -21,6 +21,10 @@ use super::enums::{
 };
 use super::names::{
     OtherRelations, find_table, ident_name, object_leaf_name, object_schema_name, relation_names,
+    rename_relation,
+};
+use super::recover::{
+    AlterRewrite, Recovered, recover_statement, rewrite_alter_table, split_statements,
 };
 use super::table::{build_table, table_failure};
 use super::triggers::{
@@ -66,8 +70,12 @@ pub fn parse_sources_with_modules(
         for statement in parse_statements(&dialect, source)? {
             order += 1;
             let statement = match statement {
-                Ok(statement) => statement,
-                Err(unparsed) => {
+                Parsed::Statement(statement) => *statement,
+                Parsed::RenameRelation { name, new_name } => {
+                    rename_relation(&mut tables, &mut others, &name, &new_name);
+                    continue;
+                }
+                Parsed::UnreadableAlter(unparsed) => {
                     // An `ALTER TABLE` on an unknown table is ignored, like
                     // any other statement on one.
                     let Some(index) = find_table(&tables, &unparsed.table) else {
@@ -227,6 +235,14 @@ pub fn parse_sources_with_modules(
                         }
                     }
                 }
+                Statement::AlterIndex {
+                    name,
+                    operation: AlterIndexOperation::RenameIndex { index_name },
+                } => {
+                    let new_name = object_leaf_name(&index_name);
+                    rename_relation(&mut tables, &mut others, &name, &new_name);
+                    continue;
+                }
                 Statement::CreateIndex(index) => {
                     let schema = object_schema_name(&index.table_name);
                     let taken = relation_names(&tables, &others, schema.as_deref());
@@ -372,8 +388,9 @@ pub fn parse_sources_with_modules(
     })
 }
 
-/// An `ALTER TABLE` statement the SQL parser cannot read (such as
-/// `ALTER COLUMN … SET STATISTICS`), which fails the table it alters.
+/// An `ALTER TABLE` statement neither the SQL parser nor
+/// [`rewrite_alter_table`] reads (such as `ALTER TABLE … SET SCHEMA`),
+/// which fails the table it alters.
 struct UnparsedAlter {
     /// The table the statement alters.
     table: ObjectName,
@@ -383,15 +400,27 @@ struct UnparsedAlter {
     error: String,
 }
 
+/// One statement of a schema input.
+enum Parsed {
+    Statement(Box<Statement>),
+    UnreadableAlter(UnparsedAlter),
+    /// A rename of an index, sequence, or view the SQL parser cannot read.
+    RenameRelation {
+        name: ObjectName,
+        new_name: String,
+    },
+}
+
 /// Parses one schema input into its statements. When the whole input does
-/// not parse, it is split into statements at top-level semicolons and each
-/// is parsed on its own: an `ALTER TABLE` that does not parse comes back as
-/// an [`UnparsedAlter`], and any other statement that does not parse fails
-/// the run at its `path:line`. Spans keep their place in the whole input.
-fn parse_statements(
-    dialect: &PostgreSqlDialect,
-    source: &SchemaSource<'_>,
-) -> Result<Vec<std::result::Result<Statement, UnparsedAlter>>> {
+/// not parse, it is split into statements (see [`split_statements`]) and
+/// each is parsed on its own. A statement that does not parse is recognised
+/// from its tokens where its effect on the model is known: an `ALTER TABLE`
+/// is rewritten (see [`rewrite_alter_table`]) or comes back as an
+/// [`UnparsedAlter`]; a function, procedure, `DO` block, or `ALTER` of an
+/// index, sequence, or view is skipped or becomes a rename (see
+/// [`recover_statement`]). Any other statement that does not parse fails the
+/// run at its `path:line`. Spans keep their place in the whole input.
+fn parse_statements(dialect: &PostgreSqlDialect, source: &SchemaSource<'_>) -> Result<Vec<Parsed>> {
     let invalid = |line: Option<u64>| {
         let place = match (source.path.as_os_str().is_empty(), line) {
             (true, None) => String::new(),
@@ -402,13 +431,21 @@ fn parse_statements(
         format!("{place}invalid PostgreSQL SQL syntax")
     };
     if let Ok(statements) = Parser::parse_sql(dialect, source.sql) {
-        return Ok(statements.into_iter().map(Ok).collect());
+        return Ok(statements
+            .into_iter()
+            .map(|statement| Parsed::Statement(Box::new(statement)))
+            .collect());
     }
     let tokens = Tokenizer::new(dialect, source.sql)
         .tokenize_with_location()
         .with_context(|| invalid(None))?;
+    let parse = |tokens: Vec<_>| {
+        Parser::new(dialect)
+            .with_tokens_with_locations(tokens)
+            .parse_statements()
+    };
     let mut statements = Vec::new();
-    for chunk in tokens.split(|token| token.token == Token::SemiColon) {
+    for chunk in split_statements(&tokens) {
         let Some(first) = chunk
             .iter()
             .find(|token| !matches!(token.token, Token::Whitespace(_) | Token::EOF))
@@ -416,12 +453,27 @@ fn parse_statements(
             continue;
         };
         let line = first.span.start.line;
-        let parsed = Parser::new(dialect)
-            .with_tokens_with_locations(chunk.to_vec())
-            .parse_statements();
+        let parsed =
+            parse(chunk.to_vec()).or_else(|error| match rewrite_alter_table(dialect, chunk) {
+                Some(AlterRewrite::Skip) => Ok(Vec::new()),
+                Some(AlterRewrite::Tokens(tokens)) => parse(tokens).map_err(|_| error),
+                None => Err(error),
+            });
         match parsed {
-            Ok(parsed) => statements.extend(parsed.into_iter().map(Ok)),
+            Ok(parsed) => statements.extend(
+                parsed
+                    .into_iter()
+                    .map(|statement| Parsed::Statement(Box::new(statement))),
+            ),
             Err(error) => {
+                match recover_statement(dialect, chunk) {
+                    Some(Recovered::Skip) => continue,
+                    Some(Recovered::RenameRelation { name, new_name }) => {
+                        statements.push(Parsed::RenameRelation { name, new_name });
+                        continue;
+                    }
+                    None => {}
+                }
                 let mut parser = Parser::new(dialect).with_tokens_with_locations(chunk.to_vec());
                 let table = parser
                     .parse_keywords(&[Keyword::ALTER, Keyword::TABLE])
@@ -442,7 +494,7 @@ fn parse_statements(
                     .unwrap_or_default()
                     .trim_start_matches("sql parser error: ")
                     .to_owned();
-                statements.push(Err(UnparsedAlter {
+                statements.push(Parsed::UnreadableAlter(UnparsedAlter {
                     table,
                     line: usize::try_from(line).unwrap_or_default(),
                     error,

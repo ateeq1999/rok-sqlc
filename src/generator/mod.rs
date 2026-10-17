@@ -268,12 +268,27 @@ fn render_resource_mod(table: &Table, has_filter: bool, has_relationships: bool)
 
 /// The insert-input field type: columns with a database default are wrapped
 /// in `Option` so `None` can omit them. A nullable defaulted column therefore
-/// becomes `Option<Option<T>>`.
+/// becomes `Option<Option<T>>`. A generated id is
+/// wrapped too: `None` inserts a new id.
 pub fn insert_field_type(column: &Column) -> String {
-    if column.is_omittable_on_insert() {
+    if column.is_optional_in_input() {
         format!("Option<{}>", column.field_type())
     } else {
         column.field_type()
+    }
+}
+
+/// What `create` binds for an insert-input field that is always inserted:
+/// the field, or for a key column with an id generation, the field or a
+/// new id.
+pub fn insert_bind(column: &Column) -> String {
+    let field = format!("input.{}", column.rust_name);
+    let Some(expr) = column.new_id_expr() else {
+        return field;
+    };
+    match &column.typed_id {
+        Some(id) => format!("{field}.unwrap_or_else({}::generate)", id.name),
+        None => format!("{field}.unwrap_or_else(|| {expr})"),
     }
 }
 

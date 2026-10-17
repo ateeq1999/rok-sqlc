@@ -6,7 +6,8 @@ use crate::schema::{Column, Table};
 use super::{push_returning, returning_clause};
 use crate::generator::sql::{ident, str_literal, table_ref};
 use crate::generator::{
-    StaticQuery, keys, push_and_chain, push_build_and_fetch, push_doc, push_fn_head, push_let_call,
+    StaticQuery, insert_bind, keys, push_and_chain, push_build_and_fetch, push_doc, push_fn_head,
+    push_let_call,
 };
 
 fn push_create_head(output: &mut String, table: &Table, doc: &[&str]) {
@@ -44,11 +45,7 @@ pub(super) fn render_static_create(output: &mut String, table: &Table, columns: 
         sql,
         binds: keys::tenant_bind(table)
             .into_iter()
-            .chain(
-                columns
-                    .iter()
-                    .map(|column| format!("input.{}", column.rust_name)),
-            )
+            .chain(columns.iter().map(|column| insert_bind(column)))
             .collect(),
         execute: "fetch_one(executor)",
     }
@@ -128,10 +125,7 @@ pub(super) fn render_dynamic_create(output: &mut String, table: &Table, columns:
             output.push_str("        values.push_bind(value);\n");
             output.push_str("    }\n");
         } else {
-            output.push_str(&format!(
-                "    values.push_bind(input.{});\n",
-                column.rust_name
-            ));
+            output.push_str(&format!("    values.push_bind({});\n", insert_bind(column)));
         }
     }
     output.push_str("    query.push(\")\");\n");

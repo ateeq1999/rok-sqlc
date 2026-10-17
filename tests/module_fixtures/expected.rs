@@ -84,8 +84,8 @@ pub(super) struct KeptScenario {
 }
 
 /// A later migration `orders` cannot follow: rok-sqlc has no mapping for
-/// `INET`.
-const BREAK_ORDERS: &str = "ALTER TABLE orders ADD COLUMN client_ip INET;\n";
+/// `POINT`.
+const BREAK_ORDERS: &str = "ALTER TABLE orders ADD COLUMN client_ip POINT;\n";
 
 pub(super) const KEPT: &[KeptScenario] = &[
     // The kept `models.rs` uses the value-list enum, so `types.rs` must

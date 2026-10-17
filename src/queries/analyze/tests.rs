@@ -12,10 +12,13 @@ const SCHEMA: &str = "
             stock INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE app.tags (id BIGSERIAL PRIMARY KEY, \"select\" TEXT NOT NULL);
-        CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, length INET NOT NULL);
+        CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, length POINT NOT NULL);
         CREATE TYPE product_status AS ENUM ('active', 'retired');
         CREATE TYPE app.ticket_state AS ENUM ('open', 'closed');
         CREATE TABLE gauges (id BIGSERIAL PRIMARY KEY, level TEXT CHECK (level IN ('low', 'high')));
+        CREATE TABLE nodes (id BIGSERIAL PRIMARY KEY, parent_id BIGINT REFERENCES nodes (id), label TEXT NOT NULL);
+        CREATE TABLE members (id BIGSERIAL PRIMARY KEY, email TEXT NOT NULL, deleted_at TIMESTAMPTZ);
+        CREATE UNIQUE INDEX members_email_live ON members (email) WHERE deleted_at IS NULL;
     ";
 
 fn analyze(queries: &str) -> (Vec<AnalyzedQuery>, Vec<QueryFailure>) {
@@ -401,18 +404,101 @@ fn ctes_are_scoped_to_their_statement_and_must_be_typable() {
     );
 }
 
+/// The anchor types a recursive CTE; the recursive term sees the CTE and
+/// can make a column nullable.
 #[test]
-fn recursive_and_data_modifying_ctes_are_rejected() {
-    assert!(
-            failure(
-                "-- name: Q :many\nWITH RECURSIVE t (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM t) SELECT n FROM t;"
-            )
-            .contains("WITH RECURSIVE is not supported")
-        );
+fn recursive_ctes_take_their_columns_from_the_anchor() {
+    let walk = one(
+        "-- name: Subtree :many\nWITH RECURSIVE tree (id, parent_id, depth) AS (\n    SELECT id, parent_id, 0::int FROM nodes WHERE id = $1\n    UNION ALL\n    SELECT n.id, n.parent_id, t.depth + 1 FROM nodes n JOIN tree t ON n.parent_id = t.id\n)\nSELECT id, parent_id, depth FROM tree;",
+    );
+    assert_eq!(
+        row_columns(&walk),
+        [
+            ("id", "i64"),
+            ("parent_id", "Option<i64>"),
+            // A cast may be NULL, as everywhere else.
+            ("depth", "Option<i32>")
+        ]
+    );
+    assert_eq!(walk.params, [param(1, "id", "i64")]);
+
+    let widened = one(
+        "-- name: Labels :many\nWITH RECURSIVE t AS (\n    SELECT id, label FROM nodes WHERE parent_id IS NULL\n    UNION\n    SELECT n.id, NULL::text FROM nodes n JOIN t ON n.parent_id = t.id\n)\nSELECT id, label FROM t;",
+    );
+    assert_eq!(
+        row_columns(&widened),
+        [("id", "i64"), ("label", "Option<String>")]
+    );
+}
+
+#[test]
+fn recursive_terms_must_match_the_anchor() {
+    assert_eq!(
+        failure(
+            "-- name: Q :many\nWITH RECURSIVE t (n) AS (SELECT 1::int UNION ALL SELECT n, n FROM t) SELECT n FROM t;"
+        ),
+        "the recursive term of CTE `t` returns 2 columns but its anchor returns 1"
+    );
+    assert_eq!(
+        failure(
+            "-- name: Q :many\nWITH RECURSIVE t (n) AS (SELECT 1::int UNION ALL SELECT n::bigint FROM t) SELECT n FROM t;"
+        ),
+        "the recursive term of CTE `t` returns `i64` for column `n`, but its anchor returns `i32`; cast one of them"
+    );
+}
+
+#[test]
+fn data_modifying_ctes_are_rejected() {
     assert!(
             failure(
                 "-- name: Q :many\nWITH gone AS (DELETE FROM products WHERE stock = $1 RETURNING id) SELECT id FROM gone;"
             )
             .contains("data-modifying CTE `gone`")
         );
+}
+
+/// A partial unique index is a target when the target repeats its
+/// condition; the generated function keeps the SQL as written.
+#[test]
+fn partial_unique_index_targets_need_their_condition() {
+    let upsert = one(
+        "-- name: UpsertMember :one\nINSERT INTO members (email) VALUES ($1)\nON CONFLICT (email) WHERE (deleted_at IS NULL) DO UPDATE SET email = EXCLUDED.email\nRETURNING id;",
+    );
+    assert!(
+        upsert.sql.contains("WHERE (deleted_at IS NULL) DO UPDATE"),
+        "{}",
+        upsert.sql
+    );
+    assert_eq!(upsert.params, [param(1, "email", "String")]);
+
+    // A full key matches with any predicate, as PostgreSQL infers it too.
+    one(
+        "-- name: ById :exec\nINSERT INTO members (id, email) VALUES ($1, $2)\nON CONFLICT (id) WHERE deleted_at IS NULL DO NOTHING;",
+    );
+
+    assert_eq!(
+        failure(
+            "-- name: Missing :exec\nINSERT INTO members (email) VALUES ($1) ON CONFLICT (email) DO NOTHING;"
+        ),
+        "ON CONFLICT (email) matches only a partial unique index of `members`, whose condition is `deleted_at IS NULL`; add `WHERE deleted_at IS NULL` to the target"
+    );
+    assert_eq!(
+        failure(
+            "-- name: Other :exec\nINSERT INTO members (email) VALUES ($1) ON CONFLICT (email) WHERE deleted_at IS NOT NULL DO NOTHING;"
+        ),
+        "ON CONFLICT (email) matches only a partial unique index of `members`, whose condition is `deleted_at IS NULL`; the target's `WHERE deleted_at IS NOT NULL` must be `WHERE deleted_at IS NULL`"
+    );
+    assert!(
+        failure("-- name: Bound :exec\nINSERT INTO members (email) VALUES ($1) ON CONFLICT (email) WHERE email <> $2 DO NOTHING;")
+            .starts_with("a placeholder in the ON CONFLICT target's WHERE is not supported"),
+    );
+}
+
+/// Taking the predicate out keeps the rest of the text as written, so
+/// escaped quotes and other lines survive analysis.
+#[test]
+fn partial_index_targets_keep_escaped_quotes() {
+    one(
+        "-- name: Quoted :exec\nINSERT INTO members (email) VALUES ('it''s')\nON CONFLICT (email)\n    WHERE deleted_at IS NULL\nDO UPDATE SET email = 'O''Brien';",
+    );
 }

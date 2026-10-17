@@ -82,8 +82,34 @@ pub(super) fn apply_alter(
             AlterTableOperation::AlterColumn { column_name, op } => {
                 alter_column(table, &ident_name(column_name), op, enums)?;
             }
+            AlterTableOperation::RenameConstraint { old_name, new_name } => {
+                // Only primary key and unique constraint names are tracked;
+                // renaming another constraint changes nothing here.
+                let old_name = ident_name(old_name);
+                if let Some(constraint) = table
+                    .key_constraints
+                    .iter_mut()
+                    .find(|constraint| constraint.name == old_name)
+                {
+                    constraint.name = ident_name(new_name);
+                }
+            }
+            // Clauses that leave the columns and keys as they are. Triggers
+            // are followed by `CREATE` and `DROP TRIGGER` only.
             AlterTableOperation::EnableRowLevelSecurity
-            | AlterTableOperation::DisableRowLevelSecurity => {}
+            | AlterTableOperation::DisableRowLevelSecurity
+            | AlterTableOperation::SetOptionsParens { .. }
+            | AlterTableOperation::ReplicaIdentity { .. }
+            | AlterTableOperation::OwnerTo { .. }
+            | AlterTableOperation::ValidateConstraint { .. }
+            | AlterTableOperation::EnableTrigger { .. }
+            | AlterTableOperation::DisableTrigger { .. }
+            | AlterTableOperation::EnableAlwaysTrigger { .. }
+            | AlterTableOperation::EnableReplicaTrigger { .. }
+            | AlterTableOperation::EnableRule { .. }
+            | AlterTableOperation::DisableRule { .. }
+            | AlterTableOperation::EnableAlwaysRule { .. }
+            | AlterTableOperation::EnableReplicaRule { .. } => {}
             other => {
                 return Err(format!("unsupported ALTER TABLE clause `{other}`"));
             }

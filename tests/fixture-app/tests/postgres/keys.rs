@@ -447,3 +447,59 @@ pub(super) async fn text_keys_are_borrowed(pool: &PgPool) {
     assert!(db::currency_rates::write::delete(pool, &key).await.unwrap());
     assert!(db::currencies::write::delete(pool, &eur).await.unwrap());
 }
+
+/// `plain_db` is generated with `primary_key_ids = "uuid_v7"`: `create`
+/// makes a UUID version 7 for an id the input leaves out, also over a
+/// database default, and keeps an id the input gives.
+pub(super) async fn generated_uuid_v7_keys(pool: &PgPool) {
+    use rok_sqlc_fixture_app::plain_db;
+    use plain_db::defaulted_events::models::{DefaultedEventId, NewDefaultedEvent};
+    use plain_db::ordered_events::models::{NewOrderedEvent, OrderedEventId};
+
+    let made = plain_db::ordered_events::write::create(
+        pool,
+        NewOrderedEvent {
+            id: None,
+            name: "made".to_owned(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(made.id.0.get_version_num(), 7);
+    let later = plain_db::ordered_events::write::create(
+        pool,
+        NewOrderedEvent {
+            id: None,
+            name: "later".to_owned(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(later.id > made.id, "version 7 ids follow creation order");
+
+    let given = OrderedEventId(uuid::Uuid::from_u128(7));
+    let kept = plain_db::ordered_events::write::create(
+        pool,
+        NewOrderedEvent {
+            id: Some(given),
+            name: "given".to_owned(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(kept.id, given);
+    assert_eq!(OrderedEventId::generate().0.get_version_num(), 7);
+
+    // `gen_random_uuid()` would make a version 4 id.
+    let defaulted = plain_db::defaulted_events::write::create(
+        pool,
+        NewDefaultedEvent {
+            id: None,
+            name: "defaulted".to_owned(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(defaulted.id.0.get_version_num(), 7);
+    let _: fn() -> DefaultedEventId = DefaultedEventId::generate;
+}

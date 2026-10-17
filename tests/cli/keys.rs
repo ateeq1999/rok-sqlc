@@ -36,7 +36,11 @@ fn on_conflict_target_must_match_a_unique_key() -> Result<()> {
          \n\
          -- name: UpsertByBarcode :exec\n\
          INSERT INTO products (id, sku, name, organization_id, code, barcode) VALUES ($1, $2, $3, $4, $5, $6)\n\
-         ON CONFLICT (barcode) DO NOTHING;\n",
+         ON CONFLICT (barcode) DO NOTHING;\n\
+         \n\
+         -- name: UpsertByLiveBarcode :exec\n\
+         INSERT INTO products (id, sku, name, organization_id, code, barcode) VALUES ($1, $2, $3, $4, $5, $6)\n\
+         ON CONFLICT (barcode) WHERE barcode <> '' DO NOTHING;\n",
     )?;
     let out = output_dir(&dir);
 
@@ -61,12 +65,13 @@ fn on_conflict_target_must_match_a_unique_key() -> Result<()> {
     );
     assert!(
         stderr.contains(&format!(
-            "{path}:13: query `UpsertByBarcode`: ON CONFLICT (barcode) matches no unique key; {keys}"
+            "{path}:13: query `UpsertByBarcode`: ON CONFLICT (barcode) matches only a partial unique index of `products`, whose condition is `barcode <> ''`; add `WHERE barcode <> ''` to the target"
         )),
         "{stderr}"
     );
     assert!(!stderr.contains("UpsertBySku"), "{stderr}");
     assert!(!stderr.contains("UpsertByCode"), "{stderr}");
+    assert!(!stderr.contains("UpsertByLiveBarcode"), "{stderr}");
     assert!(stderr.contains("2 unsupported queries"), "{stderr}");
     Ok(())
 }

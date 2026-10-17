@@ -75,8 +75,10 @@ async fn generated_crud_against_postgres() {
     writes::table_without_primary_key(&pool).await;
     keys::uuid_keys_listing_and_pagination(&pool).await;
     keys::composite_keys_arrays_and_numeric(&pool).await;
+    keys::generated_uuid_v7_keys(&pool).await;
     queries::annotated_queries(&pool).await;
     queries::query_modules_per_file(&pool).await;
+    queries::partial_index_upserts_and_recursive_ctes(&pool).await;
     search::search_filters_and_pages(&pool).await;
     migrations::altered_table_has_its_final_columns(&pool).await;
     migrations::altered_columns_round_trip_in_their_final_shape(&pool).await;
@@ -116,6 +118,7 @@ async fn generated_crud_against_postgres() {
     many_to_many::plain_join_table_deletes_detached_pairs(&pool).await;
     many_to_many::many_to_many_filters_go_through_the_join_table(&pool).await;
     types::interval_bytea_and_timetz_round_trip(&pool).await;
+    types::money_range_and_network_types_round_trip(&pool).await;
 }
 
 fn skus(rows: &[db::products::models::Product]) -> Vec<String> {

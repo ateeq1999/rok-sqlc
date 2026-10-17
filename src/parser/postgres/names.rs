@@ -56,12 +56,39 @@ pub(super) fn relation_names(
         .collect()
 }
 
+/// Applies a rename of an index, sequence, or view (`ALTER INDEX … RENAME
+/// TO`, and the like) in the schema `name` is in: the old name is free and
+/// the new one taken. The index behind a primary key or unique constraint
+/// shares the constraint's name, so renaming it renames the constraint, as
+/// in PostgreSQL. An unknown name changes nothing, like `IF EXISTS`.
+pub(super) fn rename_relation(
+    tables: &mut [Table],
+    others: &mut OtherRelations,
+    name: &ObjectName,
+    new_name: &str,
+) {
+    let schema = object_schema_name(name);
+    let leaf = object_leaf_name(name);
+    if others.remove(schema.as_deref(), &leaf) {
+        others.insert(schema.as_deref(), new_name.to_owned());
+        return;
+    }
+    let constraint = tables
+        .iter_mut()
+        .filter(|table| same_schema(table.schema.as_deref(), schema.as_deref()))
+        .flat_map(|table| table.key_constraints.iter_mut())
+        .find(|constraint| constraint.name == leaf);
+    if let Some(constraint) = constraint {
+        new_name.clone_into(&mut constraint.name);
+    }
+}
+
 /// Relations that take a name in their schema besides the known tables and
 /// their key constraints: indexes made by `CREATE INDEX` (named, or under
 /// PostgreSQL's default `<table>_<columns>_idx`), sequences (`CREATE
 /// SEQUENCE`, and a serial column's `<table>_<column>_seq`), and views and
-/// materialized views, less any dropped since. Renames (`ALTER INDEX …
-/// RENAME`) are not followed.
+/// materialized views, less any dropped since, under their latest names
+/// (see [`rename_relation`]).
 #[derive(Default)]
 pub(super) struct OtherRelations {
     /// Names by schema (`None` is `public`).
@@ -90,10 +117,14 @@ impl OtherRelations {
 
     /// Forgets a dropped relation.
     pub(super) fn drop(&mut self, name: &ObjectName) {
-        let schema = normalize_schema(object_schema_name(name));
-        if let Some(names) = self.names.get_mut(&schema) {
-            names.remove(&object_leaf_name(name));
-        }
+        self.remove(object_schema_name(name).as_deref(), &object_leaf_name(name));
+    }
+
+    /// Forgets `name` in `schema`; whether it was there.
+    fn remove(&mut self, schema: Option<&str>, name: &str) -> bool {
+        self.names
+            .get_mut(&normalize_schema(schema.map(str::to_owned)))
+            .is_some_and(|names| names.remove(name))
     }
 
     /// Records the sequences of the serial columns among `columns` that

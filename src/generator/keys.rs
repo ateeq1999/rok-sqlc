@@ -13,6 +13,7 @@
 //! An enum key's typed id wraps the generated enum (`types::X`). Enums are
 //! neither `Ord` nor `Display`, so neither is that id.
 
+use crate::IdGeneration;
 use crate::schema::{BaseType, Column, ForeignKey, Table, TypedId};
 
 use super::{param_name, param_type, push_doc, push_serde_derive};
@@ -374,6 +375,24 @@ fn render_typed_id(output: &mut String, table: &Table, key: &Column, name: &str,
     output.push_str(&format!(
         "impl std::fmt::Display for {name} {{\n    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{\n        std::fmt::Display::fmt(&self.0, formatter)\n    }}\n}}\n\n"
     ));
+    if let (Some(ids), Some(expr)) = (key.id_generation, key.new_id_expr()) {
+        let what = match ids {
+            IdGeneration::UuidV4 => "a random UUID (version 4)",
+            IdGeneration::UuidV7 => "a UUID version 7, ordered by creation time",
+            IdGeneration::Ulid => "a ULID, ordered by creation time",
+        };
+        output.push_str(&format!("impl {name} {{\n"));
+        push_doc(
+            output,
+            4,
+            &[&format!(
+                "A new id: {what}. `create` uses it when the input leaves the id out."
+            )],
+        );
+        output.push_str(&format!(
+            "    #[must_use]\n    pub fn generate() -> Self {{\n        Self({expr})\n    }}\n}}\n\n"
+        ));
+    }
 }
 
 fn render_key_struct(output: &mut String, table: &Table, keys: &[&Column], serde: bool) {

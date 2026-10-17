@@ -10,7 +10,7 @@ use rok_sqlc::Config;
 use tempfile::TempDir;
 
 const SCHEMA: &str = "CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);\n\
-     CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, duration INET NOT NULL);";
+     CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, duration POINT NOT NULL);";
 
 const QUERIES: &str = "-- name: GetUserByEmail :maybe_one
 SELECT id, email FROM users WHERE email = $1;

@@ -17,6 +17,7 @@ pub fn column(sql_name: &str, rust_type: &str) -> Column {
         value_list: None,
         typed_id: None,
         is_managed: false,
+        id_generation: None,
     }
 }
 

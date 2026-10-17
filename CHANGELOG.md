@@ -7,8 +7,50 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-17
+
+Additive: everything that generated with 0.2.0 generates the same way.
+
 ### Added
 
+- `[conventions] primary_key_ids` (`Conventions::primary_key_ids`, the new
+  `IdGeneration`): `"uuid_v4"`, `"uuid_v7"`, or `"ulid"` makes new primary
+  keys in the generated code for tables keyed by one `UUID` column (or, with
+  `"ulid"`, one text column). The typed id gets `generate()`, the create
+  input takes the key as `Option<Id>`, and `None` inserts a new id, even over
+  a database default. `db/mod.rs` names the `uuid` features or the `ulid`
+  crate it needs. Off by default and not in the `rok` preset.
+- `MONEY` (`PgMoney`), `INT4RANGE`, `INT8RANGE`, `NUMRANGE`, `DATERANGE`,
+  `TSRANGE`, `TSTZRANGE` (`PgRange<T>`), `INET` and `CIDR`
+  (`ipnetwork::IpNetwork`), and `MACADDR` (`mac_address::MacAddress`), in
+  columns and query-file casts, with equality filters. The dependency hints
+  name SQLx's `ipnetwork` and `mac_address` features. `PgMoney` and
+  `PgRange` have no serde support, so like `INTERVAL` they fail a run with
+  `derive = ["serde"]`.
+- Partial unique indexes as `ON CONFLICT` targets in query files, when the
+  target repeats the index's condition:
+  `ON CONFLICT (email) WHERE deleted_at IS NULL DO …`. The soft-delete
+  convention's live-row indexes can now be upsert targets. A target that
+  matches only a partial index says which `WHERE` to add.
+- `WITH RECURSIVE` in query files: a recursive CTE (`anchor UNION [ALL]
+  term`) takes its columns from the anchor, and the recursive term must
+  match them.
+- `ALTER TABLE` forms that leave the model as it is no longer fail their
+  table: `ALTER COLUMN … SET STATISTICS`, `SET STORAGE`, `SET COMPRESSION`,
+  `SET`/`RESET (…)`, `SET GENERATED`, `RESTART` and other identity options;
+  `RESET (…)`, `CLUSTER ON`, `SET WITHOUT CLUSTER`, `SET TABLESPACE`,
+  `SET [UN]LOGGED`, `[NO] FORCE ROW LEVEL SECURITY`, `ALTER CONSTRAINT`,
+  `SET (…)`, `REPLICA IDENTITY`, `OWNER TO`, `ENABLE`/`DISABLE
+  TRIGGER`/`RULE`, and `VALIDATE CONSTRAINT`.
+- `ALTER COLUMN … DROP IDENTITY` and `DROP EXPRESSION` act like `DROP
+  DEFAULT`, and `TYPE … COLLATE` like `TYPE`.
+- `ALTER TABLE … RENAME CONSTRAINT` renames a primary key or unique
+  constraint, and `ALTER INDEX`, `ALTER SEQUENCE`, `ALTER VIEW` and `ALTER
+  MATERIALIZED VIEW … RENAME TO` are followed for default constraint names.
+  Renaming a key constraint's index renames the constraint.
+- A migration with a `BEGIN ATOMIC` function or procedure body, a `DO`
+  block, or another `ALTER` of an index, sequence or view that the SQL
+  parser can't read is now read past instead of stopping the run.
 - Prebuilt binaries. Pushing a `vX.Y.Z` tag runs the Release workflow, which
   builds rok-sqlc for Linux (x86_64 and aarch64, static musl), macOS (x86_64
   and Apple silicon), and Windows (x86_64 and ARM64) and publishes the
@@ -377,6 +419,7 @@ that break code written against earlier development snapshots.
   paths under the current directory relative to it (also when they come
   from `rok-sqlc.toml`).
 
-[Unreleased]: https://github.com/ateeq1999/rok-sqlc/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ateeq1999/rok-sqlc/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/ateeq1999/rok-sqlc/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ateeq1999/rok-sqlc/releases/tag/v0.1.0

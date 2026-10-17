@@ -4,8 +4,8 @@ use std::rc::Rc;
 
 use sqlparser::ast::{
     AssignmentTarget, ConflictTarget, Cte, Expr, FromTable, JoinConstraint, JoinOperator,
-    LimitClause, OnConflictAction, OnInsert, Query, Select, SelectItem, SetExpr, Statement,
-    TableFactor, TableObject, TableWithJoins,
+    LimitClause, OnConflictAction, OnInsert, Query, Select, SelectItem, SetExpr, SetOperator,
+    Statement, TableFactor, TableObject, TableWithJoins,
 };
 
 use super::conflict::{check_conflict_constraint, check_conflict_target};
@@ -61,7 +61,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
                 if let Some(OnInsert::OnConflict(on_conflict)) = &insert.on {
                     match &on_conflict.conflict_target {
                         Some(ConflictTarget::Columns(target)) => {
-                            check_conflict_target(table, target)?;
+                            check_conflict_target(table, target, self.conflict_predicate.as_ref())?;
                         }
                         Some(ConflictTarget::OnConstraint(name)) => {
                             check_conflict_constraint(table, name)?;
@@ -140,11 +140,16 @@ impl<'a, 'c> Analysis<'a, 'c> {
 
     fn query_body(&mut self, query: &Query) -> Result<Vec<Output>, String> {
         if let Some(with) = &query.with {
-            if with.recursive {
-                return Err("WITH RECURSIVE is not supported yet".to_owned());
-            }
             for cte in &with.cte_tables {
-                self.cte(cte)?;
+                match cte.query.body.as_ref() {
+                    SetExpr::SetOperation {
+                        op: SetOperator::Union,
+                        left,
+                        right,
+                        ..
+                    } if with.recursive => self.recursive_cte(cte, left, right)?,
+                    _ => self.cte(cte)?,
+                }
             }
         }
         let SetExpr::Select(select) = query.body.as_ref() else {
@@ -187,8 +192,72 @@ impl<'a, 'c> Analysis<'a, 'c> {
         let outer_scope = std::mem::take(&mut self.scope);
         let outputs = self.query(&cte.query);
         self.scope = outer_scope;
-        let outputs = outputs?;
+        let table = self.cte_table(cte, outputs?)?;
+        self.ctes.push(Rc::new(table));
+        Ok(())
+    }
 
+    /// Analyzes a recursive CTE, `anchor UNION [ALL] recursive-term`: the
+    /// anchor's result columns give the CTE's, and the recursive term, which
+    /// sees the CTE, must return as many columns of the same types. A
+    /// nullable column of either term makes the CTE's column nullable.
+    fn recursive_cte(&mut self, cte: &Cte, anchor: &SetExpr, term: &SetExpr) -> Result<(), String> {
+        let name = ident_name(&cte.alias.name);
+        let anchor = self.term(anchor)?;
+        let mut table = self.cte_table(cte, anchor)?;
+        self.ctes.push(Rc::new(table.clone()));
+        let outputs = self.term(term);
+        self.ctes.pop();
+        let outputs = outputs?;
+        if outputs.len() != table.columns.len() {
+            return Err(format!(
+                "the recursive term of CTE `{name}` returns {} columns but its anchor returns {}",
+                outputs.len(),
+                table.columns.len()
+            ));
+        }
+        for (column, output) in table.columns.iter_mut().zip(outputs) {
+            let Some(rust_type) = output.rust_type else {
+                continue;
+            };
+            let (base, nullable) = match Shape::of(&rust_type) {
+                Shape::Optional(inner) => (inner, true),
+                Shape::List(_) | Shape::Value(_) => (rust_type.as_str(), false),
+            };
+            if base != column.sqlx_type {
+                return Err(format!(
+                    "the recursive term of CTE `{name}` returns `{base}` for column `{}`, but its anchor returns `{}`; cast one of them",
+                    column.sql_name, column.sqlx_type
+                ));
+            }
+            if nullable && !column.nullable {
+                column.nullable = true;
+                column.rust_type = format!("Option<{}>", column.sqlx_type);
+            }
+        }
+        self.ctes.push(Rc::new(table));
+        Ok(())
+    }
+
+    /// One term of a set operation, analyzed in its own scope.
+    fn term(&mut self, body: &SetExpr) -> Result<Vec<Output>, String> {
+        let outer_scope = std::mem::take(&mut self.scope);
+        let outputs = match body {
+            SetExpr::Select(select) => self.select(select),
+            SetExpr::Query(query) => self.query(query),
+            _ => Err(
+                "a recursive CTE's terms must each be a plain SELECT (no nested UNION or VALUES)"
+                    .to_owned(),
+            ),
+        };
+        self.scope = outer_scope;
+        outputs
+    }
+
+    /// The table a CTE's result columns make, named by its column list or
+    /// after its query's columns.
+    fn cte_table(&self, cte: &Cte, outputs: Vec<Output>) -> Result<Table, String> {
+        let name = ident_name(&cte.alias.name);
         let aliases = &cte.alias.columns;
         if aliases.len() > outputs.len() {
             return Err(format!(
@@ -230,9 +299,10 @@ impl<'a, 'c> Analysis<'a, 'c> {
                 value_list: None,
                 typed_id: None,
                 is_managed: false,
+                id_generation: None,
             });
         }
-        self.ctes.push(Rc::new(Table {
+        Ok(Table {
             schema: None,
             module_name: String::new(),
             struct_name: String::new(),
@@ -247,8 +317,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
             tenant_column: None,
             relationships: Vec::new(),
             before_insert_triggers: Vec::new(),
-        }));
-        Ok(())
+        })
     }
 
     fn select(&mut self, select: &Select) -> Result<Vec<Output>, String> {

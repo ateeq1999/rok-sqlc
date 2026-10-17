@@ -152,3 +152,56 @@ pub(super) async fn query_modules_per_file(pool: &PgPool) {
         ["Q-1"]
     );
 }
+
+/// `hierarchy.sql`: an upsert targeting the partial unique index over live
+/// `soft_notes` rows, and a recursive walk down `org_units`.
+pub(super) async fn partial_index_upserts_and_recursive_ctes(pool: &PgPool) {
+    use db::org_units::models::NewOrgUnit;
+    use db::queries::hierarchy::{org_subtree, upsert_live_soft_note};
+
+    let first = upsert_live_soft_note(pool, "UPSERT", "first").await.unwrap();
+    let second = upsert_live_soft_note(pool, "UPSERT", "second").await.unwrap();
+    assert_eq!(second.id, first.id, "the live row is updated in place");
+    assert_eq!(second.body, "second");
+    // A soft-deleted row is outside the index, so the code is free again.
+    assert!(db::soft_notes::write::delete(pool, first.id).await.unwrap());
+    let third = upsert_live_soft_note(pool, "UPSERT", "third").await.unwrap();
+    assert_ne!(third.id, first.id);
+    // Later scenarios count every `soft_notes` row.
+    for id in [first.id, third.id] {
+        assert!(db::soft_notes::write::delete_permanently(pool, id).await.unwrap());
+    }
+
+    let unit = async |parent_id, name: &str| {
+        db::org_units::write::create(
+            pool,
+            NewOrgUnit {
+                parent_id,
+                name: name.to_owned(),
+            },
+        )
+        .await
+        .unwrap()
+    };
+    let root = unit(None, "tree root").await;
+    let left = unit(Some(root.id), "tree left").await;
+    let right = unit(Some(root.id), "tree right").await;
+    let leaf = unit(Some(left.id), "tree leaf").await;
+    unit(None, "other root").await;
+
+    let walk: Vec<_> = org_subtree(pool, root.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.id, row.name, row.depth))
+        .collect();
+    assert_eq!(
+        walk,
+        [
+            (root.id, root.name, Some(0)),
+            (left.id, left.name, Some(1)),
+            (right.id, right.name, Some(1)),
+            (leaf.id, leaf.name, Some(2)),
+        ]
+    );
+}

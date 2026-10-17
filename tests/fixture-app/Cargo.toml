@@ -6,8 +6,11 @@ rust-version = "1.94"
 publish = false
 
 [dependencies]
-sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "derive", "uuid", "chrono", "rust_decimal"] }
-uuid = { version = "1", features = ["serde"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "derive", "uuid", "chrono", "rust_decimal", "ipnetwork", "mac_address"] }
+# `INET`, `CIDR` and `MACADDR` in plain_schema.sql.
+ipnetwork = "0.21"
+mac_address = "1"
+uuid = { version = "1", features = ["serde", "v7"] }
 chrono = { version = "0.4", features = ["serde"] }
 rust_decimal = { version = "1", features = ["serde"] }
 # The fixture generates with `derive = ["serde"]` (ADR 0013).

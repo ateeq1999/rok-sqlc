@@ -6,6 +6,7 @@ mod alter_column;
 mod alter_table;
 mod create_table;
 mod enums;
+mod recovered;
 mod value_lists;
 
 fn parse(sql: &str) -> ParsedSchema {

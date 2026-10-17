@@ -18,7 +18,7 @@ use serde::Deserialize;
 use serde::de::{self, Deserializer, Visitor};
 
 use crate::report::display_path;
-use crate::{Conventions, Derive, RelationshipChange};
+use crate::{Conventions, Derive, IdGeneration, RelationshipChange};
 
 /// The file name looked for during discovery.
 pub(crate) const FILE_NAME: &str = "rok-sqlc.toml";
@@ -187,6 +187,29 @@ pub(crate) struct ConventionKeys {
     soft_delete_column: Option<String>,
     managed_columns: Option<Vec<String>>,
     version_column: Option<String>,
+    primary_key_ids: Option<IdGenerationName>,
+}
+
+/// A `primary_key_ids` value. Deserializing an unknown name fails with the
+/// list of known ones; `"none"` turns a lower source's choice off.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum IdGenerationName {
+    None,
+    UuidV4,
+    UuidV7,
+    Ulid,
+}
+
+impl IdGenerationName {
+    fn id_generation(self) -> Option<IdGeneration> {
+        match self {
+            IdGenerationName::None => None,
+            IdGenerationName::UuidV4 => Some(IdGeneration::UuidV4),
+            IdGenerationName::UuidV7 => Some(IdGeneration::UuidV7),
+            IdGenerationName::Ulid => Some(IdGeneration::Ulid),
+        }
+    }
 }
 
 /// A `derive` entry. Deserializing an unknown name fails with the list of
@@ -224,6 +247,7 @@ impl ConventionKeys {
             soft_delete_column: self.soft_delete_column.or(lower.soft_delete_column),
             managed_columns: self.managed_columns.or(lower.managed_columns),
             version_column: self.version_column.or(lower.version_column),
+            primary_key_ids: self.primary_key_ids.or(lower.primary_key_ids),
         }
     }
 
@@ -247,6 +271,9 @@ impl ConventionKeys {
         set(&mut conventions.version_column, self.version_column);
         if let Some(managed) = self.managed_columns {
             conventions.managed_columns = managed;
+        }
+        if let Some(ids) = self.primary_key_ids {
+            conventions.primary_key_ids = ids.id_generation();
         }
         conventions
     }
@@ -342,6 +369,31 @@ mod tests {
 
         assert_eq!(resolved.version_column, None);
         assert_eq!(resolved.soft_delete_column.as_deref(), Some("deleted_at"));
+    }
+
+    #[test]
+    fn primary_key_ids_name_a_strategy_and_unknown_names_fail() {
+        let resolved = conventions("[conventions]\nprimary_key_ids = \"uuid_v7\"\n");
+        assert_eq!(resolved.primary_key_ids, Some(IdGeneration::UuidV7));
+        let off = RawFile::resolve(
+            toml::from_str("[conventions]\nprimary_key_ids = \"none\"\n").unwrap(),
+            Path::new(""),
+        )
+        .conventions
+        .over(
+            RawFile::resolve(
+                toml::from_str("[conventions]\nprimary_key_ids = \"ulid\"\n").unwrap(),
+                Path::new(""),
+            )
+            .conventions,
+        )
+        .resolve();
+        assert_eq!(off.primary_key_ids, None, "an upper `none` wins");
+
+        let error = toml::from_str::<RawFile>("[conventions]\nprimary_key_ids = \"snowflake\"\n")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("uuid_v7"), "{error}");
     }
 
     #[test]

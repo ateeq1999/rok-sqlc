@@ -55,7 +55,7 @@ fn rejects_primary_key_listing_duplicate_column() {
 
 #[test]
 fn rejects_unsupported_type() {
-    let parsed = parse("CREATE TABLE shifts (id BIGSERIAL PRIMARY KEY, span INET NOT NULL);");
+    let parsed = parse("CREATE TABLE shifts (id BIGSERIAL PRIMARY KEY, span POINT NOT NULL);");
     assert_eq!(parsed.schema.tables.len(), 0);
     assert!(parsed.failures[0].reason.contains("not supported"));
 }
@@ -186,7 +186,7 @@ fn maps_interval_bytea_and_time_with_time_zone() {
 
 #[test]
 fn rejects_arrays_of_unsupported_elements() {
-    let parsed = parse("CREATE TABLE hosts (addresses INET[] NOT NULL);");
+    let parsed = parse("CREATE TABLE hosts (addresses POINT[] NOT NULL);");
     assert_eq!(parsed.schema.tables.len(), 0);
     assert!(parsed.failures[0].reason.contains("not supported"));
 }
@@ -287,7 +287,7 @@ fn detects_rust_field_collisions() {
 
 #[test]
 fn collects_failures_per_table() {
-    let parsed = parse("CREATE TABLE good (id BIGSERIAL PRIMARY KEY); CREATE TABLE bad (x INET);");
+    let parsed = parse("CREATE TABLE good (id BIGSERIAL PRIMARY KEY); CREATE TABLE bad (x POINT);");
     assert_eq!(parsed.schema.tables.len(), 1);
     assert_eq!(parsed.failures.len(), 1);
     assert_eq!(parsed.failures[0].table, "bad");

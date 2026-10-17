@@ -166,7 +166,7 @@ fn ignores_alter_table_on_unknown_tables() {
     let table = one_table(
         "CREATE TABLE notes (id BIGSERIAL PRIMARY KEY);
              ALTER TABLE other.notes ALTER COLUMN id TYPE BIGINT;
-             ALTER TABLE elsewhere ADD COLUMN x INET;",
+             ALTER TABLE elsewhere ADD COLUMN x POINT;",
     );
     assert_eq!(column_names(&table), ["id"]);
 }
@@ -175,14 +175,14 @@ fn ignores_alter_table_on_unknown_tables() {
 fn rejects_columns_added_with_unsupported_types() {
     let parsed = parse(
         "CREATE TABLE shifts (id BIGSERIAL PRIMARY KEY);
-             ALTER TABLE public.shifts ADD COLUMN span INET;",
+             ALTER TABLE public.shifts ADD COLUMN span POINT;",
     );
     assert!(parsed.schema.tables.is_empty());
     assert_eq!(parsed.failures[0].line, Some(2));
     assert!(
         parsed.failures[0]
             .reason
-            .contains("ADD COLUMN: column `span`: type `INET` is not supported yet"),
+            .contains("ADD COLUMN: column `span`: type `POINT` is not supported yet"),
         "{:?}",
         parsed.failures
     );

@@ -143,8 +143,8 @@ fn alter_column_type_keeps_value_lists_only_on_text() {
 fn rejects_alter_column_changes_it_cannot_apply_with_their_location() {
     let cases = [
         (
-            "ALTER TABLE notes ALTER COLUMN body TYPE INET;",
-            "ALTER COLUMN: column `body`: type `INET` is not supported yet",
+            "ALTER TABLE notes ALTER COLUMN body TYPE POINT;",
+            "ALTER COLUMN: column `body`: type `POINT` is not supported yet",
         ),
         (
             "ALTER TABLE notes ALTER COLUMN body TYPE BIGSERIAL;",

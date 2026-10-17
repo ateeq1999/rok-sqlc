@@ -269,7 +269,7 @@ fn printed_paths_use_slashes_and_stay_relative() -> Result<()> {
     fs::create_dir(&migrations)?;
     fs::write(
         migrations.join("0001_init.up.sql"),
-        "CREATE TABLE users (id UUID PRIMARY KEY);\nCREATE TABLE spans (id UUID PRIMARY KEY, length INET);\n",
+        "CREATE TABLE users (id UUID PRIMARY KEY);\nCREATE TABLE spans (id UUID PRIMARY KEY, length POINT);\n",
     )?;
     fs::write(
         dir.path().join("rok-sqlc.toml"),
@@ -416,7 +416,7 @@ fn unsupported_ctes_fail_with_path_and_line_diagnostics() -> Result<()> {
     let path = shown(&queries);
     assert!(
         stderr.contains(&format!(
-            "{path}:4: query `Countdown`: WITH RECURSIVE is not supported"
+            "{path}:4: query `Countdown`: cannot infer the type of column `n` of CTE `t`"
         )),
         "{stderr}"
     );

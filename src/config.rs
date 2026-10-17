@@ -163,6 +163,40 @@ pub struct Conventions {
     pub managed_columns: Vec<String>,
     /// The version column, for optimistic concurrency on update.
     pub version_column: Option<String>,
+    /// How generated code makes new primary key values for tables keyed by
+    /// one `UUID` column (or, with [`IdGeneration::Ulid`], one text column).
+    /// Such a table's typed id gets a `generate()` constructor, and its
+    /// `create` input takes the key as an `Option`: `None` inserts a new id
+    /// made in Rust (over any database default). Off by default.
+    pub primary_key_ids: Option<IdGeneration>,
+}
+
+/// How generated code makes a new primary key value
+/// ([`Conventions::primary_key_ids`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum IdGeneration {
+    /// A random UUID (version 4), for `UUID` keys. Needs the `uuid` crate's
+    /// `v4` feature.
+    UuidV4,
+    /// A time-ordered UUID (version 7), for `UUID` keys. Needs the `uuid`
+    /// crate's `v7` feature.
+    UuidV7,
+    /// A ULID: time-ordered, stored as a UUID in a `UUID` key, or as its
+    /// 26-character text in a text key. Needs the `ulid` crate (with its
+    /// `uuid` feature for `UUID` keys).
+    Ulid,
+}
+
+impl IdGeneration {
+    /// The name the config file and the JSON payload use.
+    pub fn name(self) -> &'static str {
+        match self {
+            IdGeneration::UuidV4 => "uuid_v4",
+            IdGeneration::UuidV7 => "uuid_v7",
+            IdGeneration::Ulid => "ulid",
+        }
+    }
 }
 
 impl Conventions {
@@ -181,6 +215,7 @@ impl Conventions {
             soft_delete_column: Some("deleted_at".to_owned()),
             managed_columns: vec!["updated_at".to_owned(), "row_version".to_owned()],
             version_column: Some("row_version".to_owned()),
+            primary_key_ids: None,
         }
     }
 

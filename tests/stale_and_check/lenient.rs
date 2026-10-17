@@ -2,7 +2,7 @@
 
 use super::*;
 
-const BREAK_POSTS: &str = "ALTER TABLE posts ADD COLUMN duration INET;\n";
+const BREAK_POSTS: &str = "ALTER TABLE posts ADD COLUMN duration POINT;\n";
 
 /// A migrations directory and an output directory in a temp dir, driven
 /// through the real binary.
@@ -196,7 +196,7 @@ fn a_table_failing_at_its_create_table_is_not_kept() -> Result<()> {
     project.add(&[(
         "0001_init.up.sql",
         "CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);\n\
-         CREATE TABLE posts (id BIGSERIAL PRIMARY KEY, title TEXT NOT NULL, origin INET);",
+         CREATE TABLE posts (id BIGSERIAL PRIMARY KEY, title TEXT NOT NULL, origin POINT);",
     )])?;
     let output = project.run(&["--lenient"]);
 
