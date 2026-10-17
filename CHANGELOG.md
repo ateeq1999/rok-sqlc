@@ -16,6 +16,15 @@ the *generated* API count as breaking (see ADR 0012).
 
 ### Added
 
+- `INTERVAL` maps to `sqlx::postgres::types::PgInterval`, `BYTEA` to
+  `Vec<u8>` (borrowed as `&[u8]` in key, lookup, and query parameters), and
+  `TIME WITH TIME ZONE`/`TIMETZ` to `sqlx::postgres::types::PgTimeTz`, in
+  columns, arrays, query-file casts (`$1::interval`), and result columns.
+  All three get equality filters: SQLx implements no `PartialOrd` for
+  `PgInterval` or `PgTimeTz`.
+- With `derive = ["serde"]`, a table or query that would put `PgInterval` or
+  `PgTimeTz` (which implement no serde traits) into a serde-deriving item
+  fails the run with an error naming the column or parameter.
 - In query files, a cast to an enum type infers the generated enum:
   `$1::product_status` and `$1::app.ticket_state` take `types::X`, and
   `$1::product_status[]` takes `&[types::X]`. Such casts were rejected.
@@ -32,6 +41,13 @@ the *generated* API count as breaking (see ADR 0012).
   are no longer stale: a successful run does not remove them, and a lenient
   `--check` reports the table's warning but no drift. A table the schema no
   longer defines (dropped, or never created) is still stale (ADR 0001).
+- A managed column with no source of values fails its table with a
+  `path:line` diagnostic: one that is `NOT NULL`, has no `DEFAULT`, is not
+  serial, identity, or `GENERATED`, on a table with no row-level
+  `BEFORE INSERT` trigger. Inserts leave managed columns out, so such a
+  table could never be inserted into. `CREATE TRIGGER` and `DROP TRIGGER`
+  are now read to find those triggers (per table; function bodies are not
+  inspected). Nullable managed columns are unaffected.
 
 ## [0.1.0] - 2026-10-17
 

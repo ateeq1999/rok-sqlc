@@ -5,8 +5,9 @@ use anyhow::{Context, Result, bail};
 use sqlparser::ast::{
     AlterTableOperation, AlterType, AlterTypeAddValue, AlterTypeAddValuePosition,
     AlterTypeOperation, ArrayElemTypeDef, ColumnDef, ColumnOption, CreateIndex, CreateTable,
-    DataType, ExactNumberInfo, Expr, Ident, IndexColumn, ObjectName, ObjectNamePart, ObjectType,
-    Spanned, Statement, TableConstraint, TimezoneInfo, UserDefinedTypeRepresentation, Value,
+    CreateTrigger, DataType, DropTrigger, ExactNumberInfo, Expr, Ident, IndexColumn, ObjectName,
+    ObjectNamePart, ObjectType, Spanned, Statement, TableConstraint, TimezoneInfo, TriggerEvent,
+    TriggerObject, TriggerPeriod, UserDefinedTypeRepresentation, Value,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -14,6 +15,7 @@ use sqlparser::parser::Parser;
 use super::diagnostics::TableFailure;
 use super::naming;
 use crate::report::display_path;
+use crate::schema::rust_type;
 use crate::schema::{
     BaseType, Column, EnumType, EnumVariant, ForeignKey, KeyConstraint, Schema, Shape, Table,
     UniqueKey,
@@ -22,6 +24,33 @@ use crate::schema::{
 pub struct ParsedSchema {
     pub schema: Schema,
     pub failures: Vec<TableFailure>,
+    /// Where each table in `schema` was created (its `CREATE TABLE`), by
+    /// module name, so a later check can fail it at that location.
+    created: HashMap<String, (PathBuf, Option<usize>)>,
+}
+
+impl ParsedSchema {
+    /// Fails every table `reason` gives a reason for: the table leaves
+    /// `schema.tables` and joins `failures`, located at its `CREATE TABLE`.
+    pub fn fail_tables(&mut self, mut reason: impl FnMut(&Table) -> Option<String>) {
+        let mut failed = Vec::new();
+        self.schema.tables.retain(|table| {
+            let Some(reason) = reason(table) else {
+                return true;
+            };
+            failed.push((table.clone(), reason));
+            false
+        });
+        for (table, reason) in failed {
+            let (path, line) = self.created.remove(&table.module_name).unwrap_or_default();
+            self.failures.push(TableFailure {
+                path: Some(path).filter(|path| !path.as_os_str().is_empty()),
+                line,
+                schema: table.schema.clone(),
+                ..table_failure(&table.sql_name, reason)
+            });
+        }
+    }
 }
 
 /// Root modules rok-sqlc always generates next to the resource modules.
@@ -55,10 +84,12 @@ pub fn parse_schema(sql: &str) -> Result<ParsedSchema> {
 /// renames columns and adds primary key, unique, foreign key, and value-list
 /// check constraints, and `CREATE UNIQUE INDEX` on plain columns records a unique
 /// key. Any other `ALTER TABLE` clause on a known table fails that table.
+/// `CREATE TRIGGER` and `DROP TRIGGER` keep track of each table's row-level
+/// `BEFORE INSERT` triggers, by name; the trigger functions are not read.
 /// `DROP TABLE` removes a table, together with the foreign keys other tables
 /// hold to it (as `CASCADE` would), and `DROP TYPE` removes an enum type.
 /// Statements that leave the model unchanged (row-level security, policies,
-/// non-unique indexes, grants, triggers, comments, functions, `SELECT`
+/// non-unique indexes, grants, other triggers, comments, functions, `SELECT`
 /// calls) and statements on unknown tables are ignored on purpose.
 pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
     let dialect = PostgreSqlDialect {};
@@ -182,6 +213,14 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
                     record_unique_index(&mut tables, &index);
                     continue;
                 }
+                Statement::CreateTrigger(trigger) => {
+                    record_trigger(&mut tables, &trigger);
+                    continue;
+                }
+                Statement::DropTrigger(trigger) => {
+                    forget_trigger(&mut tables, &trigger);
+                    continue;
+                }
                 Statement::CreateType {
                     name,
                     representation: UserDefinedTypeRepresentation::Enum { labels },
@@ -254,6 +293,7 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
             enums: all_enums,
         },
         failures,
+        created,
     })
 }
 
@@ -929,6 +969,43 @@ fn add_constraint(
     Ok(())
 }
 
+/// Records a `CREATE TRIGGER` on a known table: a row-level `BEFORE` trigger
+/// that fires on `INSERT` (alone or with other events) can supply the values
+/// of the columns inserts leave out. Its function is not inspected. A
+/// `CREATE OR REPLACE` of a trigger with the same name replaces it.
+fn record_trigger(tables: &mut [Table], trigger: &CreateTrigger) {
+    let Some(index) = find_table(tables, &trigger.table_name) else {
+        return;
+    };
+    let table = &mut tables[index];
+    let name = object_leaf_name(&trigger.name);
+    table.before_insert_triggers.retain(|other| *other != name);
+    let before_insert = trigger.period == TriggerPeriod::Before
+        && trigger.trigger_object == TriggerObject::Row
+        && trigger.events.contains(&TriggerEvent::Insert);
+    if before_insert {
+        table.before_insert_triggers.push(name);
+    }
+}
+
+/// Applies a `DROP TRIGGER`: the trigger no longer supplies values. Without
+/// a table name, a trigger of that name is dropped from every table.
+fn forget_trigger(tables: &mut [Table], trigger: &DropTrigger) {
+    let name = object_leaf_name(&trigger.trigger_name);
+    let only = trigger
+        .table_name
+        .as_ref()
+        .and_then(|table| find_table(tables, table));
+    if trigger.table_name.is_some() && only.is_none() {
+        return;
+    }
+    for (index, table) in tables.iter_mut().enumerate() {
+        if only.is_none_or(|only| only == index) {
+            table.before_insert_triggers.retain(|other| *other != name);
+        }
+    }
+}
+
 /// Records a `CREATE UNIQUE INDEX` on plain columns of a known table as a
 /// unique key, keeping a partial index's condition. Expression indexes and
 /// non-unique indexes change nothing.
@@ -1077,6 +1154,7 @@ fn build_table(
         soft_delete_column: None,
         tenant_column: None,
         relationships: Vec::new(),
+        before_insert_triggers: Vec::new(),
     };
     // Like PostgreSQL, one `CREATE TABLE` makes one constraint of several
     // over the same column list: a primary key if any of them is, named by
@@ -1535,6 +1613,9 @@ fn map_type_in(
         DataType::Timestamp(_, TimezoneInfo::Tz | TimezoneInfo::WithTimeZone) => {
             "chrono::DateTime<chrono::Utc>"
         }
+        DataType::Time(_, TimezoneInfo::Tz | TimezoneInfo::WithTimeZone) => rust_type::TIME_TZ,
+        DataType::Interval { .. } => rust_type::INTERVAL,
+        DataType::Bytea => rust_type::BYTES,
         DataType::JSON | DataType::JSONB => "serde_json::Value",
         DataType::Numeric(info) | DataType::Decimal(info) => {
             check_decimal_precision(info)?;
@@ -1678,8 +1759,7 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_type() {
-        let parsed =
-            parse("CREATE TABLE shifts (id BIGSERIAL PRIMARY KEY, span INTERVAL NOT NULL);");
+        let parsed = parse("CREATE TABLE shifts (id BIGSERIAL PRIMARY KEY, span INET NOT NULL);");
         assert_eq!(parsed.schema.tables.len(), 0);
         assert!(parsed.failures[0].reason.contains("not supported"));
     }
@@ -1773,15 +1853,45 @@ mod tests {
     }
 
     #[test]
-    fn rejects_time_with_time_zone() {
-        let parsed = parse("CREATE TABLE events (at TIME WITH TIME ZONE NOT NULL);");
-        assert_eq!(parsed.schema.tables.len(), 0);
-        assert!(parsed.failures[0].reason.contains("not supported"));
+    fn maps_interval_bytea_and_time_with_time_zone() {
+        let table = one_table(
+            "CREATE TABLE shifts (span INTERVAL NOT NULL, spans INTERVAL[], badge BYTEA NOT NULL, \
+             photos BYTEA[], opens TIME WITH TIME ZONE NOT NULL, closes TIMETZ, slots TIMETZ[]);",
+        );
+        let types: Vec<&str> = table
+            .columns
+            .iter()
+            .map(|column| column.rust_type.as_str())
+            .collect();
+        assert_eq!(
+            types,
+            [
+                "sqlx::postgres::types::PgInterval",
+                "Option<Vec<sqlx::postgres::types::PgInterval>>",
+                "Vec<u8>",
+                "Option<Vec<Vec<u8>>>",
+                "sqlx::postgres::types::PgTimeTz",
+                "Option<sqlx::postgres::types::PgTimeTz>",
+                "Option<Vec<sqlx::postgres::types::PgTimeTz>>",
+            ]
+        );
+        // SQLx implements no `PartialOrd` for `PgInterval` or `PgTimeTz`, so
+        // they get equality filters, as `BYTEA` does; arrays get none.
+        let equality = Some(crate::schema::FilterKind::Equality);
+        let kinds: Vec<_> = table
+            .columns
+            .iter()
+            .map(|column| column.filter_kind())
+            .collect();
+        assert_eq!(
+            kinds,
+            [equality, None, equality, None, equality, equality, None]
+        );
     }
 
     #[test]
     fn rejects_arrays_of_unsupported_elements() {
-        let parsed = parse("CREATE TABLE shifts (spans INTERVAL[] NOT NULL);");
+        let parsed = parse("CREATE TABLE hosts (addresses INET[] NOT NULL);");
         assert_eq!(parsed.schema.tables.len(), 0);
         assert!(parsed.failures[0].reason.contains("not supported"));
     }
@@ -1883,7 +1993,7 @@ mod tests {
     #[test]
     fn collects_failures_per_table() {
         let parsed =
-            parse("CREATE TABLE good (id BIGSERIAL PRIMARY KEY); CREATE TABLE bad (x INTERVAL);");
+            parse("CREATE TABLE good (id BIGSERIAL PRIMARY KEY); CREATE TABLE bad (x INET);");
         assert_eq!(parsed.schema.tables.len(), 1);
         assert_eq!(parsed.failures.len(), 1);
         assert_eq!(parsed.failures[0].table, "bad");
@@ -2138,7 +2248,7 @@ mod tests {
         let table = one_table(
             "CREATE TABLE notes (id BIGSERIAL PRIMARY KEY);
              ALTER TABLE other.notes ALTER COLUMN id TYPE BIGINT;
-             ALTER TABLE elsewhere ADD COLUMN x INTERVAL;",
+             ALTER TABLE elsewhere ADD COLUMN x INET;",
         );
         assert_eq!(column_names(&table), ["id"]);
     }
@@ -2147,14 +2257,14 @@ mod tests {
     fn rejects_columns_added_with_unsupported_types() {
         let parsed = parse(
             "CREATE TABLE shifts (id BIGSERIAL PRIMARY KEY);
-             ALTER TABLE public.shifts ADD COLUMN span INTERVAL;",
+             ALTER TABLE public.shifts ADD COLUMN span INET;",
         );
         assert!(parsed.schema.tables.is_empty());
         assert_eq!(parsed.failures[0].line, Some(2));
         assert!(
             parsed.failures[0]
                 .reason
-                .contains("ADD COLUMN: column `span`: type `INTERVAL` is not supported yet"),
+                .contains("ADD COLUMN: column `span`: type `INET` is not supported yet"),
             "{:?}",
             parsed.failures
         );
@@ -2351,8 +2461,8 @@ mod tests {
     fn drop_table_forgets_a_table_that_failed_earlier() {
         let parsed = parse(
             "CREATE TABLE users (id BIGSERIAL PRIMARY KEY);
-             CREATE TABLE app.spans (id BIGSERIAL PRIMARY KEY, length INTERVAL);
-             CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, length INTERVAL);
+             CREATE TABLE app.spans (id BIGSERIAL PRIMARY KEY, length INET);
+             CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, length INET);
              DROP TABLE app.spans;",
         );
         assert_eq!(parsed.failures.len(), 1, "{:?}", parsed.failures);

@@ -84,6 +84,11 @@ pub struct Table {
     /// parser leaves it empty; the generator infers it over the tables
     /// generated together.
     pub relationships: Vec<Relationship>,
+    /// The names of the row-level `BEFORE INSERT` triggers on this table
+    /// (`BEFORE INSERT OR UPDATE` included), in creation order, less any
+    /// dropped since. Such a trigger can supply a managed column's value;
+    /// its function body is not inspected.
+    pub before_insert_triggers: Vec<String>,
 }
 
 /// A relationship from a table to another table, or to itself, inferred from
@@ -284,7 +289,8 @@ pub enum FilterKind {
     Ordered,
     /// Text: equality, sets, and literal substring matching.
     Text,
-    /// Booleans, UUIDs, and enums: equality and sets.
+    /// Booleans, UUIDs, enums, byte strings, and the types SQLx gives no
+    /// `PartialOrd` (`INTERVAL`, `TIME WITH TIME ZONE`): equality and sets.
     Equality,
 }
 
@@ -301,7 +307,12 @@ impl Column {
             | BaseType::Timestamp
             | BaseType::TimestampTz => Some(FilterKind::Ordered),
             BaseType::Text => Some(FilterKind::Text),
-            BaseType::Bool | BaseType::Uuid | BaseType::Enum => Some(FilterKind::Equality),
+            BaseType::Bool
+            | BaseType::Uuid
+            | BaseType::Enum
+            | BaseType::Interval
+            | BaseType::Bytes
+            | BaseType::TimeTz => Some(FilterKind::Equality),
             BaseType::Array | BaseType::Other => None,
         }
     }

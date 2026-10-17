@@ -1,8 +1,10 @@
 //! The code rok-sqlc generates from its fixture schema and query files,
 //! compiled the way a consuming crate compiles it.
 //!
-//! `src/db/` is written by `tests/fixture_compile.rs` in rok-sqlc and is not
-//! checked in. The lints below are the generated-code quality bar (ADR 0013).
+//! `src/db/` and `src/plain_db/` (generated without serde, see
+//! `plain_schema.sql`) are written by `tests/fixture_compile.rs` in rok-sqlc
+//! and are not checked in. The lints below are the generated-code quality
+//! bar (ADR 0013).
 
 #![deny(missing_docs, warnings)]
 // The selected pedantic lints. They warn, so `deny(warnings)` and
@@ -29,6 +31,7 @@
 )]
 
 pub mod db;
+pub mod plain_db;
 
 #[cfg(feature = "typed-id-mixup")]
 mod typed_id_mixup;
