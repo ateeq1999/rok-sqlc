@@ -13,11 +13,15 @@ fn column_doc(column: &Column) -> String {
 pub fn render(table: &Table, serde: bool) -> String {
     let mut output = format!("{HEADER}\n");
     let mut imports = keys::id_imports(table, &table.columns, true);
-    if table
-        .columns
-        .iter()
-        .any(|column| mentions_generated_type(&column.rust_type))
-    {
+    // A column typed by another module's id (one wrapping an enum) does not
+    // name the enum here; this module's own id does, in its definition.
+    if table.columns.iter().any(|column| {
+        mentions_generated_type(&column.rust_type)
+            && column
+                .typed_id
+                .as_ref()
+                .is_none_or(|id| id.module == table.module_name)
+    }) {
         imports.push("super::super::types".to_owned());
     }
     if !imports.is_empty() {

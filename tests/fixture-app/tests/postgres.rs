@@ -69,6 +69,7 @@ async fn generated_crud_against_postgres() {
     enums_keep_their_exact_labels(&pool).await;
     value_list_columns_round_trip(&pool).await;
     typed_ids_flow_from_rows_to_foreign_keys(&pool).await;
+    enum_keys_get_a_typed_id(&pool).await;
     foreign_keys_resolve_to_the_table_in_their_schema(&pool).await;
     unique_key_lookups_find_one_row_or_none(&pool).await;
     managed_columns_are_left_to_the_database(&pool).await;
@@ -246,6 +247,55 @@ async fn interval_bytea_and_timetz_round_trip(pool: &PgPool) {
 
 /// A category's typed id goes straight into a product's foreign key field
 /// and into a product filter; typed ids hash, order, display, and convert.
+/// An enum primary key gets a typed id wrapping the enum; the foreign key
+/// into it, lookups, and the keyset cursor take that id.
+async fn enum_keys_get_a_typed_id(pool: &PgPool) {
+    use db::priority_escalations::models::NewPriorityEscalation;
+    use db::priority_notes::filter::PriorityNoteFilter;
+    use db::priority_notes::models::{NewPriorityNote, PriorityNoteId};
+    use db::search::Limit;
+    use db::types::TicketPriority;
+
+    for (priority, note) in [(TicketPriority::Low, "later"), (TicketPriority::High, "now")] {
+        db::priority_notes::write::create(
+            pool,
+            NewPriorityNote {
+                priority: PriorityNoteId::from(priority),
+                note: note.to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+    }
+    let escalation = db::priority_escalations::write::create(
+        pool,
+        NewPriorityEscalation {
+            priority: PriorityNoteId(TicketPriority::High),
+        },
+    )
+    .await
+    .unwrap();
+    let note: PriorityNoteId = escalation.priority;
+
+    let found = db::priority_notes::read::get_by_id(pool, note)
+        .await
+        .unwrap()
+        .expect("the escalated note exists");
+    assert_eq!(found.note, "now");
+    assert_eq!(TicketPriority::from(found.priority), TicketPriority::High);
+
+    let after = db::priority_notes::read::search_after(
+        pool,
+        PriorityNoteFilter::default(),
+        Some(PriorityNoteId(TicketPriority::Low)),
+        Limit::new(10),
+    )
+    .await
+    .unwrap();
+    let keys: Vec<PriorityNoteId> = after.iter().map(|row| row.priority).collect();
+    assert_eq!(keys, [PriorityNoteId(TicketPriority::High)]);
+}
+
 async fn typed_ids_flow_from_rows_to_foreign_keys(pool: &PgPool) {
     use std::collections::HashSet;
 

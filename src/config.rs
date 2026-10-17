@@ -63,6 +63,18 @@ pub struct Config {
     /// invoices.insert("approved_by_user".into(), RelationshipChange::OptOut);
     /// ```
     pub relationships: BTreeMap<String, BTreeMap<String, RelationshipChange>>,
+    /// Module renames, by table (its schema-qualified name or its SQL name;
+    /// `public.` may be left out): the table generates as this module, and
+    /// its row struct, typed id, and key struct are named after it. This is
+    /// how same-named tables of two schemas both generate. Each new name must
+    /// be a snake_case Rust identifier, and every entry must name a table of
+    /// the schema. Empty by default.
+    ///
+    /// ```
+    /// let mut config = rok_sqlc::Config::default();
+    /// config.modules.insert("audit.users".into(), "audit_users".into());
+    /// ```
+    pub modules: BTreeMap<String, String>,
 }
 
 /// What configuration does to one inferred relationship (the
@@ -114,6 +126,7 @@ impl Default for Config {
             conventions: Conventions::default(),
             derive: Vec::new(),
             relationships: BTreeMap::new(),
+            modules: BTreeMap::new(),
         }
     }
 }

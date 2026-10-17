@@ -88,10 +88,16 @@ CREATE TABLE app.tickets (
     watch_levels ticket_priority[] NOT NULL DEFAULT '{}'
 );
 
--- An enum primary key: key parameters and the keyset cursor use the enum.
+-- An enum primary key gets a typed id wrapping the enum (`PriorityNoteId`),
+-- which key parameters, the keyset cursor, and the foreign key into it use.
 CREATE TABLE priority_notes (
     priority ticket_priority PRIMARY KEY,
     note TEXT NOT NULL
+);
+
+CREATE TABLE priority_escalations (
+    id BIGSERIAL PRIMARY KEY,
+    priority ticket_priority NOT NULL REFERENCES priority_notes (priority)
 );
 
 -- Value-list columns: text columns a CHECK restricts to fixed values become

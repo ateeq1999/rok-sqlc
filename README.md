@@ -301,7 +301,12 @@ pub struct Product {
 
 A composite primary key gets a key struct instead (`OrderItemKey`, with a
 `key()` accessor on the row). A foreign key to a table outside the run keeps
-its raw type.
+its raw type. An enum primary key's typed id wraps the enum
+(`PriorityNoteId(pub types::TicketPriority)`). Like the enum, it is neither
+`Ord` nor `Display`. Two tables whose struct names agree (`user` and `users`)
+both define `UserId`. A file that would import both, or an imported id named
+like one of the file's own items, fails the run. Rename one table under
+[`[modules]`](#rok-sqlctoml).
 
 **Create inputs and update patches.** `NewProduct` leaves out generated
 columns (serial, identity, `GENERATED`). A column with a default becomes an
@@ -676,8 +681,8 @@ relationship.
 Options come from four layers. The most specific wins:
 **flags > JSON payload (`-j`) > `rok-sqlc.toml` > defaults**. A list (such as
 `schema`, `queries` or `derive`) replaces the lower layer's list whole and is
-never appended to. `[conventions]` keys and `[relationships]` entries merge
-one by one.
+never appended to. `[conventions]` keys, `[relationships]` entries and
+`[modules]` entries merge one by one.
 
 ### `rok-sqlc.toml`
 
@@ -706,7 +711,16 @@ version_column     = "row_version"
 [relationships.invoices]     # by table, then by inferred relationship name
 created_by_user  = "author"  # rename: load_author, get_with_author, filter field author
 approved_by_user = false     # opt out, together with the other side
+
+[modules]                    # by table: generate it as another module
+"audit.users" = "audit_users"  # db::audit_users, with AuditUser and AuditUserId
 ```
+
+`[modules]` renames a table's module, and its row struct, typed id and key
+struct follow the new name. That's how same-named tables of two schemas
+(`core.users` and `audit.users`) both generate. A key is the table's
+schema-qualified name or its SQL name. A key that names no table, or a name
+that isn't a snake_case Rust identifier, fails the run.
 
 `[relationships]` entries are checked against the whole schema. An unknown
 table or relationship, an invalid name, or a rename that collides fails with
@@ -790,8 +804,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 The library never reads `rok-sqlc.toml` and never prints: a build script gets
 exactly the `Config` it built. Set `config.conventions`
 (`rok_sqlc::Conventions::rok()`), `config.derive`
-(`rok_sqlc::Derive::Serde`) and `config.relationships`
-(`rok_sqlc::RelationshipChange`) to match the config file's sections.
+(`rok_sqlc::Derive::Serde`), `config.relationships`
+(`rok_sqlc::RelationshipChange`) and `config.modules` to match the config
+file's sections.
 `Config` is `#[non_exhaustive]`, so start from `Config::default()` and set
 fields. The `Report` lists written, unchanged, refused and stale files and
 any skipped tables or queries.
@@ -895,7 +910,8 @@ problems count.
 | `NUMERIC(p, s)` with `p` > 28 | `rust_decimal` holds 28 significant digits, so the value would fail to decode at runtime. |
 | Other `ALTER TABLE` clauses (`ALTER COLUMN … TYPE`/`SET NOT NULL`, `RENAME TO`, …) | The table's shape after the change is unknown, so the table fails. |
 | Other `ALTER TYPE` clauses | The tables that use the type fail. |
-| A table whose module name is reserved or already taken | Its module would collide with a generated one. |
+| A table whose module name is reserved or already taken | Its module would collide with a generated one. Rename it in `[modules]`. |
+| Two typed ids of one name imported into one file, or an imported id named like one of the file's own items | The generated code wouldn't compile. Rename a module in `[modules]`. |
 | Columns whose filter or sort-key names collide (`weight` next to `weight_is_null`) | The generated code wouldn't compile. |
 | Two relationships of one table with the same name, or a relationship named like a filter field | Rename one in `[relationships]`. |
 | A soft-delete column that is not a nullable timestamp | `delete` couldn't record the time. |

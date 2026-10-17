@@ -13,8 +13,24 @@ the *generated* API count as breaking (see ADR 0012).
   column (including its `*_is_null` field) and `{Table}SortKey` no variant
   for it. `search` is already scoped to the tenant parameter, so these could
   only repeat the scope or match nothing. Relationship filters are unchanged.
+- An enum primary key gets a typed id wrapping the enum
+  (`PriorityNoteId(pub types::TicketPriority)`), which is `Copy`, `Eq` and
+  `Hash` but not `Ord` or `Display`. The key column, key parameters, the
+  `search_after` cursor, and foreign keys into the table take it instead of
+  the bare enum.
 
 ### Added
+
+- The `[modules]` config section (also in the JSON payload, and
+  `Config::modules` in the library) renames a table's module, by
+  schema-qualified or SQL name: `"audit.users" = "audit_users"`. The row
+  struct, typed id, and key struct follow the new name, so same-named tables
+  of two schemas both generate, each with its own typed id. An entry naming no
+  table, or a name that isn't a snake_case Rust identifier, fails the run.
+- Generation fails with a diagnostic when a resource would import two typed
+  ids of one name (from tables like `user` and `users`), or an imported typed
+  id named like one of the resource's own items. Before, the generated code
+  didn't compile.
 
 - `INTERVAL` maps to `sqlx::postgres::types::PgInterval`, `BYTEA` to
   `Vec<u8>` (borrowed as `&[u8]` in key, lookup, and query parameters), and

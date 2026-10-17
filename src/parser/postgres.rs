@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -27,6 +27,8 @@ pub struct ParsedSchema {
     /// Where each table in `schema` was created (its `CREATE TABLE`), by
     /// module name, so a later check can fail it at that location.
     created: HashMap<String, (PathBuf, Option<usize>)>,
+    /// The `[modules]` keys that named no `CREATE TABLE` of the schema.
+    pub unmatched_modules: Vec<String>,
 }
 
 impl ParsedSchema {
@@ -92,6 +94,28 @@ pub fn parse_schema(sql: &str) -> Result<ParsedSchema> {
 /// non-unique indexes, grants, other triggers, comments, functions, `SELECT`
 /// calls) and statements on unknown tables are ignored on purpose.
 pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
+    parse_sources_with_modules(sources, &BTreeMap::new())
+}
+
+/// [`parse_sources`] with module renames (the `[modules]` configuration):
+/// a table an entry names (see [`names_table`]) takes the entry's module
+/// name, and its struct name follows. Entries naming no `CREATE TABLE` are
+/// listed in [`ParsedSchema::unmatched_modules`].
+pub fn parse_sources_with_modules(
+    sources: &[SchemaSource<'_>],
+    modules: &BTreeMap<String, String>,
+) -> Result<ParsedSchema> {
+    let mut unmatched_modules: BTreeSet<&String> = modules.keys().collect();
+    let mut rename = |mut table: Table| {
+        for (key, module) in modules {
+            if names_table(key, table.schema.as_deref(), &table.sql_name) {
+                unmatched_modules.remove(key);
+                table.struct_name = naming::struct_name(module);
+                table.module_name.clone_from(module);
+            }
+        }
+        table
+    };
     let dialect = PostgreSqlDialect {};
     let mut tables: Vec<Table> = Vec::new();
     let mut failures = Vec::new();
@@ -164,7 +188,9 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
                     }
                     continue;
                 }
-                Statement::CreateTable(create) => match build_table(&create, &enums) {
+                Statement::CreateTable(create) => match build_table(&create, &enums)
+                    .map(&mut rename)
+                {
                     Ok(table) if GENERATED_MODULES.contains(&table.module_name.as_str()) => {
                         table_failure(
                             &table.sql_name,
@@ -183,7 +209,7 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
                     Ok(table) => table_failure(
                         &table.sql_name,
                         format!(
-                            "module name `{}` is already used by another table",
+                            "module name `{}` is already used by another table; rename one under `[modules]`",
                             table.module_name
                         ),
                     ),
@@ -287,7 +313,20 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
         },
         failures,
         created,
+        unmatched_modules: unmatched_modules.into_iter().cloned().collect(),
     })
+}
+
+/// Whether a `[modules]` key names the table with this schema and SQL name:
+/// the key is its schema-qualified name or its SQL name, and `public.` and
+/// no schema agree.
+pub fn names_table(key: &str, schema: Option<&str>, sql_name: &str) -> bool {
+    let schema = schema.unwrap_or("public");
+    key == sql_name
+        || key
+            .strip_suffix(sql_name)
+            .and_then(|qualifier| qualifier.strip_suffix('.'))
+            .is_some_and(|qualifier| qualifier == schema)
 }
 
 /// Whether any column of the table has the enum type at `rust_path`, alone

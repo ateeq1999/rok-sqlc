@@ -122,8 +122,9 @@ fn plan_files(schema_sql: &str, tables: &[Table], output: &Path) -> Vec<(PathBuf
 
 /// The model the renderers read, built in the one order the steps depend
 /// on: typed ids first ([`keys::resolve`]), then the conventions (a tenant
-/// column's foreign key is no relationship), then relationships with the
-/// `[relationships]` changes applied.
+/// column's foreign key is no relationship), then the typed id name check
+/// ([`keys::check_names`]), then relationships with the `[relationships]`
+/// changes applied.
 pub fn prepare(
     tables: &[Table],
     conventions: &Conventions,
@@ -132,6 +133,7 @@ pub fn prepare(
 ) -> Result<Vec<Table>, String> {
     let mut prepared = keys::resolve(tables);
     conventions::apply(&mut prepared, conventions);
+    keys::check_names(&prepared)?;
     relationships::infer(&mut prepared, changes, scope)?;
     Ok(prepared)
 }

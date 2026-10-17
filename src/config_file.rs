@@ -37,6 +37,8 @@ pub(crate) struct FileConfig {
     /// one) replaces theirs.
     pub(crate) derive: Option<Vec<Derive>>,
     pub(crate) relationships: RelationshipKeys,
+    /// The `[modules]` renames, by table.
+    pub(crate) modules: BTreeMap<String, String>,
 }
 
 /// The `[relationships]` entries one source sets, by table and then by
@@ -58,6 +60,7 @@ impl FileConfig {
             conventions: self.conventions.over(lower.conventions),
             derive: self.derive.or(lower.derive),
             relationships: relationships_over(self.relationships, lower.relationships),
+            modules: modules_over(self.modules, lower.modules),
         }
     }
 }
@@ -68,6 +71,16 @@ fn relationships_over(upper: RelationshipKeys, mut lower: RelationshipKeys) -> R
     for (table, changes) in upper {
         lower.entry(table).or_default().extend(changes);
     }
+    lower
+}
+
+/// Layers `upper`'s `[modules]` entries over `lower`'s: an entry `upper`
+/// sets for a table replaces `lower`'s.
+fn modules_over(
+    upper: BTreeMap<String, String>,
+    mut lower: BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    lower.extend(upper);
     lower
 }
 
@@ -85,6 +98,8 @@ struct RawFile {
     derive: Option<Vec<DeriveName>>,
     #[serde(default)]
     relationships: BTreeMap<String, BTreeMap<String, ChangeValue>>,
+    #[serde(default)]
+    modules: BTreeMap<String, String>,
 }
 
 /// A `[relationships]` value: a new name renames the relationship, `false`
@@ -154,6 +169,7 @@ impl RawFile {
                     (table, changes)
                 })
                 .collect(),
+            modules: self.modules,
         }
     }
 }
