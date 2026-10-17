@@ -24,6 +24,18 @@ the *generated* API count as breaking (see ADR 0012).
   and `Text` in `db::search` derive `Serialize` and `Deserialize`. A filter
   field absent from the JSON adds no condition.
 
+### Added
+
+- `INTERVAL` maps to `sqlx::postgres::types::PgInterval`, `BYTEA` to
+  `Vec<u8>` (borrowed as `&[u8]` in key, lookup, and query parameters), and
+  `TIME WITH TIME ZONE`/`TIMETZ` to `sqlx::postgres::types::PgTimeTz`, in
+  columns, arrays, query-file casts (`$1::interval`), and result columns.
+  All three get equality filters: SQLx implements no `PartialOrd` for
+  `PgInterval` or `PgTimeTz`.
+- With `derive = ["serde"]`, a table or query that would put `PgInterval` or
+  `PgTimeTz` (which implement no serde traits) into a serde-deriving item
+  fails the run with an error naming the column or parameter.
+
 ### Changed
 
 - A table that a `--lenient` run skips keeps the resource directory an

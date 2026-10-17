@@ -15,6 +15,7 @@ use sqlparser::parser::Parser;
 use super::diagnostics::TableFailure;
 use super::naming;
 use crate::report::display_path;
+use crate::schema::rust_type;
 use crate::schema::{
     BaseType, Column, EnumType, EnumVariant, ForeignKey, KeyConstraint, Schema, Shape, Table,
     UniqueKey,
@@ -1519,6 +1520,9 @@ fn map_type_in(
         DataType::Timestamp(_, TimezoneInfo::Tz | TimezoneInfo::WithTimeZone) => {
             "chrono::DateTime<chrono::Utc>"
         }
+        DataType::Time(_, TimezoneInfo::Tz | TimezoneInfo::WithTimeZone) => rust_type::TIME_TZ,
+        DataType::Interval { .. } => rust_type::INTERVAL,
+        DataType::Bytea => rust_type::BYTES,
         DataType::JSON | DataType::JSONB => "serde_json::Value",
         DataType::Numeric(info) | DataType::Decimal(info) => {
             check_decimal_precision(info)?;
@@ -1662,8 +1666,7 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_type() {
-        let parsed =
-            parse("CREATE TABLE shifts (id BIGSERIAL PRIMARY KEY, span INTERVAL NOT NULL);");
+        let parsed = parse("CREATE TABLE shifts (id BIGSERIAL PRIMARY KEY, span INET NOT NULL);");
         assert_eq!(parsed.schema.tables.len(), 0);
         assert!(parsed.failures[0].reason.contains("not supported"));
     }
@@ -1757,15 +1760,45 @@ mod tests {
     }
 
     #[test]
-    fn rejects_time_with_time_zone() {
-        let parsed = parse("CREATE TABLE events (at TIME WITH TIME ZONE NOT NULL);");
-        assert_eq!(parsed.schema.tables.len(), 0);
-        assert!(parsed.failures[0].reason.contains("not supported"));
+    fn maps_interval_bytea_and_time_with_time_zone() {
+        let table = one_table(
+            "CREATE TABLE shifts (span INTERVAL NOT NULL, spans INTERVAL[], badge BYTEA NOT NULL, \
+             photos BYTEA[], opens TIME WITH TIME ZONE NOT NULL, closes TIMETZ, slots TIMETZ[]);",
+        );
+        let types: Vec<&str> = table
+            .columns
+            .iter()
+            .map(|column| column.rust_type.as_str())
+            .collect();
+        assert_eq!(
+            types,
+            [
+                "sqlx::postgres::types::PgInterval",
+                "Option<Vec<sqlx::postgres::types::PgInterval>>",
+                "Vec<u8>",
+                "Option<Vec<Vec<u8>>>",
+                "sqlx::postgres::types::PgTimeTz",
+                "Option<sqlx::postgres::types::PgTimeTz>",
+                "Option<Vec<sqlx::postgres::types::PgTimeTz>>",
+            ]
+        );
+        // SQLx implements no `PartialOrd` for `PgInterval` or `PgTimeTz`, so
+        // they get equality filters, as `BYTEA` does; arrays get none.
+        let equality = Some(crate::schema::FilterKind::Equality);
+        let kinds: Vec<_> = table
+            .columns
+            .iter()
+            .map(|column| column.filter_kind())
+            .collect();
+        assert_eq!(
+            kinds,
+            [equality, None, equality, None, equality, equality, None]
+        );
     }
 
     #[test]
     fn rejects_arrays_of_unsupported_elements() {
-        let parsed = parse("CREATE TABLE shifts (spans INTERVAL[] NOT NULL);");
+        let parsed = parse("CREATE TABLE hosts (addresses INET[] NOT NULL);");
         assert_eq!(parsed.schema.tables.len(), 0);
         assert!(parsed.failures[0].reason.contains("not supported"));
     }
@@ -1867,7 +1900,7 @@ mod tests {
     #[test]
     fn collects_failures_per_table() {
         let parsed =
-            parse("CREATE TABLE good (id BIGSERIAL PRIMARY KEY); CREATE TABLE bad (x INTERVAL);");
+            parse("CREATE TABLE good (id BIGSERIAL PRIMARY KEY); CREATE TABLE bad (x INET);");
         assert_eq!(parsed.schema.tables.len(), 1);
         assert_eq!(parsed.failures.len(), 1);
         assert_eq!(parsed.failures[0].table, "bad");
@@ -2127,7 +2160,7 @@ mod tests {
         let table = one_table(
             "CREATE TABLE notes (id BIGSERIAL PRIMARY KEY);
              ALTER TABLE other.notes ALTER COLUMN id TYPE BIGINT;
-             ALTER TABLE elsewhere ADD COLUMN x INTERVAL;",
+             ALTER TABLE elsewhere ADD COLUMN x INET;",
         );
         assert_eq!(column_names(&table), ["id"]);
     }
@@ -2136,14 +2169,14 @@ mod tests {
     fn rejects_columns_added_with_unsupported_types() {
         let parsed = parse(
             "CREATE TABLE shifts (id BIGSERIAL PRIMARY KEY);
-             ALTER TABLE public.shifts ADD COLUMN span INTERVAL;",
+             ALTER TABLE public.shifts ADD COLUMN span INET;",
         );
         assert!(parsed.schema.tables.is_empty());
         assert_eq!(parsed.failures[0].line, Some(2));
         assert!(
             parsed.failures[0]
                 .reason
-                .contains("ADD COLUMN: column `span`: type `INTERVAL` is not supported yet"),
+                .contains("ADD COLUMN: column `span`: type `INET` is not supported yet"),
             "{:?}",
             parsed.failures
         );
@@ -2340,8 +2373,8 @@ mod tests {
     fn drop_table_forgets_a_table_that_failed_earlier() {
         let parsed = parse(
             "CREATE TABLE users (id BIGSERIAL PRIMARY KEY);
-             CREATE TABLE app.spans (id BIGSERIAL PRIMARY KEY, length INTERVAL);
-             CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, length INTERVAL);
+             CREATE TABLE app.spans (id BIGSERIAL PRIMARY KEY, length INET);
+             CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, length INET);
              DROP TABLE app.spans;",
         );
         assert_eq!(parsed.failures.len(), 1, "{:?}", parsed.failures);

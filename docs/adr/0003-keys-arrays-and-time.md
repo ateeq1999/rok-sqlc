@@ -4,6 +4,8 @@ Milestone 1 shipped models and reads for a scalar-only, single-column-key subset
 
 Two things stay rejected on purpose. `NUMERIC`/`DECIMAL` waits for the rust_decimal milestone — the corpus uses it 111 times, and guessing a Rust type now would bake in a rounding story nobody has chosen. `TIME WITH TIME ZONE` stays unsupported: PostgreSQL itself discourages it and no fixture uses it.
 
+*Superseded in part (0.2):* `TIME WITH TIME ZONE` now maps to SQLx's `PgTimeTz` (and `INTERVAL` to `PgInterval`, `BYTEA` to `Vec<u8>`), for legacy schemas that already use it. Neither SQLx type implements serde's traits, so with `derive = ["serde"]` such a column fails the run rather than generating code that doesn't compile.
+
 ## Considered Options
 
 - **Materialize arrays into joined tables** — rejected: it invents structure the schema does not express.

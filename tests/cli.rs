@@ -12,7 +12,7 @@ use common::shown;
 
 const SIMPLE_SCHEMA: &str = "CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);";
 const MIXED_SCHEMA: &str = "CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);\n\
-     CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, duration INTERVAL NOT NULL);";
+     CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, duration INET NOT NULL);";
 
 fn run(args: &[&str]) -> Result<()> {
     let mut full: Vec<String> = vec!["rok-sqlc".to_owned()];
@@ -885,7 +885,7 @@ fn printed_paths_use_slashes_and_stay_relative() -> Result<()> {
     fs::create_dir(&migrations)?;
     fs::write(
         migrations.join("0001_init.up.sql"),
-        "CREATE TABLE users (id UUID PRIMARY KEY);\nCREATE TABLE spans (id UUID PRIMARY KEY, length INTERVAL);\n",
+        "CREATE TABLE users (id UUID PRIMARY KEY);\nCREATE TABLE spans (id UUID PRIMARY KEY, length INET);\n",
     )?;
     fs::write(
         dir.path().join("rok-sqlc.toml"),
@@ -1394,7 +1394,7 @@ fn config_file_schema_entry_can_be_a_migration_directory() -> Result<()> {
     // Would fail generation if the down migration were read.
     fs::write(
         migrations.join("0001_users.down.sql"),
-        "CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, duration INTERVAL NOT NULL);\n",
+        "CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, duration INET NOT NULL);\n",
     )?;
     fs::write(
         dir.path().join("rok-sqlc.toml"),
@@ -1597,7 +1597,7 @@ fn migration_directory_generates_from_up_migrations_in_filename_order() -> Resul
     // A down migration that would fail generation if it were read.
     fs::write(
         migrations.join("0001_users.down.sql"),
-        "CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, duration INTERVAL NOT NULL);\n",
+        "CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, duration INET NOT NULL);\n",
     )?;
     let out = output_dir(&dir);
 
@@ -1663,7 +1663,7 @@ fn unsupported_table_in_a_migration_cites_its_file_and_line() -> Result<()> {
          \n\
          CREATE TABLE spans (\n\
          \x20   id BIGSERIAL PRIMARY KEY,\n\
-         \x20   duration INTERVAL NOT NULL\n\
+         \x20   duration INET NOT NULL\n\
          );\n",
     )?;
     let out = output_dir(&dir);
@@ -2125,6 +2125,176 @@ fn serde_derive_from_file_payload_or_flag() -> Result<()> {
     for (path, text) in read_tree(&dir.path().join("plain"))? {
         assert!(!text.contains("serde"), "{} mentions serde", path.display());
     }
+    Ok(())
+}
+
+#[test]
+fn generates_interval_bytea_and_time_with_time_zone_columns() -> Result<()> {
+    let dir = TempDir::new()?;
+    fs::write(
+        dir.path().join("schema.sql"),
+        "CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, length INTERVAL NOT NULL, digest BYTEA UNIQUE);\n\
+         CREATE TABLE shifts (id BIGSERIAL PRIMARY KEY, opens TIMETZ NOT NULL);\n",
+    )?;
+    assert_success(&run_binary_in(
+        dir.path(),
+        &["g", "-s", "schema.sql", "-o", "spans", "-r", "spans"],
+    ));
+    let spans = read_tree(&dir.path().join("spans"))?;
+    let models = &spans[Path::new("spans/models.rs")];
+    assert!(models.contains("pub length: sqlx::postgres::types::PgInterval,"));
+    assert!(models.contains("pub digest: Option<Vec<u8>>,"));
+    let read = &spans[Path::new("spans/read.rs")];
+    assert!(read.contains("(executor: E, digest: &[u8])"), "{read}");
+    let filter = &spans[Path::new("spans/filter.rs")];
+    assert!(filter.contains("pub length: Vec<Equality<sqlx::postgres::types::PgInterval>>,"));
+    assert!(filter.contains("pub digest: Vec<Equality<Vec<u8>>>,"));
+    // Neither type needs a crate or an SQLx feature of its own.
+    let db_mod = &spans[Path::new("mod.rs")];
+    assert!(
+        db_mod.contains("features = [\"runtime-tokio\", \"postgres\", \"derive\"] }\n"),
+        "{db_mod}"
+    );
+
+    assert_success(&run_binary_in(
+        dir.path(),
+        &["g", "-s", "schema.sql", "-o", "both"],
+    ));
+    let both = read_tree(&dir.path().join("both"))?;
+    assert!(
+        both[Path::new("shifts/models.rs")].contains("pub opens: sqlx::postgres::types::PgTimeTz,")
+    );
+    // `PgTimeTz` decodes and encodes through SQLx's `chrono` feature.
+    let db_mod = &both[Path::new("mod.rs")];
+    assert!(db_mod.contains(", \"chrono\"] }"), "{db_mod}");
+    assert!(db_mod.contains("chrono = \"0.4\""), "{db_mod}");
+    Ok(())
+}
+
+/// SQLx's `PgInterval` and `PgTimeTz` implement no serde traits, so with
+/// `derive = ["serde"]` a table or query using them fails the run, naming
+/// the column; `BYTEA` (`Vec<u8>`) serializes.
+#[test]
+fn serde_rejects_interval_and_time_with_time_zone() -> Result<()> {
+    let dir = TempDir::new()?;
+    fs::write(
+        dir.path().join("schema.sql"),
+        "CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, length INTERVAL NOT NULL);\n\
+         CREATE TABLE blobs (id BIGSERIAL PRIMARY KEY, body BYTEA NOT NULL);\n\
+         CREATE TABLE shifts (id BIGSERIAL PRIMARY KEY, opens TIME WITH TIME ZONE);\n",
+    )?;
+    // A query's parameters derive serde only in a `Params` struct, taken
+    // past three parameters.
+    fs::write(
+        dir.path().join("queries.sql"),
+        "-- name: LongBlobs :many\nSELECT id FROM blobs WHERE id IN ($1, $2, $3) AND $4::interval IS NOT NULL;\n",
+    )?;
+    fs::write(
+        dir.path().join("rows.sql"),
+        "-- name: PositionalSpan :many\nSELECT id FROM blobs WHERE $1::interval IS NOT NULL;\n\
+         -- name: BlobSpans :many\nSELECT id, '1 day'::interval AS span FROM blobs;\n",
+    )?;
+
+    let output = run_binary_in(
+        dir.path(),
+        &["g", "-s", "schema.sql", "-o", "gen", "-d", "serde"],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(
+        stderr.contains(
+            "column `length` of `spans` maps to `sqlx::postgres::types::PgInterval`, which implements no serde traits"
+        ),
+        "{stderr}"
+    );
+    assert!(!dir.path().join("gen").exists());
+
+    let output = run_binary_in(
+        dir.path(),
+        &[
+            "g",
+            "-s",
+            "schema.sql",
+            "-o",
+            "gen",
+            "-d",
+            "serde",
+            "-r",
+            "shifts",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(
+        stderr.contains("column `opens` of `shifts` maps to `sqlx::postgres::types::PgTimeTz"),
+        "{stderr}"
+    );
+
+    let output = run_binary_in(
+        dir.path(),
+        &[
+            "g",
+            "-s",
+            "schema.sql",
+            "-o",
+            "gen",
+            "-d",
+            "serde",
+            "-r",
+            "blobs",
+            "-q",
+            "queries.sql",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(
+        stderr.contains(
+            "parameter `param_4` of query `LongBlobs` maps to `sqlx::postgres::types::PgInterval`"
+        ),
+        "{stderr}"
+    );
+    assert!(!dir.path().join("gen").exists());
+
+    let output = run_binary_in(
+        dir.path(),
+        &[
+            "g",
+            "-s",
+            "schema.sql",
+            "-o",
+            "gen",
+            "-d",
+            "serde",
+            "-r",
+            "blobs",
+            "-q",
+            "rows.sql",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(
+        stderr.contains(
+            "column `span` of query `BlobSpans` maps to `Option<sqlx::postgres::types::PgInterval>`"
+        ),
+        "{stderr}"
+    );
+
+    assert_success(&run_binary_in(
+        dir.path(),
+        &[
+            "g",
+            "-s",
+            "schema.sql",
+            "-o",
+            "gen",
+            "-d",
+            "serde",
+            "-r",
+            "blobs",
+        ],
+    ));
     Ok(())
 }
 

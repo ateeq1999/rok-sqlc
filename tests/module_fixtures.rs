@@ -57,17 +57,11 @@ const EXPECTED: &[Expected] = &[
     },
     Expected {
         fixture: "legacy_modules/hr",
-        tables: &[(
-            "employees",
-            // `employment_type` now maps to `types::EmploymentType`; `INTERVAL`
-            // is still unsupported.
-            "column `tenure`: type `INTERVAL` is not supported yet",
-        )],
-        queries: &[(
-            "ListEmployeesByDepartment",
-            "table `employees` is not generatable",
-        )],
-        functions: &["create_department"],
+        // `employment_type` maps to `types::EmploymentType` and `tenure
+        // INTERVAL` to `PgInterval`, so `employees` and its query generate.
+        tables: &[],
+        queries: &[],
+        functions: &["create_department", "list_employees_by_department"],
     },
     Expected {
         fixture: "legacy_modules/inventory",
