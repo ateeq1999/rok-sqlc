@@ -10,4 +10,8 @@
 - [ ] An array-of-enum column round-trips.
 - [ ] `ALTER TYPE … ADD VALUE` makes the new value usable.
 - [ ] A query file comparing an enum column to a placeholder infers the enum as the parameter type.
-- [ ] The corpus `hr` fixture's `employment_type` table now generates (update the corpus expectations).
+- [ ] The corpus `hr` fixture's `employment_type` enum generates and `employees.employment_type` uses it (update the corpus expectations); `employees` stays rejected for `tenure INTERVAL`, see Out of Scope.
+
+## Out of Scope
+
+- `INTERVAL` and other unmapped column types: a table with one stays rejected (README, Limitations).
