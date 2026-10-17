@@ -10,7 +10,9 @@ use sqlparser::ast::{
     TimezoneInfo, TriggerEvent, TriggerObject, TriggerPeriod, UserDefinedTypeRepresentation, Value,
 };
 use sqlparser::dialect::PostgreSqlDialect;
+use sqlparser::keywords::Keyword;
 use sqlparser::parser::Parser;
+use sqlparser::tokenizer::{Token, Tokenizer};
 
 use super::diagnostics::TableFailure;
 use super::naming;
@@ -126,18 +128,31 @@ pub fn parse_sources_with_modules(
     let mut created: HashMap<String, (PathBuf, Option<usize>)> = HashMap::new();
 
     for source in sources {
-        let statements = Parser::parse_sql(&dialect, source.sql).with_context(|| {
-            if source.path.as_os_str().is_empty() {
-                "invalid PostgreSQL SQL syntax".to_owned()
-            } else {
-                format!(
-                    "invalid PostgreSQL SQL syntax in `{}`",
-                    display_path(source.path)
-                )
-            }
-        })?;
-
-        for statement in statements {
+        for statement in parse_statements(&dialect, source)? {
+            let statement = match statement {
+                Ok(statement) => statement,
+                Err(unparsed) => {
+                    // An `ALTER TABLE` on an unknown table is ignored, like
+                    // any other statement on one.
+                    let Some(index) = find_table(&tables, &unparsed.table) else {
+                        continue;
+                    };
+                    let table = tables.remove(index);
+                    failures.push(TableFailure {
+                        path: Some(source.path.to_path_buf()),
+                        line: Some(unparsed.line),
+                        schema: table.schema.clone(),
+                        ..table_failure(
+                            &table.sql_name,
+                            format!(
+                                "the SQL parser cannot read this ALTER TABLE: {}",
+                                unparsed.error
+                            ),
+                        )
+                    });
+                    continue;
+                }
+            };
             let line = usize::try_from(statement.span().start.line).ok();
             let failure = match statement {
                 Statement::Drop {
@@ -358,6 +373,87 @@ pub fn parse_sources_with_modules(
         created,
         unmatched_modules: unmatched_modules.into_iter().cloned().collect(),
     })
+}
+
+/// An `ALTER TABLE` statement the SQL parser cannot read (such as
+/// `ALTER COLUMN … SET STATISTICS`), which fails the table it alters.
+struct UnparsedAlter {
+    /// The table the statement alters.
+    table: ObjectName,
+    /// 1-based line of the statement in its file.
+    line: usize,
+    /// What the SQL parser expected, without its location.
+    error: String,
+}
+
+/// Parses one schema input into its statements. When the whole input does
+/// not parse, it is split into statements at top-level semicolons and each
+/// is parsed on its own: an `ALTER TABLE` that does not parse comes back as
+/// an [`UnparsedAlter`], and any other statement that does not parse fails
+/// the run at its `path:line`. Spans keep their place in the whole input.
+fn parse_statements(
+    dialect: &PostgreSqlDialect,
+    source: &SchemaSource<'_>,
+) -> Result<Vec<std::result::Result<Statement, UnparsedAlter>>> {
+    let invalid = |line: Option<u64>| {
+        let place = match (source.path.as_os_str().is_empty(), line) {
+            (true, None) => String::new(),
+            (true, Some(line)) => format!("line {line}: "),
+            (false, None) => format!("{}: ", display_path(source.path)),
+            (false, Some(line)) => format!("{}:{line}: ", display_path(source.path)),
+        };
+        format!("{place}invalid PostgreSQL SQL syntax")
+    };
+    if let Ok(statements) = Parser::parse_sql(dialect, source.sql) {
+        return Ok(statements.into_iter().map(Ok).collect());
+    }
+    let tokens = Tokenizer::new(dialect, source.sql)
+        .tokenize_with_location()
+        .with_context(|| invalid(None))?;
+    let mut statements = Vec::new();
+    for chunk in tokens.split(|token| token.token == Token::SemiColon) {
+        let Some(first) = chunk
+            .iter()
+            .find(|token| !matches!(token.token, Token::Whitespace(_) | Token::EOF))
+        else {
+            continue;
+        };
+        let line = first.span.start.line;
+        let parsed = Parser::new(dialect)
+            .with_tokens_with_locations(chunk.to_vec())
+            .parse_statements();
+        match parsed {
+            Ok(parsed) => statements.extend(parsed.into_iter().map(Ok)),
+            Err(error) => {
+                let mut parser = Parser::new(dialect).with_tokens_with_locations(chunk.to_vec());
+                let table = parser
+                    .parse_keywords(&[Keyword::ALTER, Keyword::TABLE])
+                    .then(|| {
+                        // Optional words: whether they are there does not matter.
+                        let _ = parser.parse_keywords(&[Keyword::IF, Keyword::EXISTS]);
+                        let _ = parser.parse_keyword(Keyword::ONLY);
+                        parser.parse_object_name(false).ok()
+                    })
+                    .flatten();
+                let Some(table) = table else {
+                    return Err(anyhow::Error::new(error).context(invalid(Some(line))));
+                };
+                let error = error.to_string();
+                let error = error
+                    .split(" at Line: ")
+                    .next()
+                    .unwrap_or_default()
+                    .trim_start_matches("sql parser error: ")
+                    .to_owned();
+                statements.push(Err(UnparsedAlter {
+                    table,
+                    line: usize::try_from(line).unwrap_or_default(),
+                    error,
+                }));
+            }
+        }
+    }
+    Ok(statements)
 }
 
 /// Whether a `[modules]` key names the table with this schema and SQL name:

@@ -953,8 +953,12 @@ problems count.
   and JSON columns get only null checks in filters.
 - `WITH RECURSIVE` and data-modifying CTEs are rejected in query files.
 - `ALTER COLUMN … DROP IDENTITY`, `SET STATISTICS`, `SET STORAGE`,
-  `DROP EXPRESSION`, and other `ALTER COLUMN` forms the SQL parser doesn't
-  know stop the run as a syntax error in their file, even with `--lenient`.
+  `DROP EXPRESSION`, `SET GENERATED`, `TYPE … COLLATE`, and other
+  `ALTER TABLE` forms the SQL parser can't read fail the table they alter,
+  at their `path:line` (`--lenient` skips it). Any other statement the parser
+  can't read stops the run at its `path:line`. Such a file is read statement
+  by statement, split at semicolons, so in it a `BEGIN ATOMIC` function body
+  (which holds semicolons) stops the run too.
 - Typed ids and relationships cover only the tables generated together. A
   foreign key into another migration set keeps its raw type and makes no
   relationship.

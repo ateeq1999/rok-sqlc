@@ -91,6 +91,13 @@ the *generated* API count as breaking (see ADR 0012).
   generates the named table and regenerates every resource already
   generated in the output directory; tables not generated yet stay
   ungenerated.
+- An `ALTER TABLE` the SQL parser can't read (`ALTER COLUMN … DROP
+  IDENTITY`, `SET STATISTICS`, `SET STORAGE`, `DROP EXPRESSION`,
+  `SET GENERATED`, `TYPE … COLLATE`) fails only the table it alters, at its
+  `path:line`, so `--lenient` skips that table and reads on. Any other
+  statement the parser can't read still stops the run, now at its
+  `path:line`. Before, either stopped the run with a syntax error for the
+  whole file.
 
 ### Fixed
 
