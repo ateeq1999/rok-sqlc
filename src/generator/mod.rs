@@ -785,12 +785,26 @@ pub mod users;"
     fn db_mod_declares_the_nullable_helper_with_serde() {
         let tables = vec![table(vec![column("id", "i64")], &["id"])];
         assert!(
-            !render_db_mod(&tables, false, false, QueriesModule::None, false)
-                .contains("pub mod nullable;")
+            !render_db_mod(
+                &tables,
+                false,
+                false,
+                QueriesModule::None,
+                &KeptResources::default(),
+                false
+            )
+            .contains("pub mod nullable;")
         );
         assert!(
-            render_db_mod(&tables, false, false, QueriesModule::None, true)
-                .contains("pub mod nullable;\npub mod schema;\npub mod search;\npub mod users;")
+            render_db_mod(
+                &tables,
+                false,
+                false,
+                QueriesModule::None,
+                &KeptResources::default(),
+                true
+            )
+            .contains("pub mod nullable;\npub mod schema;\npub mod search;\npub mod users;")
         );
     }
 
