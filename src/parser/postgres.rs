@@ -164,7 +164,11 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
                     }
                     continue;
                 }
-                Statement::CreateTable(create) => match build_table(&create, &enums) {
+                Statement::CreateTable(create) => match build_table(
+                    &create,
+                    &enums,
+                    &relation_names(&tables, object_schema_name(&create.name).as_deref()),
+                ) {
                     Ok(table) if GENERATED_MODULES.contains(&table.module_name.as_str()) => {
                         table_failure(
                             &table.sql_name,
@@ -198,7 +202,8 @@ pub fn parse_sources(sources: &[SchemaSource<'_>]) -> Result<ParsedSchema> {
                     let Some(index) = find_table(&tables, &name) else {
                         continue;
                     };
-                    match apply_alter(&mut tables[index], &operations, &enums) {
+                    let taken = relation_names(&tables, tables[index].schema.as_deref());
+                    match apply_alter(&mut tables[index], &operations, &enums, &taken) {
                         Ok(()) => continue,
                         Err(reason) => {
                             let table = tables.remove(index);
@@ -611,12 +616,36 @@ fn normalize_schema(schema: Option<String>) -> Option<String> {
 fn find_table(tables: &[Table], name: &ObjectName) -> Option<usize> {
     let leaf = object_leaf_name(name);
     let schema = object_schema_name(name);
+    tables.iter().position(|table| {
+        table.sql_name == leaf && same_schema(table.schema.as_deref(), schema.as_deref())
+    })
+}
+
+/// Whether two schema names are one schema: no schema is `public`.
+fn same_schema(left: Option<&str>, right: Option<&str>) -> bool {
     fn normalize(schema: Option<&str>) -> Option<&str> {
         schema.filter(|schema| *schema != "public")
     }
-    tables.iter().position(|table| {
-        table.sql_name == leaf && normalize(table.schema.as_deref()) == normalize(schema.as_deref())
-    })
+    normalize(left) == normalize(right)
+}
+
+/// The relation names known tables take in `schema`: each table's name and
+/// its key constraints' (whose indexes are relations). PostgreSQL gives an
+/// unnamed constraint a name no relation in its schema has. Indexes made by
+/// `CREATE INDEX`, sequences, and views are not tracked.
+fn relation_names(tables: &[Table], schema: Option<&str>) -> HashSet<String> {
+    tables
+        .iter()
+        .filter(|table| same_schema(table.schema.as_deref(), schema))
+        .flat_map(|table| {
+            std::iter::once(table.sql_name.clone()).chain(
+                table
+                    .key_constraints
+                    .iter()
+                    .map(|constraint| constraint.name.clone()),
+            )
+        })
+        .collect()
 }
 
 /// Applies a `DROP TABLE` to one name. A known table is removed (`removed`
@@ -669,6 +698,7 @@ fn apply_alter(
     table: &mut Table,
     operations: &[AlterTableOperation],
     enums: &EnumRegistry,
+    taken: &HashSet<String>,
 ) -> std::result::Result<(), String> {
     for operation in operations {
         match operation {
@@ -676,7 +706,7 @@ fn apply_alter(
                 if_not_exists,
                 column_def,
                 ..
-            } => add_column(table, column_def, *if_not_exists, enums)?,
+            } => add_column(table, column_def, *if_not_exists, enums, taken)?,
             AlterTableOperation::DropColumn {
                 column_names,
                 if_exists,
@@ -695,7 +725,7 @@ fn apply_alter(
                 &ident_name(new_column_name),
             )?,
             AlterTableOperation::AddConstraint { constraint, .. } => {
-                add_constraint(table, constraint)?;
+                add_constraint(table, constraint, taken)?;
             }
             AlterTableOperation::EnableRowLevelSecurity
             | AlterTableOperation::DisableRowLevelSecurity => {}
@@ -704,7 +734,7 @@ fn apply_alter(
             }
         }
     }
-    check_search_names(&table.columns)
+    Ok(())
 }
 
 fn column_index(table: &Table, name: &str) -> Option<usize> {
@@ -723,6 +753,7 @@ fn add_column(
     column_def: &ColumnDef,
     if_not_exists: bool,
     enums: &EnumRegistry,
+    taken: &HashSet<String>,
 ) -> std::result::Result<(), String> {
     let name = ident_name(&column_def.name);
     if column_index(table, &name).is_some() {
@@ -747,11 +778,11 @@ fn add_column(
             ));
         }
         table.primary_key = vec![name.clone()];
-        add_key_constraint(table, constraint.clone(), vec![name.clone()], true);
+        add_key_constraint(table, constraint.clone(), vec![name.clone()], true, taken);
     }
     if let Some(constraint) = &built.unique {
         table.unique_keys.push(UniqueKey::new(vec![name.clone()]));
-        add_key_constraint(table, constraint.clone(), vec![name.clone()], false);
+        add_key_constraint(table, constraint.clone(), vec![name.clone()], false, taken);
     }
     table.foreign_keys.extend(built.foreign_key);
     table
@@ -838,6 +869,7 @@ fn rename_column(table: &mut Table, old: &str, new: &str) -> std::result::Result
 fn add_constraint(
     table: &mut Table,
     constraint: &TableConstraint,
+    taken: &HashSet<String>,
 ) -> std::result::Result<(), String> {
     let clause = |reason: String| format!("ADD CONSTRAINT: {reason}");
     let known_columns = |table: &Table, keys: &[String]| match keys
@@ -861,13 +893,25 @@ fn add_constraint(
                     column.rust_type = rust_type(&column.sqlx_type, false);
                 }
             }
-            add_key_constraint(table, name.as_ref().map(ident_name), keys.clone(), true);
+            add_key_constraint(
+                table,
+                name.as_ref().map(ident_name),
+                keys.clone(),
+                true,
+                taken,
+            );
             table.primary_key = keys;
         }
         TableConstraint::Unique { name, columns, .. } => {
             let keys = key_columns(columns, "UNIQUE").map_err(clause)?;
             known_columns(table, &keys)?;
-            add_key_constraint(table, name.as_ref().map(ident_name), keys.clone(), false);
+            add_key_constraint(
+                table,
+                name.as_ref().map(ident_name),
+                keys.clone(),
+                false,
+                taken,
+            );
             table.unique_keys.push(UniqueKey::new(keys));
         }
         TableConstraint::ForeignKey { columns, .. } => {
@@ -962,6 +1006,7 @@ fn record_unique_index(tables: &mut [Table], index: &CreateIndex) {
 fn build_table(
     create: &CreateTable,
     enums: &EnumRegistry,
+    taken: &HashSet<String>,
 ) -> std::result::Result<Table, TableFailure> {
     let sql_name = object_leaf_name(&create.name);
     let fail = |reason: String| table_failure(&sql_name, reason);
@@ -1058,7 +1103,6 @@ fn build_table(
         }
     }
 
-    check_search_names(&columns).map_err(fail)?;
     let module_name = naming::rust_identifier(&sql_name).map_err(fail)?;
     let struct_name = naming::struct_name(&module_name);
 
@@ -1097,26 +1141,30 @@ fn build_table(
         }
     }
     for (name, columns, primary) in merged {
-        add_key_constraint(&mut table, name, columns, primary);
+        add_key_constraint(&mut table, name, columns, primary, taken);
     }
     Ok(table)
 }
 
 /// Records a primary key or unique constraint under its declared name, or
 /// under the name PostgreSQL gives an unnamed one (see
-/// [`default_constraint_name`]).
+/// [`default_constraint_name`]). `elsewhere` holds the relation names other
+/// tables of the schema take (see [`relation_names`]).
 fn add_key_constraint(
     table: &mut Table,
     name: Option<String>,
     columns: Vec<String>,
     primary: bool,
+    elsewhere: &HashSet<String>,
 ) {
     let name = name.unwrap_or_else(|| {
         let taken = |candidate: &str| {
-            table
-                .key_constraints
-                .iter()
-                .any(|constraint| constraint.name == candidate)
+            candidate == table.sql_name
+                || elsewhere.contains(candidate)
+                || table
+                    .key_constraints
+                    .iter()
+                    .any(|constraint| constraint.name == candidate)
         };
         default_constraint_name(&table.sql_name, &columns, primary, taken)
     });
@@ -1130,8 +1178,8 @@ const MAX_IDENTIFIER_BYTES: usize = 63;
 /// unique constraint (`<table>_<col>_<col>_key`), as its `ChooseRelationName`
 /// does: the table and column parts are shortened, the longer one first,
 /// until the name fits in 63 bytes, and a name already taken gets a number
-/// after the label (`_key1`). Only this table's constraints count as taken
-/// here; PostgreSQL also avoids every other relation name in the schema.
+/// after the label (`_key1`). PostgreSQL avoids every relation name in the
+/// schema; `taken` says which are.
 fn default_constraint_name(
     table: &str,
     columns: &[String],
@@ -1356,40 +1404,6 @@ fn constraint_foreign_key(constraint: &TableConstraint) -> Option<ForeignKey> {
         }),
         _ => None,
     }
-}
-
-/// Rejects tables whose generated search names would collide: a nullable
-/// column's `x_is_null` filter field against another field, or two columns
-/// mapping to the same `XSortKey` variant.
-fn check_search_names(columns: &[Column]) -> std::result::Result<(), String> {
-    let mut fields: HashMap<String, &str> = columns
-        .iter()
-        .map(|column| (column.rust_name.clone(), column.sql_name.as_str()))
-        .collect();
-    for column in columns.iter().filter(|column| column.nullable) {
-        let field = column.null_check_field();
-        if let Some(other) = fields.insert(field.clone(), &column.sql_name) {
-            return Err(format!(
-                "column `{}` needs the null-check filter field `{field}`, which column `{other}` already uses",
-                column.sql_name
-            ));
-        }
-    }
-
-    let mut variants: HashMap<String, &str> = HashMap::new();
-    for column in columns
-        .iter()
-        .filter(|column| column.filter_kind().is_some())
-    {
-        let variant = column.sort_variant();
-        if let Some(other) = variants.insert(variant.clone(), &column.sql_name) {
-            return Err(format!(
-                "columns `{other}` and `{}` both map to the sort key variant `{variant}`",
-                column.sql_name
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn table_failure(table: &str, reason: String) -> TableFailure {
@@ -1904,30 +1918,6 @@ mod tests {
         assert_eq!(parsed.schema.tables.len(), 1);
         assert_eq!(parsed.failures.len(), 1);
         assert_eq!(parsed.failures[0].table, "bad");
-    }
-
-    #[test]
-    fn rejects_columns_whose_generated_search_names_collide() {
-        let null_check =
-            parse("CREATE TABLE t (id BIGSERIAL PRIMARY KEY, weight INT, weight_is_null BOOLEAN);");
-        assert!(null_check.schema.tables.is_empty());
-        assert!(
-            null_check.failures[0]
-                .reason
-                .contains("null-check filter field `weight_is_null`"),
-            "{:?}",
-            null_check.failures
-        );
-
-        let sort_key = parse("CREATE TABLE t (id BIGSERIAL PRIMARY KEY, item_1 INT, item1 INT);");
-        assert!(sort_key.schema.tables.is_empty());
-        assert!(
-            sort_key.failures[0]
-                .reason
-                .contains("sort key variant `Item1`"),
-            "{:?}",
-            sort_key.failures
-        );
     }
 
     #[test]

@@ -37,7 +37,7 @@ enum Command {
         #[arg(short, long, value_name = "DIR")]
         output: Option<PathBuf>,
 
-        /// Generate only one table
+        /// Generate this table and regenerate those already generated; skip the rest
         #[arg(short, long, value_name = "TABLE")]
         resource: Option<String>,
 

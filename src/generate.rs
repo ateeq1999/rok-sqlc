@@ -35,7 +35,13 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
             .collect::<Vec<_>>(),
     )
     .context("failed to parse SQL schema")?;
-    parsed.fail_tables(|table| generator::conventions::unsourced(table, &config.conventions));
+    parsed.fail_tables(|table| {
+        // Search names depend on the conventions: the tenant column has none.
+        let mut applied = [table.clone()];
+        generator::conventions::apply(&mut applied, &config.conventions);
+        generator::conventions::unsourced(table, &config.conventions)
+            .or_else(|| generator::search::name_clash(&applied[0]))
+    });
     let sql = schema_snapshot(&sources);
 
     let matches_resource =

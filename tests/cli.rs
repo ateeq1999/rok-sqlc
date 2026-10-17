@@ -1319,6 +1319,54 @@ fn explicit_config_file_is_used_instead_of_discovery() -> Result<()> {
     Ok(())
 }
 
+/// The tenant column gets no null check and no sort key variant, so its
+/// names cannot collide with another column's: a table whose search names
+/// collide only through the tenant column generates once it is the tenant.
+#[test]
+fn search_names_the_tenant_column_does_not_get_cannot_collide() -> Result<()> {
+    let dir = TempDir::new()?;
+    fs::write(
+        dir.path().join("schema.sql"),
+        "CREATE TABLE notes (id BIGSERIAL PRIMARY KEY, org_1 UUID, org_1_is_null BOOLEAN NOT NULL);\n\
+         CREATE TABLE tags (id BIGSERIAL PRIMARY KEY, org_1 UUID NOT NULL, org1 INT NOT NULL);\n",
+    )?;
+
+    let without = run_binary_in(dir.path(), &["g", "-s", "schema.sql", "-o", "plain"]);
+    assert!(!without.status.success());
+    let stderr = String::from_utf8_lossy(&without.stderr);
+    assert!(
+        stderr.contains(
+            "column `org_1` needs the null-check filter field `org_1_is_null`, which column `org_1_is_null` already uses"
+        ),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("columns `org_1` and `org1` both map to the sort key variant `Org1`"),
+        "{stderr}"
+    );
+
+    fs::write(
+        dir.path().join("rok-sqlc.toml"),
+        "schema = \"schema.sql\"\noutput = \"gen\"\n\n[conventions]\ntenant_column = \"org_1\"\n",
+    )?;
+    let with = run_binary_in(dir.path(), &["g"]);
+    assert!(
+        with.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&with.stderr)
+    );
+    let notes = fs::read_to_string(dir.path().join("gen/notes/filter.rs"))?;
+    assert!(
+        notes.contains("pub org_1_is_null: Vec<Equality<bool>>,"),
+        "{notes}"
+    );
+    assert!(!notes.contains("pub org_1: "), "{notes}");
+    let tags = fs::read_to_string(dir.path().join("gen/tags/filter.rs"))?;
+    assert!(tags.contains("    Org1,\n"), "{tags}");
+    assert!(tags.contains("Self::Org1 => \"org1\","), "{tags}");
+    Ok(())
+}
+
 #[test]
 fn flags_override_the_config_file() -> Result<()> {
     let dir = TempDir::new()?;
@@ -2039,6 +2087,78 @@ fn on_conflict_on_constraint_must_name_a_key_constraint() -> Result<()> {
     assert!(
         stderr.contains(&format!(
             "{path}:17: query `ByBarcode`: ON CONFLICT ON CONSTRAINT products_barcode_idx names no primary key or unique constraint of `app.products`; its constraints are products_pkey, products_sku_key, uq_code, products_name_code_key"
+        )),
+        "{stderr}"
+    );
+    assert!(stderr.contains("1 unsupported query"), "{stderr}");
+    Ok(())
+}
+
+/// Like PostgreSQL, a default constraint name already taken by another
+/// table's constraint in the same schema gets a number (`_pkey1`); one in
+/// another schema does not. The expected names are the ones PostgreSQL 17
+/// gives this schema.
+#[test]
+fn on_conflict_on_constraint_resolves_default_names_across_the_schema() -> Result<()> {
+    let dir = TempDir::new()?;
+    let schema = dir.path().join("schema.sql");
+    let queries = dir.path().join("queries.sql");
+    let table = "inventory_adjustment_requests_awaiting_regional_review_by";
+    fs::write(
+        &schema,
+        format!(
+            "CREATE TABLE cx.{table}_east (id INT PRIMARY KEY, code TEXT UNIQUE);\n\
+             CREATE TABLE cx.{table}_west (id INT PRIMARY KEY, code TEXT UNIQUE);\n\
+             CREATE TABLE cy.{table}_north (id INT PRIMARY KEY);\n"
+        ),
+    )?;
+    let upsert = |name: &str, target: &str, constraint: &str| {
+        format!(
+            "-- name: {name} :exec\n\
+             INSERT INTO {target} (id) VALUES ($1)\n\
+             ON CONFLICT ON CONSTRAINT {constraint} DO NOTHING;\n\n"
+        )
+    };
+    let east = format!("cx.{table}_east");
+    let west = format!("cx.{table}_west");
+    let north = format!("cy.{table}_north");
+    fs::write(
+        &queries,
+        [
+            upsert("EastKey", &east, &format!("{table}__pkey")),
+            upsert(
+                "EastCode",
+                &east,
+                "inventory_adjustment_requests_awaiting_regional_review_code_key",
+            ),
+            upsert("WestKey", &west, &format!("{table}_pkey1")),
+            upsert(
+                "WestCode",
+                &west,
+                "inventory_adjustment_requests_awaiting_regional_revie_code_key1",
+            ),
+            upsert("NorthKey", &north, &format!("{table}__pkey")),
+            upsert("WestByEastKey", &west, &format!("{table}__pkey")),
+        ]
+        .concat(),
+    )?;
+    let out = output_dir(&dir);
+
+    let output = run_binary(&[
+        "g",
+        "-s",
+        schema.to_str().unwrap(),
+        "-q",
+        queries.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+    ]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let path = shown(&queries);
+    assert!(
+        stderr.contains(&format!(
+            "{path}:21: query `WestByEastKey`: ON CONFLICT ON CONSTRAINT {table}__pkey names no primary key or unique constraint of `{west}`; its constraints are {table}_pkey1, inventory_adjustment_requests_awaiting_regional_revie_code_key1"
         )),
         "{stderr}"
     );

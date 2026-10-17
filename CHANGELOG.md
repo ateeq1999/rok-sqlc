@@ -51,6 +51,28 @@ the *generated* API count as breaking (see ADR 0012).
   table could never be inserted into. `CREATE TRIGGER` and `DROP TRIGGER`
   are now read to find those triggers (per table; function bodies are not
   inspected). Nullable managed columns are unaffected.
+- `--resource` (and the `resource` key) is described as what it does: it
+  generates the named table and regenerates every resource already
+  generated in the output directory; tables not generated yet stay
+  ungenerated.
+
+### Fixed
+
+- A joined read (`get_with_<relationship>`) of a table whose column names
+  come within two bytes of PostgreSQL's 63-byte identifier limit works:
+  such a column is selected under a shortened alias that names its
+  position (`t3_<name>`), where the `t_`/`r_` prefix used to make
+  PostgreSQL cut two aliases to the same name. The `is_empty` of a patch and
+  the `column` of a sort key are also laid out as rustfmt lays them out for
+  such long names.
+- `ON CONFLICT ON CONSTRAINT` accepts the names PostgreSQL gives unnamed
+  primary key and unique constraints when a default name is already taken
+  by another table's constraint (or a table) in the same schema
+  (`<table>_pkey1`); before, only the table's own constraints counted.
+- A table whose search names would collide only through the tenant column
+  generates: the tenant column has no `*_is_null` filter field and no sort
+  key variant, so it collides with nothing. The check now runs after the
+  conventions are applied.
 
 ## [0.1.0] - 2026-10-17
 

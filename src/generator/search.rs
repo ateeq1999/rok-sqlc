@@ -14,6 +14,8 @@
 //! applies inside it, and a related tenant table is correlated on the tenant
 //! column with the enclosing row, which is itself scoped to the tenant.
 
+use std::collections::HashMap;
+
 use crate::schema::{Column, FilterKind, Relationship, Table, Through, mentions_generated_type};
 
 use super::sql::{ident, live_condition, str_literal, table_ref};
@@ -187,6 +189,38 @@ fn filter_columns(table: &Table) -> impl Iterator<Item = &Column> {
         .columns
         .iter()
         .filter(|column| !table.is_tenant_column(column))
+}
+
+/// Why `table` cannot be searched, if its generated names would collide: a
+/// nullable column's `x_is_null` filter field against another field, or two
+/// columns mapping to the same `XSortKey` variant. `table` has its
+/// conventions applied: the tenant column gets neither name, so it takes
+/// part in no collision.
+pub fn name_clash(table: &Table) -> Option<String> {
+    let mut fields: HashMap<String, &str> = filter_columns(table)
+        .map(|column| (column.rust_name.clone(), column.sql_name.as_str()))
+        .collect();
+    for column in filter_columns(table).filter(|column| column.nullable) {
+        let field = column.null_check_field();
+        if let Some(other) = fields.insert(field.clone(), &column.sql_name) {
+            return Some(format!(
+                "column `{}` needs the null-check filter field `{field}`, which column `{other}` already uses",
+                column.sql_name
+            ));
+        }
+    }
+
+    let mut variants: HashMap<String, &str> = HashMap::new();
+    for column in sortable(table) {
+        let variant = column.sort_variant();
+        if let Some(other) = variants.insert(variant.clone(), &column.sql_name) {
+            return Some(format!(
+                "columns `{other}` and `{}` both map to the sort key variant `{variant}`",
+                column.sql_name
+            ));
+        }
+    }
+    None
 }
 
 /// Columns `search` may order by: every filterable column but the tenant
@@ -419,11 +453,15 @@ pub fn render_filter(table: &Table, tables: &[Table], serde: bool) -> Option<Str
     let arms: Vec<String> = sortable
         .iter()
         .map(|column| {
-            format!(
-                "Self::{} => {},",
-                column.sort_variant(),
-                str_literal(&ident(&column.sql_name))
-            )
+            let variant = column.sort_variant();
+            let literal = str_literal(&ident(&column.sql_name));
+            let arm = format!("Self::{variant} => {literal},");
+            // An arm too long for its line goes in a block, as rustfmt puts it.
+            if 12 + arm.len() <= super::MAX_WIDTH {
+                arm
+            } else {
+                format!("Self::{variant} => {{\n                {literal}\n            }}")
+            }
         })
         .collect();
     push_block(&mut output, "match self", &arms, 8);

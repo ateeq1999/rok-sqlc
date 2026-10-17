@@ -330,3 +330,19 @@ CREATE TABLE group_members (
     user_id BIGINT NOT NULL REFERENCES users (id),
     PRIMARY KEY (group_id, user_id)
 );
+
+-- Column names near PostgreSQL's 63-byte limit (ticket 0.2-09): with a
+-- `t_` or `r_` prefix, these 62-character names would be cut to the same
+-- 63 bytes, so the joined read selects them under shortened unique aliases.
+CREATE TABLE calibration_stations (
+    id BIGSERIAL PRIMARY KEY,
+    reading_taken_by_the_long_running_calibration_station_number_a TEXT NOT NULL,
+    reading_taken_by_the_long_running_calibration_station_number_b TEXT NOT NULL
+);
+
+CREATE TABLE calibration_readings (
+    id BIGSERIAL PRIMARY KEY,
+    calibration_station_id BIGINT NOT NULL REFERENCES calibration_stations (id),
+    reading_taken_by_the_long_running_calibration_station_number_a TEXT NOT NULL,
+    reading_taken_by_the_long_running_calibration_station_number_b TEXT NOT NULL
+);

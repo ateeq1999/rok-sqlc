@@ -696,7 +696,7 @@ every key:
 schema   = ["migrations/"]   # a path or a list: SQL files or migration directories
 queries  = ["queries/"]      # a path or a list: query files or directories
 output   = "src/db"          # the default
-resource = "products"        # generate one table; rarely useful in a file
+resource = "products"        # add this table to the generated ones; rarely useful in a file
 derive   = ["serde"]         # extra derives for generated types; "serde" is the only one
 
 [conventions]                # all off unless set; see "Conventions"
@@ -744,7 +744,7 @@ command prints the help (`rok-sqlc help generate`).
 | `-s`, `--schema <PATH>` | A schema file, or a directory of migrations read in filename order (`*.down.sql` skipped). Repeat it to combine inputs. |
 | `-q`, `--queries <PATH>` | A query file (`db/queries.rs`) or a directory (`db/queries/<stem>.rs`). Repeatable. |
 | `-o`, `--output <DIR>` | The output directory. Default: `src/db`. |
-| `-r`, `--resource <TABLE>` | Generate only this table (SQL or module name). Tables already generated in the output directory are regenerated too, so `db/mod.rs` stays complete. |
+| `-r`, `--resource <TABLE>` | Generate this table (SQL or module name) and regenerate every resource already generated in the output directory, so they and `db/mod.rs` stay current. Tables not generated yet stay ungenerated. |
 | `-c`, `--config <FILE>` | Read this config file instead of discovering `rok-sqlc.toml`. |
 | `-j`, `--json <PAYLOAD>` | The JSON payload: inline, `@FILE`, or `-` for stdin. |
 | `-d`, `--derive <NAME>` | Add a derive to generated types (`serde`). Repeatable. |

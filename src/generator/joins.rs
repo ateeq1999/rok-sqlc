@@ -219,7 +219,7 @@ impl<'a> Join<'a> {
         if self.optional() {
             output.push_str(&format!(
                 "        let related = !row.try_get_raw({})?.is_null();\n",
-                str_literal(&alias(RELATED_ALIAS, self.target_column))
+                str_literal(&alias(RELATED_ALIAS, self.target, self.target_column))
             ));
         }
         output.push_str("        Ok(Self {\n");
@@ -262,13 +262,18 @@ impl<'a> Join<'a> {
         let selected: Vec<String> = table
             .columns
             .iter()
-            .map(|column| (ROW_ALIAS, column))
-            .chain(target.columns.iter().map(|column| (RELATED_ALIAS, column)))
-            .map(|(side, column)| {
+            .map(|column| (ROW_ALIAS, table, column))
+            .chain(
+                target
+                    .columns
+                    .iter()
+                    .map(|column| (RELATED_ALIAS, target, column)),
+            )
+            .map(|(side, owner, column)| {
                 format!(
                     "{side}.{} AS {}",
                     ident(&column.sql_name),
-                    ident(&alias(side, column))
+                    ident(&alias(side, owner, column))
                 )
             })
             .collect();
@@ -362,11 +367,32 @@ impl<'a> Join<'a> {
     }
 }
 
-/// The alias a column is selected under: its side's alias, `_`, and its
-/// name (`t_id`). Within a side, column names are unique, and the two
-/// sides' prefixes differ.
-fn alias(side: &str, column: &Column) -> String {
-    format!("{side}_{}", column.sql_name)
+/// PostgreSQL's longest identifier, in bytes (`NAMEDATALEN - 1`). It cuts a
+/// longer alias to this length, which can make two aliases one.
+const MAX_ALIAS_BYTES: usize = 63;
+
+/// The alias `table`'s column is selected under: its side's alias, `_`, and
+/// its name (`t_id`). Within a side, column names are unique, and the two
+/// sides' prefixes differ. An alias too long for PostgreSQL also names the
+/// column's position (`t3_<name>`, cut to 63 bytes): no `<side>_` alias
+/// starts that way, and positions differ within a side.
+fn alias(side: &str, table: &Table, column: &Column) -> String {
+    let alias = format!("{side}_{}", column.sql_name);
+    if alias.len() <= MAX_ALIAS_BYTES {
+        return alias;
+    }
+    let position = table
+        .columns
+        .iter()
+        .position(|other| other.sql_name == column.sql_name)
+        .unwrap_or_default();
+    let mut alias = format!("{side}{position}_{}", column.sql_name);
+    let mut len = MAX_ALIAS_BYTES;
+    while !alias.is_char_boundary(len) {
+        len -= 1;
+    }
+    alias.truncate(len);
+    alias
 }
 
 /// `field: row.try_get("<alias>")?,` for every column of `table`, with the
@@ -375,7 +401,7 @@ fn push_fields(output: &mut String, indent: usize, table: &Table, side: &str) {
     let pad = " ".repeat(indent);
     for column in &table.columns {
         let name = &column.rust_name;
-        let literal = str_literal(&alias(side, column));
+        let literal = str_literal(&alias(side, table, column));
         let call = format!("try_get({literal})?,");
         let one_line = format!("{pad}{name}: row.{call}");
         let below = format!("{pad}    .{call}");

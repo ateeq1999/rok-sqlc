@@ -221,7 +221,24 @@ fn render_update_patch(output: &mut String, table: &Table, columns: &[&Column], 
         .iter()
         .map(|column| format!("self.{}.is_none()", column.rust_name))
         .collect();
-    push_and_chain(output, 8, "", &terms, "");
+    // rustfmt splits a call chain longer than its `chain_width` of 60 one
+    // call per line: a field name near PostgreSQL's 63-byte limit is that
+    // long on its own.
+    if terms.iter().any(|term| term.len() > 60) {
+        for (index, (term, column)) in terms.iter().zip(columns).enumerate() {
+            let name = &column.rust_name;
+            output.push_str(&match (index, term.len() > 60) {
+                (0, false) => format!("        {term}\n"),
+                (0, true) => format!("        self.{name}\n            .is_none()\n"),
+                (_, false) => format!("            && {term}\n"),
+                (_, true) => format!(
+                    "            && self\n                .{name}\n                .is_none()\n"
+                ),
+            });
+        }
+    } else {
+        push_and_chain(output, 8, "", &terms, "");
+    }
     output.push_str("    }\n}\n");
 }
 

@@ -93,6 +93,7 @@ async fn generated_crud_against_postgres() {
     joined_read_fetches_a_row_with_its_parent_in_one_query(&pool).await;
     joined_read_of_a_nullable_foreign_key_without_a_parent(&pool).await;
     joined_read_respects_soft_delete_and_tenant_on_both_sides(&pool).await;
+    joined_read_of_columns_near_the_identifier_limit(&pool).await;
     renamed_relationships_filter_under_their_new_names(&pool).await;
     many_to_many_attach_detach_and_sync(&pool).await;
     soft_delete_join_rows_are_restored_not_duplicated(&pool).await;
@@ -3764,4 +3765,40 @@ async fn many_to_many_filters_go_through_the_join_table(pool: &PgPool) {
     .await
     .unwrap();
     assert_eq!(groups, Vec::new());
+}
+
+/// Columns named with 62 characters, two of them sharing the first 60, on
+/// both sides: every value reads back from its own column, though a
+/// `t_`/`r_` prefix would cut their aliases to the same 63 bytes.
+async fn joined_read_of_columns_near_the_identifier_limit(pool: &PgPool) {
+    use db::calibration_readings::models::NewCalibrationReading;
+    use db::calibration_readings::relationships::get_with_calibration_station;
+    use db::calibration_stations::models::NewCalibrationStation;
+
+    let station = db::calibration_stations::write::create(
+        pool,
+        NewCalibrationStation {
+            reading_taken_by_the_long_running_calibration_station_number_a: "station a".to_owned(),
+            reading_taken_by_the_long_running_calibration_station_number_b: "station b".to_owned(),
+        },
+    )
+    .await
+    .unwrap();
+    let reading = db::calibration_readings::write::create(
+        pool,
+        NewCalibrationReading {
+            calibration_station_id: station.id,
+            reading_taken_by_the_long_running_calibration_station_number_a: "reading a".to_owned(),
+            reading_taken_by_the_long_running_calibration_station_number_b: "reading b".to_owned(),
+        },
+    )
+    .await
+    .unwrap();
+
+    let joined = get_with_calibration_station(pool, reading.id)
+        .await
+        .unwrap()
+        .expect("the reading exists");
+    assert_eq!(joined.calibration_reading, reading);
+    assert_eq!(joined.calibration_station, station);
 }

@@ -33,7 +33,9 @@ pub struct Config {
     pub queries: Vec<PathBuf>,
     /// The directory generated modules are written to. Defaults to `src/db`.
     pub output: PathBuf,
-    /// Generate only the table with this SQL or module name.
+    /// Generate the table with this SQL or module name and regenerate the
+    /// resources already generated in the output directory; tables not
+    /// generated yet stay ungenerated.
     pub resource: Option<String>,
     /// Plan the run and report it without touching the filesystem.
     pub dry_run: bool,
