@@ -2,7 +2,8 @@ use crate::schema::{Column, Table};
 
 use super::search::SearchApi;
 use super::sql::{
-    column_clause, ident, key_order, live_key_predicate, scope_condition, str_literal, table_ref,
+    column_clause, first_placeholder, ident, key_order, live_key_predicate, scope_condition,
+    str_literal, table_ref,
 };
 use super::{
     HEADER, StaticQuery, keys, param_name, param_type, push_build_and_fetch, push_doc,
@@ -452,7 +453,7 @@ fn render_list_page(output: &mut String, table: &Table) {
     sql.push(format!("FROM {}", table_ref(table)));
     sql.extend(scope_condition(table).map(|scope| format!("WHERE {scope}")));
     sql.push(format!("ORDER BY {}", key_order(&keys)));
-    let first = 1 + usize::from(table.tenant().is_some());
+    let first = first_placeholder(table);
     sql.push(format!("LIMIT ${first}"));
     sql.push(format!("OFFSET ${}", first + 1));
 

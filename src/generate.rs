@@ -154,14 +154,11 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
     };
 
     let files = generator::plan_files_with_queries(
+        config,
         &sql,
         &selected,
         &parsed.schema.enums,
         queries_module,
-        &config.conventions,
-        &config.derive,
-        &config.relationships,
-        output_dir,
     )
     .map_err(anyhow::Error::msg)?;
 

@@ -11,7 +11,8 @@ use crate::schema::{Column, Table};
 
 use super::relationships::{JoinPair, join_pair};
 use super::sql::{
-    column_clause, ident, live_condition, scoped_key_predicate, str_literal, table_ref,
+    column_clause, first_placeholder, ident, live_condition, scoped_key_predicate, str_literal,
+    table_ref, tenant_condition,
 };
 use super::{
     HEADER, StaticQuery, doc_name, keys, param_name, param_type, push_and_chain,
@@ -527,7 +528,7 @@ fn push_key_condition(output: &mut String, table: &Table) {
         );
         output.push_str(&format!("    query.push_bind({bind});\n"));
     }
-    if let Some(live) = live_condition(table) {
+    if let Some(live) = live_condition(table, None) {
         push_query_push(output, &format!(" AND {live}"));
     }
 }
@@ -789,7 +790,7 @@ impl<'a> JoinSql<'a> {
 
     /// The placeholder of the `near` value; the `far` value (or set) follows.
     fn first(&self) -> usize {
-        1 + usize::from(self.tenant.is_some())
+        first_placeholder(self.table)
     }
 
     /// `[t = $1 AND ]near = $n` over `alias.` columns (none when empty).
@@ -799,8 +800,7 @@ impl<'a> JoinSql<'a> {
         } else {
             format!("{alias}.")
         };
-        self.tenant
-            .map(|tenant| format!("{prefix}{} = $1", ident(&tenant.sql_name)))
+        tenant_condition(self.table, (!alias.is_empty()).then_some(alias))
             .into_iter()
             .chain([format!(
                 "{prefix}{} = ${}",

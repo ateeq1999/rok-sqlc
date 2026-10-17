@@ -17,7 +17,7 @@
 use crate::schema::{Column, FilterKind, Relationship, Table, Through, mentions_generated_type};
 
 use super::sql::{ident, live_condition, str_literal, table_ref};
-use super::{HEADER, doc_name, push_doc};
+use super::{HEADER, doc_name, push_doc, relationships};
 
 /// A relationship `{Struct}Filter` can follow, resolved against its target.
 pub struct FilterRelationship<'a> {
@@ -42,17 +42,9 @@ pub fn filter_relationships<'a>(
         .relationships
         .iter()
         .filter_map(|relationship| {
-            let target = tables
-                .iter()
-                .find(|other| other.module_name == relationship.target)?;
-            let join = match &relationship.through {
-                Some(through) => Some(
-                    tables
-                        .iter()
-                        .find(|other| other.module_name == through.table)?,
-                ),
-                None => None,
-            };
+            let resolved = relationships::resolve(table, relationship, tables);
+            let target = resolved.target;
+            let join = resolved.join.map(|join| join.table);
             let nestable = SearchApi::for_table(target).any() && !target.relationships.is_empty();
             // A many-to-many also needs the tenant to scope its join rows.
             let scoped = std::iter::once(target)
@@ -75,7 +67,7 @@ pub fn check_filter_fields(table: &Table, tables: &[Table]) -> Result<(), String
         return Ok(());
     }
     let mut fields: Vec<(String, String)> = Vec::new();
-    if live_condition(table).is_some() {
+    if live_condition(table, None).is_some() {
         let name = super::conventions::INCLUDE_DELETED;
         fields.push((name.to_owned(), format!("`{name}` switch")));
     }
@@ -274,7 +266,7 @@ pub fn render_filter(table: &Table, tables: &[Table]) -> Option<String> {
         "an empty filter matches every row. A nullable column's `*_is_null` field",
         "selects rows where it is (`Some(true)`) or is not (`Some(false)`) `NULL`.",
     ];
-    let live = live_condition(table);
+    let live = live_condition(table, None);
     if live.is_some() {
         doc.extend([
             "Soft-deleted rows match only when `include_deleted` is set; an empty filter",
@@ -544,7 +536,7 @@ fn push_conditions_fn(
                 ],
             );
         }
-        if let Some(live) = live_condition(target) {
+        if let Some(live) = live_condition(target, None) {
             output.push_str(&format!(
                 "            query.push({});\n",
                 str_literal(&format!(" AND {live}"))
@@ -613,7 +605,7 @@ fn push_join_exists(
             ],
         );
     }
-    let close = match live_condition(join) {
+    let close = match live_condition(join, None) {
         Some(live) => format!(" AND {live})"),
         None => ")".to_owned(),
     };

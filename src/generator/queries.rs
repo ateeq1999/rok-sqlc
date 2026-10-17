@@ -6,7 +6,7 @@
 //! parameter.
 
 use crate::queries::{AnalyzedQuery, Param, ResultShape, ReturnMode};
-use crate::schema::{Table, mentions_generated_type};
+use crate::schema::{BaseType, Shape, Table, mentions_generated_type};
 
 use super::{
     HEADER, QueryModule, StaticQuery, doc_name, push_doc, push_fn_head, push_serde_derive, sql,
@@ -254,24 +254,12 @@ fn signature_param(param: &Param, ids: &TypedIds<'_>) -> String {
 /// borrowed (`&str`, `&CurrencyId`, `&[T]`, also inside `Option`), since
 /// binding them needs no ownership.
 fn borrowed(rust_type: &str, ids: &TypedIds<'_>) -> String {
-    if let Some(inner) = rust_type
-        .strip_prefix("Option<")
-        .and_then(|rest| rest.strip_suffix('>'))
-    {
-        return format!("Option<{}>", borrowed(inner, ids));
-    }
-    if rust_type == "String" {
-        return "&str".to_owned();
-    }
-    if ids.is_borrowed(rust_type) {
-        return format!("&{rust_type}");
-    }
-    match rust_type
-        .strip_prefix("Vec<")
-        .and_then(|rest| rest.strip_suffix('>'))
-    {
-        Some(item) => format!("&[{item}]"),
-        None => rust_type.to_owned(),
+    match Shape::of(rust_type) {
+        Shape::Optional(inner) => format!("Option<{}>", borrowed(inner, ids)),
+        Shape::List(item) => format!("&[{item}]"),
+        Shape::Value(value) if BaseType::of(value) == BaseType::Text => "&str".to_owned(),
+        Shape::Value(value) if ids.is_borrowed(value) => format!("&{value}"),
+        Shape::Value(value) => value.to_owned(),
     }
 }
 

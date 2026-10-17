@@ -15,7 +15,8 @@ use super::diagnostics::TableFailure;
 use super::naming;
 use crate::report::display_path;
 use crate::schema::{
-    Column, EnumType, EnumVariant, ForeignKey, KeyConstraint, Schema, Table, UniqueKey,
+    BaseType, Column, EnumType, EnumVariant, ForeignKey, KeyConstraint, Schema, Shape, Table,
+    UniqueKey,
 };
 
 pub struct ParsedSchema {
@@ -260,7 +261,7 @@ fn uses_type(table: &Table, rust_path: &str) -> bool {
 
 /// Whether the column has the enum type at `rust_path`, alone or in an array.
 fn uses_type_column(column: &Column, rust_path: &str) -> bool {
-    column.sqlx_type == rust_path || column.sqlx_type == format!("Vec<{rust_path}>")
+    column.sqlx_type == rust_path || Shape::of(&column.sqlx_type) == Shape::List(rust_path)
 }
 
 /// Turns every value-list column into an enum named after its table and
@@ -1227,7 +1228,7 @@ fn value_list_check(expr: &Expr) -> Option<(String, Vec<String>)> {
 /// same column keeps only the values both allow. Other column types are left
 /// alone, like checks of any other shape.
 fn restrict_to_values(column: &mut Column, labels: Vec<String>) {
-    if column.sqlx_type != "String" {
+    if column.base_type() != BaseType::Text {
         return;
     }
     column.value_list = Some(match column.value_list.take() {

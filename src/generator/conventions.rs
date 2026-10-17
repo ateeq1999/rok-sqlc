@@ -82,8 +82,5 @@ pub fn check(tables: &[Table], conventions: &Conventions) -> Result<(), String> 
 }
 
 fn is_timestamp(column: &Column) -> bool {
-    matches!(
-        column.sqlx_type.as_str(),
-        "chrono::NaiveDateTime" | "chrono::DateTime<chrono::Utc>"
-    )
+    column.base_type().is_timestamp()
 }

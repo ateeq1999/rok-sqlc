@@ -11,11 +11,13 @@ pub mod sql;
 pub mod types;
 pub mod write;
 
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 
 use crate::queries::AnalyzedQuery;
-use crate::schema::{Column, EnumType, Table, mentions_generated_type};
-use crate::{Conventions, Derive};
+use crate::schema::{BaseType, Column, EnumType, Table, mentions_generated_type};
+use crate::{Config, Conventions, Derive};
 
 /// rustfmt's default `max_width`; generated code is laid out to be
 /// rustfmt-stable so regenerated files diff cleanly.
@@ -89,35 +91,50 @@ impl QueriesModule<'_> {
 
 #[cfg(test)]
 fn plan_files(schema_sql: &str, tables: &[Table], output: &Path) -> Vec<(PathBuf, String)> {
-    plan_files_with_queries(
-        schema_sql,
-        tables,
-        &[],
-        QueriesModule::None,
-        &Conventions::default(),
-        &[],
-        &relationships::Changes::new(),
-        output,
-    )
-    .expect("the tables generate")
+    let config = Config {
+        output: output.to_path_buf(),
+        ..Config::default()
+    };
+    plan_files_with_queries(&config, schema_sql, tables, &[], QueriesModule::None)
+        .expect("the tables generate")
 }
 
-#[allow(clippy::too_many_arguments)]
+/// The model the renderers read, built in the one order the steps depend
+/// on: typed ids first ([`keys::resolve`]), then the conventions (a tenant
+/// column's foreign key is no relationship), then relationships with the
+/// `[relationships]` changes applied.
+pub fn prepare(
+    tables: &[Table],
+    conventions: &Conventions,
+    changes: &relationships::Changes,
+    scope: relationships::Scope,
+) -> Result<Vec<Table>, String> {
+    let mut prepared = keys::resolve(tables);
+    conventions::apply(&mut prepared, conventions);
+    relationships::infer(&mut prepared, changes, scope)?;
+    Ok(prepared)
+}
+
+/// Plans every generated file under `config.output`: `tables` (the ones
+/// this run generates), the shared modules, `enums` in `types.rs`, and the
+/// queries module. `schema_sql` is the schema snapshot. Uses the
+/// configuration's conventions, derives, and relationship changes.
 pub fn plan_files_with_queries(
+    config: &Config,
     schema_sql: &str,
     tables: &[Table],
     enums: &[EnumType],
     queries: QueriesModule<'_>,
-    conventions: &Conventions,
-    derive: &[Derive],
-    relationship_changes: &relationships::Changes,
-    output: &Path,
 ) -> Result<Vec<(PathBuf, String)>, String> {
-    let serde = derive.contains(&Derive::Serde);
+    let (conventions, output) = (&config.conventions, config.output.as_path());
+    let serde = config.derive.contains(&Derive::Serde);
     let mut files = Vec::new();
-    let mut resolved = keys::resolve(tables);
-    conventions::apply(&mut resolved, conventions);
-    relationships::infer(&mut resolved, relationship_changes)?;
+    let resolved = prepare(
+        tables,
+        conventions,
+        &config.relationships,
+        relationships::Scope::Run,
+    )?;
     let tables = resolved.as_slice();
 
     for table in tables {
@@ -248,7 +265,7 @@ pub fn param_name(column: &Column) -> String {
 /// borrowed (`&str`, or `&` its typed id) because binding it needs no
 /// ownership; every other value, `Copy` keys included, is taken by value.
 pub fn param_type(column: &Column) -> String {
-    if column.sqlx_type == "String" {
+    if column.base_type() == BaseType::Text {
         match &column.typed_id {
             Some(id) => format!("&{}", id.name),
             None => "&str".to_owned(),

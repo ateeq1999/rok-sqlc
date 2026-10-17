@@ -17,7 +17,9 @@ use crate::schema::{Column, Relationship, RelationshipKind, Table, Through};
 use crate::{Conventions, RelationshipChange};
 
 use super::joins::{self, Join};
-use super::sql::{column_clause, ident, key_order, live_condition, table_ref};
+use super::sql::{
+    column_clause, first_placeholder, ident, key_order, live_condition, table_ref, tenant_condition,
+};
 use super::{HEADER, StaticQuery, doc_name, keys, push_doc, push_fn_head, types_import, use_list};
 
 /// One foreign key that makes a relationship, with its two tables.
@@ -42,23 +44,35 @@ struct Edge {
 /// `tables` and both columns have the same type, one a map key can hold.
 ///
 /// `changes` (the configuration's `[relationships]`) then renames and opts
-/// out relationships; entries for tables or relationships outside this run
-/// are skipped, since [`check_changes`] has already checked them against the
-/// whole schema. Returns the first name collision between two relationships
-/// of a table, or the first invalid change.
-pub fn infer(tables: &mut [Table], changes: &Changes) -> Result<(), String> {
+/// out relationships. Over the `Scope::Run` tables, entries for tables or
+/// relationships outside the run are skipped, since [`check_changes`] has
+/// already checked them against the whole schema, and the search filters'
+/// field names are checked too. Returns the first name collision between two
+/// relationships of a table, or the first invalid change.
+pub fn infer(tables: &mut [Table], changes: &Changes, scope: Scope) -> Result<(), String> {
     record(tables);
-    let renamed = apply_changes(tables, changes, false)?;
+    let renamed = apply_changes(tables, changes, scope == Scope::Schema)?;
     for table in tables.iter() {
         check_names(table, &renamed)?;
-        super::search::check_filter_fields(table, tables).map_err(|message| {
-            format!(
-                "{message}; rename the relationship in {}",
-                location(&table.module_name, None)
-            )
-        })?;
+        if scope == Scope::Run {
+            super::search::check_filter_fields(table, tables).map_err(|message| {
+                format!(
+                    "{message}; rename the relationship in {}",
+                    location(&table.module_name, None)
+                )
+            })?;
+        }
     }
     Ok(())
+}
+
+/// Which tables relationships are inferred over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// The tables a run generates.
+    Run,
+    /// Every table of the schema, to check `[relationships]` entries.
+    Schema,
 }
 
 /// The configuration's `[relationships]`: by table, then by inferred
@@ -77,14 +91,7 @@ pub fn check_changes(
     if changes.is_empty() {
         return Ok(());
     }
-    let mut resolved = keys::resolve(tables);
-    super::conventions::apply(&mut resolved, conventions);
-    record(&mut resolved);
-    let renamed = apply_changes(&mut resolved, changes, true)?;
-    for table in &resolved {
-        check_names(table, &renamed)?;
-    }
-    Ok(())
+    super::prepare(tables, conventions, changes, Scope::Schema).map(drop)
 }
 
 /// Where a `[relationships]` entry lives, as a dotted key path:
@@ -650,13 +657,58 @@ struct Loader<'a> {
     join: Option<JoinTable<'a>>,
 }
 
-/// The join table a many-to-many loader goes through.
-struct JoinTable<'a> {
+/// The join table a many-to-many relationship goes through.
+pub struct JoinTable<'a> {
+    pub table: &'a Table,
+    /// The join table's column equal to the relationship's `column`.
+    pub column: &'a Column,
+    /// The join table's column equal to the relationship's `target_column`.
+    pub target_column: &'a Column,
+}
+
+/// A relationship of a table, resolved against the tables generated with
+/// it: the related table and the columns the two sides join on.
+pub struct Resolved<'a> {
+    pub target: &'a Table,
+    /// The joining column on the relationship's own table.
+    pub column: &'a Column,
+    /// The joining column on `target`.
+    pub target_column: &'a Column,
+    /// A many-to-many relationship's join table.
+    pub join: Option<JoinTable<'a>>,
+}
+
+/// Resolves `table`'s `relationship` against `tables`. Inference only
+/// records relationships between tables generated together, over columns
+/// they have, so every name resolves.
+pub fn resolve<'a>(
     table: &'a Table,
-    /// The join table's column equal to the loader's `column`.
-    column: &'a Column,
-    /// The join table's column equal to the loader's `target_column`.
-    target_column: &'a Column,
+    relationship: &Relationship,
+    tables: &'a [Table],
+) -> Resolved<'a> {
+    let module_table = |module: &str| {
+        tables
+            .iter()
+            .find(|other| other.module_name == module)
+            .expect("a relationship's tables are generated with it")
+    };
+    let column = |table: &'a Table, name: &str| {
+        find_column(table, name).expect("a relationship's columns exist")
+    };
+    let target = module_table(&relationship.target);
+    Resolved {
+        target,
+        column: column(table, &relationship.column),
+        target_column: column(target, &relationship.target_column),
+        join: relationship.through.as_ref().map(|through| {
+            let join = module_table(&through.table);
+            JoinTable {
+                table: join,
+                column: column(join, &through.column),
+                target_column: column(join, &through.target_column),
+            }
+        }),
+    }
 }
 
 /// The aliases a many-to-many loader's query gives its two tables and the
@@ -665,32 +717,20 @@ const JOIN_ALIAS: &str = "rok_sqlc_join";
 const TARGET_ALIAS: &str = "rok_sqlc_target";
 const OWNER_ALIAS: &str = "rok_sqlc_owner";
 
-fn module_table<'a>(tables: &'a [Table], module: &str) -> &'a Table {
-    tables
-        .iter()
-        .find(|other| other.module_name == module)
-        .expect("a relationship's tables are generated with it")
-}
-
 impl<'a> Loader<'a> {
     fn new(table: &'a Table, tables: &'a [Table], relationship: &'a Relationship) -> Self {
-        let target = module_table(tables, &relationship.target);
-        let join = relationship.through.as_ref().map(|through| {
-            let join = module_table(tables, &through.table);
-            JoinTable {
-                table: join,
-                column: find_column(join, &through.column).expect("the join column exists"),
-                target_column: find_column(join, &through.target_column)
-                    .expect("the join column exists"),
-            }
-        });
+        let Resolved {
+            target,
+            column,
+            target_column,
+            join,
+        } = resolve(table, relationship, tables);
         Self {
             table,
             relationship,
             target,
-            column: find_column(table, &relationship.column).expect("the joining column exists"),
-            target_column: find_column(target, &relationship.target_column)
-                .expect("the related joining column exists"),
+            column,
+            target_column,
             join,
         }
     }
@@ -832,19 +872,12 @@ impl<'a> Loader<'a> {
     fn many_to_many_query(&self, join: &JoinTable<'_>, output: &mut String) {
         let target = self.target;
         let tenant = keys::tenant_bind(self.tenant_table());
-        let placeholder = 1 + usize::from(tenant.is_some());
+        let placeholder = first_placeholder(self.tenant_table());
         let qualified = |alias: &str, column: &str| format!("{alias}.{}", ident(column));
         let scope = |alias: &str, table: &Table| -> Vec<String> {
-            table
-                .tenant()
-                .map(|tenant| format!("{} = $1", qualified(alias, &tenant.sql_name)))
+            tenant_condition(table, Some(alias))
                 .into_iter()
-                .chain(
-                    table
-                        .soft_delete_column
-                        .as_deref()
-                        .map(|column| format!("{} IS NULL", qualified(alias, column))),
-                )
+                .chain(live_condition(table, Some(alias)))
                 .collect()
         };
 
@@ -930,17 +963,13 @@ impl<'a> Loader<'a> {
     fn query(&self, lead: &str, output: &mut String) {
         let target = self.target;
         let tenant = keys::tenant_bind(target);
-        let placeholder = 1 + usize::from(tenant.is_some());
-        let mut conditions: Vec<String> = target
-            .tenant()
-            .map(|tenant| format!("{} = $1", ident(&tenant.sql_name)))
-            .into_iter()
-            .collect();
+        let placeholder = first_placeholder(target);
+        let mut conditions: Vec<String> = tenant_condition(target, None).into_iter().collect();
         conditions.push(format!(
             "{} = ANY(${placeholder})",
             ident(&self.target_column.sql_name)
         ));
-        conditions.extend(live_condition(target));
+        conditions.extend(live_condition(target, None));
 
         let mut sql = column_clause("SELECT", target);
         sql.push(format!("FROM {}", table_ref(target)));

@@ -56,28 +56,42 @@ pub fn key_predicate(keys: &[&Column], first: usize) -> String {
         .join(" AND ")
 }
 
-/// `<soft-delete column> IS NULL`, the condition selecting live rows, or
-/// `None` when the table has no soft-delete column.
-pub fn live_condition(table: &Table) -> Option<String> {
+/// A column reference, qualified with `alias` when there is one: `a.col`.
+fn column_ref(alias: Option<&str>, column: &str) -> String {
+    match alias {
+        Some(alias) => format!("{alias}.{}", ident(column)),
+        None => ident(column),
+    }
+}
+
+/// `[alias.]<soft-delete column> IS NULL`, the condition selecting live
+/// rows, or `None` when the table has no soft-delete column.
+pub fn live_condition(table: &Table, alias: Option<&str>) -> Option<String> {
     table
         .soft_delete_column
         .as_deref()
-        .map(|column| format!("{} IS NULL", ident(column)))
+        .map(|column| format!("{} IS NULL", column_ref(alias, column)))
 }
 
-/// `<tenant column> = $1` when the table has a tenant column: static SQL
-/// always binds the tenant parameter first.
-pub fn tenant_condition(table: &Table) -> Option<String> {
+/// `[alias.]<tenant column> = $1` when the table has a tenant column: static
+/// SQL always binds the tenant parameter first.
+pub fn tenant_condition(table: &Table, alias: Option<&str>) -> Option<String> {
     table
         .tenant()
-        .map(|tenant| format!("{} = $1", ident(&tenant.sql_name)))
+        .map(|tenant| format!("{} = $1", column_ref(alias, &tenant.sql_name)))
+}
+
+/// The placeholder of the first value bound after the tenant parameter:
+/// `$2` on a table with a tenant column, `$1` otherwise.
+pub fn first_placeholder(table: &Table) -> usize {
+    1 + usize::from(table.tenant().is_some())
 }
 
 /// The tenant condition (when the table has a tenant column) followed by
 /// `key_predicate` over `keys`, numbered after the tenant's placeholder.
 pub fn scoped_key_predicate(table: &Table, keys: &[&Column]) -> String {
-    let tenant = tenant_condition(table);
-    let first = 1 + usize::from(tenant.is_some());
+    let tenant = tenant_condition(table, None);
+    let first = first_placeholder(table);
     tenant
         .into_iter()
         .chain((!keys.is_empty()).then(|| key_predicate(keys, first)))
@@ -89,7 +103,7 @@ pub fn scoped_key_predicate(table: &Table, keys: &[&Column]) -> String {
 /// when the table has one, so only a live row matches.
 pub fn live_key_predicate(table: &Table, keys: &[&Column]) -> String {
     let predicate = scoped_key_predicate(table, keys);
-    match live_condition(table) {
+    match live_condition(table, None) {
         Some(live) => format!("{predicate} AND {live}"),
         None => predicate,
     }
@@ -98,9 +112,9 @@ pub fn live_key_predicate(table: &Table, keys: &[&Column]) -> String {
 /// The condition selecting every row a whole-table read sees: the tenant's
 /// rows (`$1`) that are live, or `None` when every row is visible.
 pub fn scope_condition(table: &Table) -> Option<String> {
-    let conditions: Vec<String> = tenant_condition(table)
+    let conditions: Vec<String> = tenant_condition(table, None)
         .into_iter()
-        .chain(live_condition(table))
+        .chain(live_condition(table, None))
         .collect();
     (!conditions.is_empty()).then(|| conditions.join(" AND "))
 }

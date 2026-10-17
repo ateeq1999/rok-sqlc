@@ -13,7 +13,8 @@ use heck::{ToSnakeCase, ToUpperCamelCase};
 
 use crate::schema::{Column, Relationship, RelationshipKind, Table};
 
-use super::sql::{ident, str_literal, table_ref};
+use super::relationships;
+use super::sql::{ident, live_condition, str_literal, table_ref, tenant_condition};
 use super::{
     MAX_WIDTH, StaticQuery, doc_name, keys, param_name, param_type, push_doc, push_fn_head,
     push_serde_derive,
@@ -46,27 +47,16 @@ pub fn joins<'a>(table: &'a Table, tables: &'a [Table]) -> Vec<Join<'a>> {
         .iter()
         .filter(|relationship| !relationship.kind.is_to_many())
         .map(|relationship| {
-            let target = tables
-                .iter()
-                .find(|other| other.module_name == relationship.target)
-                .expect("a relationship's target is generated with it");
+            let resolved = relationships::resolve(table, relationship, tables);
             Join {
                 table,
                 relationship,
-                target,
-                column: column(table, &relationship.column),
-                target_column: column(target, &relationship.target_column),
+                target: resolved.target,
+                column: resolved.column,
+                target_column: resolved.target_column,
             }
         })
         .collect()
-}
-
-fn column<'a>(table: &'a Table, name: &str) -> &'a Column {
-    table
-        .columns
-        .iter()
-        .find(|column| column.sql_name == name)
-        .expect("the joining column exists")
 }
 
 /// The `use` lines the joined reads of `table` need beyond the row types:
@@ -267,15 +257,6 @@ impl<'a> Join<'a> {
         let target = self.target;
         let tenant = self.tenant();
         let first_key = 1 + usize::from(tenant.is_some());
-        let tenant_condition = |side: &Table, alias: &str| {
-            side.tenant()
-                .map(|column| format!("{alias}.{} = $1", ident(&column.sql_name)))
-        };
-        let live_condition = |side: &Table, alias: &str| {
-            side.soft_delete_column
-                .as_deref()
-                .map(|column| format!("{alias}.{} IS NULL", ident(column)))
-        };
 
         let mut sql = vec!["SELECT".to_owned()];
         let selected: Vec<String> = table
@@ -303,13 +284,13 @@ impl<'a> Join<'a> {
             ident(&self.target_column.sql_name),
             ident(&self.column.sql_name)
         ));
-        for condition in tenant_condition(target, RELATED_ALIAS)
+        for condition in tenant_condition(target, Some(RELATED_ALIAS))
             .into_iter()
-            .chain(live_condition(target, RELATED_ALIAS))
+            .chain(live_condition(target, Some(RELATED_ALIAS)))
         {
             sql.push(format!("    AND {condition}"));
         }
-        let conditions: Vec<String> = tenant_condition(table, ROW_ALIAS)
+        let conditions: Vec<String> = tenant_condition(table, Some(ROW_ALIAS))
             .into_iter()
             .chain(
                 table
@@ -324,7 +305,7 @@ impl<'a> Join<'a> {
                         )
                     }),
             )
-            .chain(live_condition(table, ROW_ALIAS))
+            .chain(live_condition(table, Some(ROW_ALIAS)))
             .collect();
         sql.push(format!("WHERE {}", conditions.join(" AND ")));
 

@@ -26,7 +26,7 @@ use super::annotations::{QueryDef, QueryFailure, ReturnMode};
 use crate::parser::TableFailure;
 use crate::parser::naming;
 use crate::parser::postgres::{ident_name, map_type, object_leaf_name};
-use crate::schema::{Column, Table};
+use crate::schema::{Column, Shape, Table};
 
 /// A bound parameter, in placeholder order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -490,12 +490,9 @@ impl<'a, 'c> Analysis<'a, 'c> {
                     "cannot infer the type of column `{sql_name}` of CTE `{name}`; cast it explicitly (`(expr)::type AS {sql_name}`)"
                 ));
             };
-            let (sqlx_type, nullable) = match rust_type
-                .strip_prefix("Option<")
-                .and_then(|inner| inner.strip_suffix('>'))
-            {
-                Some(inner) => (inner.to_owned(), true),
-                None => (rust_type.clone(), false),
+            let (sqlx_type, nullable) = match Shape::of(&rust_type) {
+                Shape::Optional(inner) => (inner.to_owned(), true),
+                Shape::List(_) | Shape::Value(_) => (rust_type.clone(), false),
             };
             columns.push(Column {
                 rust_name: naming::rust_identifier(&sql_name)?,

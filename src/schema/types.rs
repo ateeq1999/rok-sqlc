@@ -1,16 +1,13 @@
 use heck::ToUpperCamelCase;
 
+use super::rust_type::{BaseType, TYPES_MODULE};
+
 #[derive(Debug, Clone)]
 pub struct Schema {
     pub tables: Vec<Table>,
     /// Enum types in definition order, generated into the shared `types` module.
     pub enums: Vec<EnumType>,
 }
-
-/// The shared generated module holding enum types. A column of an enum type
-/// has the Rust type `types::{Name}`, and every generated file mentioning one
-/// imports `types` along its path to the `db` module.
-pub const TYPES_MODULE: &str = "types";
 
 /// A `CREATE TYPE … AS ENUM` type, after every `ALTER TYPE` applied to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,16 +46,6 @@ pub struct EnumVariant {
     /// The exact database label.
     pub label: String,
     pub rust_name: String,
-}
-
-/// Whether a Rust type mentions a generated enum (`types::X`, possibly inside
-/// `Option<…>` or `Vec<…>`), so its file must import the `types` module.
-pub fn mentions_generated_type(rust_type: &str) -> bool {
-    let needle = format!("{TYPES_MODULE}::");
-    rust_type.match_indices(&needle).any(|(index, _)| {
-        !rust_type[..index]
-            .ends_with(|character: char| character.is_alphanumeric() || "_:".contains(character))
-    })
 }
 
 #[derive(Debug, Clone)]
@@ -305,22 +292,23 @@ impl Column {
     /// How the column can be filtered, or `None` for arrays and JSON, which
     /// get only a null check.
     pub fn filter_kind(&self) -> Option<FilterKind> {
-        match self.sqlx_type.as_str() {
-            "i16"
-            | "i32"
-            | "i64"
-            | "f32"
-            | "f64"
-            | "rust_decimal::Decimal"
-            | "chrono::NaiveDate"
-            | "chrono::NaiveTime"
-            | "chrono::NaiveDateTime"
-            | "chrono::DateTime<chrono::Utc>" => Some(FilterKind::Ordered),
-            "String" => Some(FilterKind::Text),
-            "bool" | "uuid::Uuid" => Some(FilterKind::Equality),
-            enum_type if enum_type.starts_with("types::") => Some(FilterKind::Equality),
-            _ => None,
+        match self.base_type() {
+            BaseType::Integer
+            | BaseType::Float
+            | BaseType::Decimal
+            | BaseType::Date
+            | BaseType::Time
+            | BaseType::Timestamp
+            | BaseType::TimestampTz => Some(FilterKind::Ordered),
+            BaseType::Text => Some(FilterKind::Text),
+            BaseType::Bool | BaseType::Uuid | BaseType::Enum => Some(FilterKind::Equality),
+            BaseType::Array | BaseType::Other => None,
         }
+    }
+
+    /// What the column's base type (`sqlx_type`) is.
+    pub fn base_type(&self) -> BaseType {
+        BaseType::of(&self.sqlx_type)
     }
 
     /// The `XSortKey` variant naming this column.
@@ -378,25 +366,12 @@ impl Column {
     /// Whether a typed id can wrap this column's type: the type must be
     /// `Eq`, `Ord`, `Hash`, and `Display`.
     pub fn supports_typed_id(&self) -> bool {
-        matches!(
-            self.sqlx_type.as_str(),
-            "i16"
-                | "i32"
-                | "i64"
-                | "bool"
-                | "String"
-                | "uuid::Uuid"
-                | "rust_decimal::Decimal"
-                | "chrono::NaiveDate"
-                | "chrono::NaiveTime"
-                | "chrono::NaiveDateTime"
-                | "chrono::DateTime<chrono::Utc>"
-        )
+        self.base_type().supports_typed_id()
     }
 
     /// Whether the column's value type is `Copy`.
     pub fn is_copy(&self) -> bool {
-        self.supports_typed_id() && self.sqlx_type != "String"
+        self.supports_typed_id() && self.base_type() != BaseType::Text
     }
 }
 
