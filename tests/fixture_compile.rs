@@ -4,7 +4,7 @@
 //! Set `ROK_SQLC_TEST_DATABASE_URL` to a throwaway PostgreSQL database to
 //! also execute the generated code (see `tests/fixture-app/tests/postgres.rs`).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Mutex;
 
@@ -13,15 +13,13 @@ use rok_sqlc::RelationshipChange;
 
 mod common;
 
+use common::{cargo, manifest_dir};
+
 /// Every test regenerates into the same fixture crate, so they run one at a time.
 static FIXTURE: Mutex<()> = Mutex::new(());
 
-fn manifest_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn app_dir() -> PathBuf {
-    manifest_dir().join("tests/fixture-app")
+    common::app_dir("fixture-app")
 }
 
 /// Generates the fixture schema into the fixture app through the library
@@ -75,15 +73,6 @@ fn generate_fixture() -> Result<Vec<PathBuf>> {
 
     let report = rok_sqlc::generate(&config)?;
     Ok(report.written.into_iter().chain(report.unchanged).collect())
-}
-
-fn cargo(app_dir: &Path, args: &[&str]) -> Command {
-    let mut command = Command::new("cargo");
-    command.args(args).current_dir(app_dir).env(
-        "CARGO_TARGET_DIR",
-        manifest_dir().join("target/fixture-target"),
-    );
-    command
 }
 
 #[test]

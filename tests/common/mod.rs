@@ -2,8 +2,30 @@
 //! them.
 #![allow(dead_code)]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// The rok-sqlc crate's root.
+pub fn manifest_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// The fixture crate `tests/<name>`, e.g. `fixture-app`.
+pub fn app_dir(name: &str) -> PathBuf {
+    manifest_dir().join("tests").join(name)
+}
+
+/// `cargo <args>` in the crate at `dir`. Every crate that compiles generated
+/// code builds into one shared target directory, so its dependencies are
+/// built once.
+pub fn cargo(dir: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new("cargo");
+    command.args(args).current_dir(dir).env(
+        "CARGO_TARGET_DIR",
+        manifest_dir().join("target/fixture-target"),
+    );
+    command
+}
 
 /// A path the way rok-sqlc prints one outside the current directory: `/`
 /// as the separator on every platform.

@@ -22,9 +22,7 @@ use tempfile::TempDir;
 
 mod common;
 
-fn manifest_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
+use common::manifest_dir;
 
 /// The example crates the README's samples come from, each generated from
 /// its own SQL by `rok-sqlc g` with its `rok-sqlc.toml`.
@@ -358,15 +356,12 @@ fn the_examples_compile() -> Result<()> {
             eprintln!("{reason}");
             return Ok(());
         }
-        let status = Command::new("cargo")
-            .args(["clippy", "--quiet", "--all-targets", "--", "-Dwarnings"])
-            .current_dir(&dir)
-            .env(
-                "CARGO_TARGET_DIR",
-                manifest_dir().join("target/fixture-target"),
-            )
-            .status()
-            .with_context(|| format!("failed to run cargo clippy in {}", dir.display()))?;
+        let status = common::cargo(
+            &dir,
+            &["clippy", "--quiet", "--all-targets", "--", "-Dwarnings"],
+        )
+        .status()
+        .with_context(|| format!("failed to run cargo clippy in {}", dir.display()))?;
         ensure!(status.success(), "{} does not compile", dir.display());
     }
     Ok(())

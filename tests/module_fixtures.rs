@@ -29,6 +29,8 @@ use anyhow::{Context, Result, bail, ensure};
 
 mod common;
 
+use common::manifest_dir;
+
 /// Every test regenerates into the same fixture crate, so they run one at a time.
 static APP: Mutex<()> = Mutex::new(());
 
@@ -97,16 +99,12 @@ const EXPECTED: &[Expected] = &[
     },
 ];
 
-fn manifest_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn modules_dir() -> PathBuf {
     manifest_dir().join("modules")
 }
 
 fn app_dir() -> PathBuf {
-    manifest_dir().join("tests/modules-app")
+    common::app_dir("modules-app")
 }
 
 fn db_dir() -> PathBuf {
@@ -455,12 +453,7 @@ fn toml_string_list(text: &str, key: &str) -> Vec<String> {
 }
 
 fn cargo(args: &[&str]) -> Command {
-    let mut command = Command::new("cargo");
-    command.args(args).current_dir(app_dir()).env(
-        "CARGO_TARGET_DIR",
-        manifest_dir().join("target/fixture-target"),
-    );
-    command
+    common::cargo(&app_dir(), args)
 }
 
 fn lock() -> std::sync::MutexGuard<'static, ()> {

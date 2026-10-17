@@ -77,9 +77,7 @@ fn struct_fields(source: &str, name: &str) -> Vec<String> {
 }
 
 fn models(dir: &TempDir, module: &str) -> Result<String> {
-    Ok(fs::read_to_string(
-        dir.path().join("out").join(module).join("models.rs"),
-    )?)
+    resource_file(dir, module, "models.rs")
 }
 
 /// Every file under `root`, keyed by its path relative to `root`.
@@ -266,9 +264,7 @@ fn unknown_convention_key_names_the_key_and_the_source() -> Result<()> {
 }
 
 fn write_rs(dir: &TempDir, module: &str) -> Result<String> {
-    Ok(fs::read_to_string(
-        dir.path().join("out").join(module).join("write.rs"),
-    )?)
+    resource_file(dir, module, "write.rs")
 }
 
 #[test]
