@@ -121,6 +121,7 @@ pub fn parse_sources_with_modules(
     let mut failures = Vec::new();
     let mut seen_modules: HashSet<String> = HashSet::new();
     let mut enums = EnumRegistry::default();
+    let mut others = OtherRelations::default();
     // Where each table was created, for failures found after every statement.
     let mut created: HashMap<String, (PathBuf, Option<usize>)> = HashMap::new();
 
@@ -188,47 +189,56 @@ pub fn parse_sources_with_modules(
                     }
                     continue;
                 }
-                Statement::CreateTable(create) => match build_table(
-                    &create,
-                    &enums,
-                    &relation_names(&tables, object_schema_name(&create.name).as_deref()),
-                )
-                .map(&mut rename)
-                {
-                    Ok(table) if GENERATED_MODULES.contains(&table.module_name.as_str()) => {
-                        table_failure(
+                Statement::CreateTable(create) => {
+                    let schema = object_schema_name(&create.name);
+                    let mut taken = relation_names(&tables, &others, schema.as_deref());
+                    // PostgreSQL makes a serial column's sequence before the
+                    // table's constraints, so their names avoid it.
+                    others.create_sequences(&create.name, &create.columns, &mut taken);
+                    match build_table(&create, &enums, &taken).map(&mut rename) {
+                        Ok(table) if GENERATED_MODULES.contains(&table.module_name.as_str()) => {
+                            table_failure(
+                                &table.sql_name,
+                                format!(
+                                    "module name `{}` is reserved for the generated `db/{}.rs`",
+                                    table.module_name, table.module_name
+                                ),
+                            )
+                        }
+                        Ok(table) if seen_modules.insert(table.module_name.clone()) => {
+                            created.insert(
+                                table.module_name.clone(),
+                                (source.path.to_path_buf(), line),
+                            );
+                            tables.push(table);
+                            continue;
+                        }
+                        Ok(table) => table_failure(
                             &table.sql_name,
                             format!(
-                                "module name `{}` is reserved for the generated `db/{}.rs`",
-                                table.module_name, table.module_name
+                                "module name `{}` is already used by another table; rename one under `[modules]`",
+                                table.module_name
                             ),
-                        )
-                    }
-                    Ok(table) if seen_modules.insert(table.module_name.clone()) => {
-                        created
-                            .insert(table.module_name.clone(), (source.path.to_path_buf(), line));
-                        tables.push(table);
-                        continue;
-                    }
-                    Ok(table) => table_failure(
-                        &table.sql_name,
-                        format!(
-                            "module name `{}` is already used by another table; rename one under `[modules]`",
-                            table.module_name
                         ),
-                    ),
-                    Err(failure) => TableFailure {
-                        schema: object_schema_name(&create.name),
-                        ..failure
-                    },
-                },
+                        Err(failure) => TableFailure {
+                            schema: object_schema_name(&create.name),
+                            ..failure
+                        },
+                    }
+                }
                 Statement::AlterTable {
                     name, operations, ..
                 } => {
                     let Some(index) = find_table(&tables, &name) else {
                         continue;
                     };
-                    let taken = relation_names(&tables, tables[index].schema.as_deref());
+                    let mut taken =
+                        relation_names(&tables, &others, tables[index].schema.as_deref());
+                    let added = operations.iter().filter_map(|operation| match operation {
+                        AlterTableOperation::AddColumn { column_def, .. } => Some(column_def),
+                        _ => None,
+                    });
+                    others.create_sequences(&name, added, &mut taken);
                     match apply_alter(&mut tables[index], &operations, &enums, &taken) {
                         Ok(()) => continue,
                         Err(reason) => {
@@ -241,7 +251,28 @@ pub fn parse_sources_with_modules(
                     }
                 }
                 Statement::CreateIndex(index) => {
+                    let schema = object_schema_name(&index.table_name);
+                    let taken = relation_names(&tables, &others, schema.as_deref());
+                    others.create_index(&index, &taken);
                     record_unique_index(&mut tables, &index);
+                    continue;
+                }
+                Statement::CreateView { name, .. } | Statement::CreateSequence { name, .. } => {
+                    others.create(&name);
+                    continue;
+                }
+                Statement::Drop {
+                    object_type:
+                        ObjectType::Index
+                        | ObjectType::View
+                        | ObjectType::MaterializedView
+                        | ObjectType::Sequence,
+                    names,
+                    ..
+                } => {
+                    for name in &names {
+                        others.drop(name);
+                    }
                     continue;
                 }
                 Statement::CreateTrigger(trigger) => {
@@ -731,11 +762,14 @@ fn same_schema(left: Option<&str>, right: Option<&str>) -> bool {
     normalize(left) == normalize(right)
 }
 
-/// The relation names known tables take in `schema`: each table's name and
-/// its key constraints' (whose indexes are relations). PostgreSQL gives an
-/// unnamed constraint a name no relation in its schema has. Indexes made by
-/// `CREATE INDEX`, sequences, and views are not tracked.
-fn relation_names(tables: &[Table], schema: Option<&str>) -> HashSet<String> {
+/// The relation names taken in `schema`: each known table's name and its key
+/// constraints' (whose indexes are relations), and the `others`. PostgreSQL
+/// gives an unnamed constraint a name no relation in its schema has.
+fn relation_names(
+    tables: &[Table],
+    others: &OtherRelations,
+    schema: Option<&str>,
+) -> HashSet<String> {
     tables
         .iter()
         .filter(|table| same_schema(table.schema.as_deref(), schema))
@@ -747,7 +781,95 @@ fn relation_names(tables: &[Table], schema: Option<&str>) -> HashSet<String> {
                     .map(|constraint| constraint.name.clone()),
             )
         })
+        .chain(others.in_schema(schema).cloned())
         .collect()
+}
+
+/// Relations that take a name in their schema besides the known tables and
+/// their key constraints: indexes made by `CREATE INDEX` (named, or under
+/// PostgreSQL's default `<table>_<columns>_idx`), sequences (`CREATE
+/// SEQUENCE`, and a serial column's `<table>_<column>_seq`), and views and
+/// materialized views, less any dropped since. Renames (`ALTER INDEX …
+/// RENAME`) are not followed.
+#[derive(Default)]
+struct OtherRelations {
+    /// Names by schema (`None` is `public`).
+    names: HashMap<Option<String>, HashSet<String>>,
+}
+
+impl OtherRelations {
+    fn in_schema(&self, schema: Option<&str>) -> impl Iterator<Item = &String> {
+        self.names
+            .get(&normalize_schema(schema.map(str::to_owned)))
+            .into_iter()
+            .flatten()
+    }
+
+    fn insert(&mut self, schema: Option<&str>, name: String) {
+        self.names
+            .entry(normalize_schema(schema.map(str::to_owned)))
+            .or_default()
+            .insert(name);
+    }
+
+    /// Records the relation `name` (schema-qualified or not) creates.
+    fn create(&mut self, name: &ObjectName) {
+        self.insert(object_schema_name(name).as_deref(), object_leaf_name(name));
+    }
+
+    /// Forgets a dropped relation.
+    fn drop(&mut self, name: &ObjectName) {
+        let schema = normalize_schema(object_schema_name(name));
+        if let Some(names) = self.names.get_mut(&schema) {
+            names.remove(&object_leaf_name(name));
+        }
+    }
+
+    /// Records the sequences of the serial columns among `columns` that
+    /// `table` gets, each under PostgreSQL's default name, and adds them to
+    /// `taken`.
+    fn create_sequences<'a>(
+        &mut self,
+        table: &ObjectName,
+        columns: impl IntoIterator<Item = &'a ColumnDef>,
+        taken: &mut HashSet<String>,
+    ) {
+        let schema = object_schema_name(table);
+        let table = object_leaf_name(table);
+        for column in columns {
+            if !is_serial_type(&column.data_type) {
+                continue;
+            }
+            let column = ident_name(&column.name);
+            let name =
+                choose_relation_name(&table, Some(&column), "seq", |name| taken.contains(name));
+            taken.insert(name.clone());
+            self.insert(schema.as_deref(), name);
+        }
+    }
+
+    /// Records the index a `CREATE INDEX` makes: under its name, or under
+    /// PostgreSQL's default one, which avoids the names `taken` in its schema.
+    fn create_index(&mut self, index: &CreateIndex, taken: &HashSet<String>) {
+        let schema = object_schema_name(&index.table_name);
+        let name = match &index.name {
+            Some(name) => object_leaf_name(name),
+            None => {
+                let columns: Vec<String> = index
+                    .columns
+                    .iter()
+                    .map(|column| index_column_name(column).unwrap_or_else(|| "expr".to_owned()))
+                    .collect();
+                choose_relation_name(
+                    &object_leaf_name(&index.table_name),
+                    Some(&columns.join("_")),
+                    "idx",
+                    |name| taken.contains(name),
+                )
+            }
+        };
+        self.insert(schema.as_deref(), name);
+    }
 }
 
 /// Applies a `DROP TABLE` to one name. A known table is removed (`removed`
@@ -1376,22 +1498,31 @@ fn add_key_constraint(
 const MAX_IDENTIFIER_BYTES: usize = 63;
 
 /// The name PostgreSQL gives an unnamed primary key (`<table>_pkey`) or
-/// unique constraint (`<table>_<col>_<col>_key`), as its `ChooseRelationName`
-/// does: the table and column parts are shortened, the longer one first,
-/// until the name fits in 63 bytes, and a name already taken gets a number
-/// after the label (`_key1`). PostgreSQL avoids every relation name in the
-/// schema; `taken` says which are.
+/// unique constraint (`<table>_<col>_<col>_key`); see
+/// [`choose_relation_name`].
 fn default_constraint_name(
     table: &str,
     columns: &[String],
     primary: bool,
     taken: impl Fn(&str) -> bool,
 ) -> String {
-    let (addition, label) = if primary {
-        (None, "pkey")
+    if primary {
+        choose_relation_name(table, None, "pkey", taken)
     } else {
-        (Some(columns.join("_")), "key")
-    };
+        choose_relation_name(table, Some(&columns.join("_")), "key", taken)
+    }
+}
+
+/// PostgreSQL's `ChooseRelationName`: `name1[_name2]_label`, with the parts
+/// shortened, the longer one first, until the name fits in 63 bytes, and a
+/// number after the label (`_key1`) while the name is `taken`. PostgreSQL
+/// avoids every relation name in the schema; `taken` says which are.
+fn choose_relation_name(
+    name1: &str,
+    name2: Option<&str>,
+    label: &str,
+    taken: impl Fn(&str) -> bool,
+) -> String {
     let mut pass = 0;
     loop {
         let label = if pass == 0 {
@@ -1399,7 +1530,7 @@ fn default_constraint_name(
         } else {
             format!("{label}{pass}")
         };
-        let name = object_name(table, addition.as_deref(), &label);
+        let name = object_name(name1, name2, &label);
         if !taken(&name) {
             return name;
         }

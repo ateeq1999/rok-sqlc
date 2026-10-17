@@ -103,8 +103,11 @@ the *generated* API count as breaking (see ADR 0012).
   such long names.
 - `ON CONFLICT ON CONSTRAINT` accepts the names PostgreSQL gives unnamed
   primary key and unique constraints when a default name is already taken
-  by another table's constraint (or a table) in the same schema
-  (`<table>_pkey1`); before, only the table's own constraints counted.
+  by another relation in the same schema (`<table>_pkey1`): a table, another
+  table's constraint, an index (named, or PostgreSQL's default
+  `<table>_<columns>_idx`), a sequence (`CREATE SEQUENCE`, or a serial
+  column's `<table>_<column>_seq`), or a view or materialized view, until it
+  is dropped. Before, only the table's own constraints counted.
 - A table whose search names would collide only through the tenant column
   generates: the tenant column has no `*_is_null` filter field and no sort
   key variant, so it collides with nothing. The check now runs after the

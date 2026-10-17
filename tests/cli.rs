@@ -2404,6 +2404,63 @@ fn on_conflict_on_constraint_resolves_default_names_across_the_schema() -> Resul
     Ok(())
 }
 
+/// Default constraint names also avoid the names an index, a sequence, or a
+/// view already takes in the schema, until it is dropped. The expected names
+/// are the ones PostgreSQL 17 gives this schema.
+#[test]
+fn default_constraint_names_avoid_indexes_sequences_and_views() -> Result<()> {
+    let dir = TempDir::new()?;
+    let schema = dir.path().join("schema.sql");
+    let queries = dir.path().join("queries.sql");
+    fs::write(
+        &schema,
+        "CREATE TABLE a (id INT PRIMARY KEY, code TEXT);\n\
+         CREATE INDEX b_pkey ON a (code);\n\
+         CREATE TABLE b (id INT PRIMARY KEY, code TEXT UNIQUE);\n\
+         CREATE VIEW c_pkey AS SELECT 1 AS one;\n\
+         CREATE TABLE c (id INT PRIMARY KEY);\n\
+         CREATE SEQUENCE d_code_key;\n\
+         CREATE TABLE d (id SERIAL PRIMARY KEY, code TEXT UNIQUE);\n\
+         CREATE MATERIALIZED VIEW e_pkey AS SELECT 1 AS one;\n\
+         DROP MATERIALIZED VIEW e_pkey;\n\
+         CREATE TABLE e (id INT PRIMARY KEY);\n",
+    )?;
+    let upsert = |name: &str, target: &str, constraint: &str| {
+        format!(
+            "-- name: {name} :exec\n\
+             INSERT INTO {target} (id) VALUES ($1)\n\
+             ON CONFLICT ON CONSTRAINT {constraint} DO NOTHING;\n\n"
+        )
+    };
+    fs::write(
+        &queries,
+        [
+            upsert("BKey", "b", "b_pkey1"),
+            upsert("BCode", "b", "b_code_key"),
+            upsert("CKey", "c", "c_pkey1"),
+            upsert("DKey", "d", "d_pkey"),
+            upsert("DCode", "d", "d_code_key1"),
+            upsert("EKey", "e", "e_pkey"),
+        ]
+        .concat(),
+    )?;
+    let out = output_dir(&dir);
+
+    let output = run_binary(&[
+        "g",
+        "-s",
+        schema.to_str().unwrap(),
+        "-q",
+        queries.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+    ]);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    Ok(())
+}
+
 #[test]
 fn unique_keys_get_lookups_but_expression_and_partial_indexes_do_not() -> Result<()> {
     let dir = TempDir::new()?;

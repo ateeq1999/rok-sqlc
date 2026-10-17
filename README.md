@@ -563,8 +563,10 @@ pub async fn search_product_names<'e, E>(
 - An `ON CONFLICT (cols)` target must be one of the table's unique keys, and
   `ON CONFLICT ON CONSTRAINT name` must name its primary key or a unique
   constraint: the declared name, or PostgreSQL's default for an unnamed one
-  (`products_pkey`, `products_sku_key`). A unique index is no constraint, so
-  PostgreSQL doesn't accept its name there.
+  (`products_pkey`, `products_sku_key`). Like PostgreSQL, a default name
+  another relation of the schema already takes (a table, a constraint, an
+  index, a sequence, or a view) gets a number (`products_pkey1`). A unique
+  index is no constraint, so PostgreSQL doesn't accept its name there.
 - A query is exactly one statement. To run several, call several functions
   on `&mut *tx`.
 - The SQL is embedded verbatim and bound positionally. It is not checked
