@@ -66,9 +66,12 @@ async fn generated_crud_against_postgres() {
     query_modules_per_file(&pool).await;
     search_filters_and_pages(&pool).await;
     altered_table_has_its_final_columns(&pool).await;
+    altered_columns_round_trip_in_their_final_shape(&pool).await;
     enums_keep_their_exact_labels(&pool).await;
+    renamed_enum_types_use_their_new_name(&pool).await;
     value_list_columns_round_trip(&pool).await;
     typed_ids_flow_from_rows_to_foreign_keys(&pool).await;
+    enum_keys_get_a_typed_id(&pool).await;
     foreign_keys_resolve_to_the_table_in_their_schema(&pool).await;
     unique_key_lookups_find_one_row_or_none(&pool).await;
     managed_columns_are_left_to_the_database(&pool).await;
@@ -248,6 +251,55 @@ async fn interval_bytea_and_timetz_round_trip(pool: &PgPool) {
 
 /// A category's typed id goes straight into a product's foreign key field
 /// and into a product filter; typed ids hash, order, display, and convert.
+/// An enum primary key gets a typed id wrapping the enum; the foreign key
+/// into it, lookups, and the keyset cursor take that id.
+async fn enum_keys_get_a_typed_id(pool: &PgPool) {
+    use db::priority_escalations::models::NewPriorityEscalation;
+    use db::priority_notes::filter::PriorityNoteFilter;
+    use db::priority_notes::models::{NewPriorityNote, PriorityNoteId};
+    use db::search::Limit;
+    use db::types::TicketPriority;
+
+    for (priority, note) in [(TicketPriority::Low, "later"), (TicketPriority::High, "now")] {
+        db::priority_notes::write::create(
+            pool,
+            NewPriorityNote {
+                priority: PriorityNoteId::from(priority),
+                note: note.to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+    }
+    let escalation = db::priority_escalations::write::create(
+        pool,
+        NewPriorityEscalation {
+            priority: PriorityNoteId(TicketPriority::High),
+        },
+    )
+    .await
+    .unwrap();
+    let note: PriorityNoteId = escalation.priority;
+
+    let found = db::priority_notes::read::get_by_id(pool, note)
+        .await
+        .unwrap()
+        .expect("the escalated note exists");
+    assert_eq!(found.note, "now");
+    assert_eq!(TicketPriority::from(found.priority), TicketPriority::High);
+
+    let after = db::priority_notes::read::search_after(
+        pool,
+        PriorityNoteFilter::default(),
+        Some(PriorityNoteId(TicketPriority::Low)),
+        Limit::new(10),
+    )
+    .await
+    .unwrap();
+    let keys: Vec<PriorityNoteId> = after.iter().map(|row| row.priority).collect();
+    assert_eq!(keys, [PriorityNoteId(TicketPriority::High)]);
+}
+
 async fn typed_ids_flow_from_rows_to_foreign_keys(pool: &PgPool) {
     use std::collections::HashSet;
 
@@ -1372,11 +1424,59 @@ async fn altered_table_has_its_final_columns(pool: &PgPool) {
     );
 }
 
+/// `meter_readings` is reshaped by alter_schema.sql's `ALTER COLUMN`
+/// changes; the generated code binds and reads every column in its final
+/// shape: widened `BIGINT` key and amount, a `TEXT` unique key, a `label`
+/// with no default, a nullable `note`, and a defaulted `views`.
+async fn altered_columns_round_trip_in_their_final_shape(pool: &PgPool) {
+    use db::meter_readings::models::{MeterReading, MeterReadingId, NewMeterReading};
+    use db::meter_readings::{read, write};
+
+    // Both exceed `i32`, which the columns were created as.
+    let id = MeterReadingId::from(5_000_000_001_i64);
+    let amount = 9_000_000_000_i64;
+    let created = write::create(
+        pool,
+        NewMeterReading {
+            id,
+            code: Some("M-1".to_owned()),
+            amount,
+            label: "kitchen".to_owned(),
+            note: None,
+            views: None,
+        },
+    )
+    .await
+    .unwrap();
+    let expected = MeterReading {
+        id,
+        code: Some("M-1".to_owned()),
+        amount,
+        label: "kitchen".to_owned(),
+        note: None,
+        views: 0,
+    };
+    assert_eq!(created, expected);
+    assert_eq!(read::get_by_id(pool, id).await.unwrap(), Some(expected.clone()));
+    assert_eq!(read::get_by_code(pool, "M-1").await.unwrap(), Some(expected));
+
+    // `label` lost its default, so the database now requires it, as the
+    // generated `NewMeterReading` does.
+    let missing_label = sqlx::query("INSERT INTO meter_readings (id, amount, views) VALUES (1, 1, 1)")
+        .execute(pool)
+        .await
+        .unwrap_err();
+    assert!(
+        missing_label.to_string().contains("label"),
+        "{missing_label}"
+    );
+}
+
 /// `ticket_priority` and `app.ticket_state` (extended by alter_schema.sql)
 /// are database enums; their columns use the generated `db::types` enums in
 /// rows, inputs, patches, filters, sort keys, arrays, and query files.
 async fn enums_keep_their_exact_labels(pool: &PgPool) {
-    use db::queries::tickets::tickets_with_priority;
+    use db::queries::tickets::{tickets_in_states, tickets_with_priority};
     use db::search::{Equality, Page, Sort};
     use db::tickets::filter::{TicketFilter, TicketSortKey};
     use db::tickets::models::{NewTicket, Ticket, UpdateTicket};
@@ -1494,6 +1594,72 @@ async fn enums_keep_their_exact_labels(pool: &PgPool) {
     assert_eq!(found[0].id, routine.id);
     assert_eq!(found[0].priority, TicketPriority::High);
     assert_eq!(found[0].state, None);
+
+    // Casts to enum types (`$1::app.ticket_state[]`, `$2::ticket_priority`)
+    // type the parameters and the cast result column.
+    let in_states = tickets_in_states(
+        pool,
+        &[TicketState::Archived, TicketState::Open],
+        TicketPriority::Low,
+    )
+    .await
+    .unwrap();
+    assert_eq!(in_states.len(), 1);
+    assert_eq!(in_states[0].id, urgent.id);
+    assert_eq!(in_states[0].state, Some(TicketState::Archived));
+    assert_eq!(in_states[0].wanted, Some(TicketPriority::Low));
+}
+
+/// `ticket_channel` is renamed to `contact_channel` by alter_schema.sql: the
+/// enum is `ContactChannel`, bound and decoded under its new database name.
+async fn renamed_enum_types_use_their_new_name(pool: &PgPool) {
+    use db::queries::tickets::contacts_on_channel;
+    use db::ticket_contacts::models::{NewTicketContact, TicketContact};
+    use db::ticket_contacts::{read, write};
+    use db::types::ContactChannel;
+
+    let phone = write::create(
+        pool,
+        NewTicketContact {
+            channel: ContactChannel::Phone,
+            fallbacks: Some(vec![ContactChannel::Email]),
+        },
+    )
+    .await
+    .unwrap();
+    let email = write::create(
+        pool,
+        NewTicketContact {
+            channel: ContactChannel::Email,
+            fallbacks: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        read::get_by_id(pool, phone.id).await.unwrap(),
+        Some(TicketContact {
+            id: phone.id,
+            channel: ContactChannel::Phone,
+            fallbacks: Some(vec![ContactChannel::Email]),
+        })
+    );
+    let label: String =
+        sqlx::query_scalar("SELECT channel::text FROM ticket_contacts WHERE id = $1")
+            .bind(phone.id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(label, "Phone");
+
+    let reachable = contacts_on_channel(pool, ContactChannel::Email)
+        .await
+        .unwrap();
+    assert_eq!(reachable, [phone.id, email.id]);
+    let by_phone = contacts_on_channel(pool, ContactChannel::Phone)
+        .await
+        .unwrap();
+    assert_eq!(by_phone, [phone.id]);
 }
 
 /// `app.shipments.status`, `app.shipments.carrier`, `refunds.status`, and

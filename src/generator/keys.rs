@@ -9,8 +9,11 @@
 //! Typed ids are resolved over the tables generated together: a foreign key
 //! to a table outside that set (filtered out, rejected, or in another
 //! migration set) keeps the raw type.
+//!
+//! An enum key's typed id wraps the generated enum (`types::X`). Enums are
+//! neither `Ord` nor `Display`, so neither is that id.
 
-use crate::schema::{Column, ForeignKey, Table, TypedId};
+use crate::schema::{BaseType, Column, ForeignKey, Table, TypedId};
 
 use super::{param_name, param_type, push_doc, push_serde_derive};
 
@@ -48,11 +51,78 @@ pub fn resolve(tables: &[Table]) -> Vec<Table> {
     resolved
 }
 
+/// Fails when a resource's files would import two typed ids of one name
+/// (from two tables whose struct names agree, such as `user` and `users`),
+/// or an imported typed id would take the name of an item the resource
+/// defines itself: its row struct, typed id or key struct, create input, or
+/// update patch. Runs on `tables` as [`resolve`] and the conventions left
+/// them.
+pub fn check_names(tables: &[Table]) -> Result<(), String> {
+    const HINT: &str = "rename a module under `[modules]`";
+    let table_of = |module: &str| {
+        tables
+            .iter()
+            .find(|table| table.module_name == module)
+            .map_or_else(|| module.to_owned(), Table::display_name)
+    };
+    for table in tables {
+        let mut imported: Vec<&TypedId> = table
+            .columns
+            .iter()
+            .filter_map(|column| column.typed_id.as_ref())
+            .filter(|id| id.module != table.module_name)
+            .collect();
+        imported.sort_by(|a, b| (&a.name, &a.module).cmp(&(&b.name, &b.module)));
+        imported.dedup();
+        for pair in imported.windows(2) {
+            if pair[0].name == pair[1].name {
+                return Err(format!(
+                    "`{}` would import two typed ids named `{}`, from `{}` and `{}`; {HINT}",
+                    table.display_name(),
+                    pair[0].name,
+                    table_of(&pair[0].module),
+                    table_of(&pair[1].module)
+                ));
+            }
+        }
+        let own_kind = if table.key_columns().len() > 1 {
+            "key struct"
+        } else {
+            "typed id"
+        };
+        let mut defined: Vec<(&str, String)> = vec![("row struct", table.struct_name.clone())];
+        defined.extend(key_items(table).into_iter().map(|name| (own_kind, name)));
+        if !table.insert_columns().is_empty() {
+            defined.push(("create input", format!("New{}", table.struct_name)));
+        }
+        if !table.primary_key.is_empty() && !table.update_columns().is_empty() {
+            defined.push(("update patch", format!("Update{}", table.struct_name)));
+        }
+        for id in imported {
+            if let Some((kind, name)) = defined.iter().find(|(_, name)| *name == id.name) {
+                return Err(format!(
+                    "the typed id `{}` imported from `{}` collides with the {kind} `{name}` that `{}` generates; {HINT}",
+                    id.name,
+                    table_of(&id.module),
+                    table.display_name()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether a typed id can wrap the key column's type: one that is `Eq`,
+/// `Ord`, `Hash`, and `Display`, or a generated enum.
+fn wraps_in_typed_id(key: &Column) -> bool {
+    key.supports_typed_id() || key.base_type() == BaseType::Enum
+}
+
 /// The typed id of a table with a single-column primary key of a type an id
 /// can wrap.
 fn own_typed_id(table: &Table) -> Option<TypedId> {
     match table.primary_key_columns().as_slice() {
-        [key] if key.supports_typed_id() => Some(TypedId {
+        [key] if wraps_in_typed_id(key) => Some(TypedId {
             module: table.module_name.clone(),
             name: format!("{}Id", table.struct_name),
         }),
@@ -261,9 +331,11 @@ pub fn render_key_type(output: &mut String, table: &Table, serde: bool) {
     }
 }
 
-/// With `serde`, a typed id serializes as its inner value.
+/// With `serde`, a typed id serializes as its inner value. An enum's id is
+/// `Copy` but neither `Ord` nor `Display`, like the enum.
 fn render_typed_id(output: &mut String, table: &Table, key: &Column, name: &str, serde: bool) {
     let inner = &key.sqlx_type;
+    let is_enum = key.base_type() == BaseType::Enum;
     push_doc(
         output,
         0,
@@ -275,9 +347,14 @@ fn render_typed_id(output: &mut String, table: &Table, key: &Column, name: &str,
             "cannot be mixed up with another table's key.",
         ],
     );
-    let copy = if key.is_copy() { "Copy, " } else { "" };
+    let copy = if key.is_copy() || is_enum {
+        "Copy, "
+    } else {
+        ""
+    };
+    let ord = if is_enum { "" } else { "PartialOrd, Ord, " };
     output.push_str(&format!(
-        "#[derive(Debug, Clone, {copy}PartialEq, Eq, PartialOrd, Ord, Hash, sqlx::Type)]\n"
+        "#[derive(Debug, Clone, {copy}PartialEq, Eq, {ord}Hash, sqlx::Type)]\n"
     ));
     push_serde_derive(output, serde);
     output.push_str("#[sqlx(transparent)]\n");
@@ -291,6 +368,9 @@ fn render_typed_id(output: &mut String, table: &Table, key: &Column, name: &str,
     output.push_str(&format!(
         "impl From<{name}> for {inner} {{\n    fn from(id: {name}) -> Self {{\n        id.0\n    }}\n}}\n\n"
     ));
+    if is_enum {
+        return;
+    }
     output.push_str(&format!(
         "impl std::fmt::Display for {name} {{\n    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{\n        std::fmt::Display::fmt(&self.0, formatter)\n    }}\n}}\n\n"
     ));

@@ -736,3 +736,43 @@ BEGIN NEW.updated_at := now(); RETURN NEW; END $$;
     }
     Ok(())
 }
+
+/// The source check sees a managed column's final shape: a later migration
+/// that drops its default leaves it without a source of values, and one that
+/// adds a default or drops NOT NULL gives it one.
+#[test]
+fn alter_column_changes_whether_a_managed_column_has_a_source_of_values() -> Result<()> {
+    const AUDITS: &str = "CREATE TABLE audits (\n    id UUID PRIMARY KEY,\n    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()\n);\n";
+    let dir = TempDir::new()?;
+
+    let (success, stderr) = generate_migrations(
+        &dir,
+        &[
+            AUDITS,
+            "ALTER TABLE audits ALTER COLUMN updated_at DROP DEFAULT;",
+        ],
+        false,
+    )?;
+
+    assert!(!success, "{stderr}");
+    let located = "error: migrations/0001_step.sql:1: table `audits`: managed column `updated_at` is NOT NULL with no DEFAULT";
+    assert!(stderr.contains(located), "{stderr}");
+
+    for fix in [
+        "ALTER TABLE audits ALTER COLUMN updated_at SET DEFAULT now();",
+        "ALTER TABLE audits ALTER COLUMN updated_at DROP NOT NULL;",
+    ] {
+        let dir = TempDir::new()?;
+        let files = [
+            AUDITS,
+            "ALTER TABLE audits ALTER COLUMN updated_at DROP DEFAULT;",
+            fix,
+        ];
+
+        let (success, stderr) = generate_migrations(&dir, &files, false)?;
+
+        assert!(success, "{fix}\n{stderr}");
+        assert!(dir.path().join("out/audits/models.rs").exists());
+    }
+    Ok(())
+}

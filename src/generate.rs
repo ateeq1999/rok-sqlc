@@ -27,14 +27,29 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
     let resource = config.resource.as_deref();
     let (dry_run, force, lenient) = (config.dry_run, config.force, config.lenient);
 
+    for (key, module) in &config.modules {
+        if parser::naming::rust_identifier(module).as_deref() != Ok(module.as_str()) {
+            bail!(
+                "{} in the configuration renames the module to `{module}`, which is not a snake_case Rust identifier",
+                module_location(key)
+            );
+        }
+    }
     let sources = read_schema(config)?;
-    let mut parsed = parser::parse_sources(
+    let mut parsed = parser::parse_sources_with_modules(
         &sources
             .iter()
             .map(|(path, sql)| parser::SchemaSource { path, sql })
             .collect::<Vec<_>>(),
+        &config.modules,
     )
     .context("failed to parse SQL schema")?;
+    if let Some(key) = parsed.unmatched_modules.first() {
+        bail!(
+            "{} in the configuration names no table of the schema",
+            module_location(key)
+        );
+    }
     parsed.fail_tables(|table| {
         // Search names depend on the conventions: the tenant column has none.
         let mut applied = [table.clone()];
@@ -445,8 +460,13 @@ fn analyze_query_file(
             column.typed_id = None;
         }
     }
-    let (analyzed, analysis_failures) =
-        queries::analyze_queries(&defs, &tables, &generated_modules, &parsed.failures);
+    let (analyzed, analysis_failures) = queries::analyze_queries(
+        &defs,
+        &tables,
+        &parsed.schema.enums,
+        &generated_modules,
+        &parsed.failures,
+    );
     failures.extend(analysis_failures);
 
     let failures = failures
@@ -459,4 +479,17 @@ fn analyze_query_file(
         })
         .collect();
     Ok((analyzed, failures))
+}
+
+/// Where a `[modules]` entry lives, as a dotted key path:
+/// `modules."audit.users"`.
+fn module_location(key: &str) -> String {
+    if key
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        format!("`modules.{key}`")
+    } else {
+        format!("`modules.\"{key}\"`")
+    }
 }

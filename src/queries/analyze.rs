@@ -26,7 +26,7 @@ use super::annotations::{QueryDef, QueryFailure, ReturnMode};
 use crate::parser::TableFailure;
 use crate::parser::naming;
 use crate::parser::postgres::{ident_name, map_type, object_leaf_name};
-use crate::schema::{Column, Shape, Table};
+use crate::schema::{Column, EnumType, Shape, Table};
 
 /// A bound parameter, in placeholder order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,13 +73,15 @@ pub struct AnalyzedQuery {
 
 /// Analyzes each query against the schema.
 ///
-/// `tables` are all generatable tables, `generated_modules` the resource
+/// `tables` are all generatable tables, `enums` the generated enums (a cast
+/// to a database enum type infers it), `generated_modules` the resource
 /// modules emitted in this run (whose row structs may be reused), and
 /// `unsupported` the tables the schema parser rejected, used to explain why a
 /// query referencing one of them cannot be generated.
 pub fn analyze_queries(
     defs: &[QueryDef],
     tables: &[Table],
+    enums: &[EnumType],
     generated_modules: &HashSet<String>,
     unsupported: &[TableFailure],
 ) -> (Vec<AnalyzedQuery>, Vec<QueryFailure>) {
@@ -89,6 +91,7 @@ pub fn analyze_queries(
     for def in defs {
         let context = Context {
             tables,
+            enums,
             unsupported,
             generated_modules,
         };
@@ -169,6 +172,8 @@ fn check_conflict_constraint(table: &Table, name: &ObjectName) -> Result<(), Str
 
 struct Context<'a> {
     tables: &'a [Table],
+    /// The generated enums, for casts to an enum type.
+    enums: &'a [EnumType],
     unsupported: &'a [TableFailure],
     generated_modules: &'a HashSet<String>,
 }
@@ -712,7 +717,10 @@ impl<'a, 'c> Analysis<'a, 'c> {
             Expr::Function(function) => (object_leaf_name(&function.name), None),
             Expr::Cast { data_type, .. } => (
                 String::new(),
-                Some(map_type(data_type).map(|(_, sqlx_type)| format!("Option<{sqlx_type}>"))?),
+                Some(
+                    map_type(data_type, self.context.enums)
+                        .map(|(_, sqlx_type)| format!("Option<{sqlx_type}>"))?,
+                ),
             ),
             _ => (String::new(), None),
         };
@@ -799,7 +807,7 @@ impl<'a, 'c> Analysis<'a, 'c> {
                 ..
             } => {
                 if let Some(index) = placeholder(inner) {
-                    let (_, sqlx_type) = map_type(data_type)?;
+                    let (_, sqlx_type) = map_type(data_type, self.context.enums)?;
                     let name = format!("param_{index}");
                     self.assign(index, &name, &sqlx_type, &sqlx_type, false)?;
                 }
@@ -1293,6 +1301,9 @@ mod tests {
         );
         CREATE TABLE app.tags (id BIGSERIAL PRIMARY KEY, \"select\" TEXT NOT NULL);
         CREATE TABLE spans (id BIGSERIAL PRIMARY KEY, length INET NOT NULL);
+        CREATE TYPE product_status AS ENUM ('active', 'retired');
+        CREATE TYPE app.ticket_state AS ENUM ('open', 'closed');
+        CREATE TABLE gauges (id BIGSERIAL PRIMARY KEY, level TEXT CHECK (level IN ('low', 'high')));
     ";
 
     fn analyze(queries: &str) -> (Vec<AnalyzedQuery>, Vec<QueryFailure>) {
@@ -1305,7 +1316,13 @@ mod tests {
             .iter()
             .map(|table| table.module_name.clone())
             .collect();
-        analyze_queries(&defs, &parsed.schema.tables, &modules, &parsed.failures)
+        analyze_queries(
+            &defs,
+            &parsed.schema.tables,
+            &parsed.schema.enums,
+            &modules,
+            &parsed.failures,
+        )
     }
 
     fn one(queries: &str) -> AnalyzedQuery {
@@ -1447,6 +1464,40 @@ mod tests {
                 struct_name: "Category".to_owned()
             }
         );
+    }
+
+    #[test]
+    fn casts_to_enum_types_infer_the_generated_enum() {
+        let query = one(
+            "-- name: Statuses :many\nSELECT id FROM products WHERE $1::product_status IS NOT NULL AND $2::app.ticket_state IS NOT NULL AND $3::product_status[] IS NOT NULL AND $4::public.product_status IS NOT NULL;",
+        );
+        assert_eq!(
+            query.params,
+            [
+                param(1, "param_1", "types::ProductStatus"),
+                param(2, "param_2", "types::TicketState"),
+                param(3, "param_3", "Vec<types::ProductStatus>"),
+                param(4, "param_4", "types::ProductStatus"),
+            ]
+        );
+        let status =
+            one("-- name: Status :one\nSELECT 'active'::product_status AS status FROM products;");
+        assert_eq!(
+            status.result,
+            ResultShape::Scalar("Option<types::ProductStatus>".to_owned())
+        );
+    }
+
+    /// An enum type is found under its schema, and a value-list enum is no
+    /// database type at all.
+    #[test]
+    fn casts_to_other_names_are_not_enums() {
+        for cast in ["ticket_state", "app.product_status", "level"] {
+            let reason = failure(&format!(
+                "-- name: Q :many\nSELECT id FROM gauges WHERE $1::{cast} IS NOT NULL;"
+            ));
+            assert!(reason.contains("is not supported yet"), "{cast}: {reason}");
+        }
     }
 
     #[test]

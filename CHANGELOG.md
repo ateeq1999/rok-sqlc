@@ -13,6 +13,11 @@ the *generated* API count as breaking (see ADR 0012).
   column (including its `*_is_null` field) and `{Table}SortKey` no variant
   for it. `search` is already scoped to the tenant parameter, so these could
   only repeat the scope or match nothing. Relationship filters are unchanged.
+- An enum primary key gets a typed id wrapping the enum
+  (`PriorityNoteId(pub types::TicketPriority)`), which is `Copy`, `Eq` and
+  `Hash` but not `Ord` or `Display`. The key column, key parameters, the
+  `search_after` cursor, and foreign keys into the table take it instead of
+  the bare enum.
 - With `derive = ["serde"]`, a patch deserialized from JSON tells an absent
   field (leave the column alone) from `null` (set it to `NULL`); before, both
   read as `None`. Serializing a patch skips its `None` fields, so `{}` is an
@@ -26,6 +31,16 @@ the *generated* API count as breaking (see ADR 0012).
 
 ### Added
 
+- The `[modules]` config section (also in the JSON payload, and
+  `Config::modules` in the library) renames a table's module, by
+  schema-qualified or SQL name: `"audit.users" = "audit_users"`. The row
+  struct, typed id, and key struct follow the new name, so same-named tables
+  of two schemas both generate, each with its own typed id. An entry naming no
+  table, or a name that isn't a snake_case Rust identifier, fails the run.
+- Generation fails with a diagnostic when a resource would import two typed
+  ids of one name (from tables like `user` and `users`), or an imported typed
+  id named like one of the resource's own items. Before, the generated code
+  didn't compile.
 - `INTERVAL` maps to `sqlx::postgres::types::PgInterval`, `BYTEA` to
   `Vec<u8>` (borrowed as `&[u8]` in key, lookup, and query parameters), and
   `TIME WITH TIME ZONE`/`TIMETZ` to `sqlx::postgres::types::PgTimeTz`, in
@@ -35,6 +50,13 @@ the *generated* API count as breaking (see ADR 0012).
 - With `derive = ["serde"]`, a table or query that would put `PgInterval` or
   `PgTimeTz` (which implement no serde traits) into a serde-deriving item
   fails the run with an error naming the column or parameter.
+- In query files, a cast to an enum type infers the generated enum:
+  `$1::product_status` and `$1::app.ticket_state` take `types::X`, and
+  `$1::product_status[]` takes `&[types::X]`. Such casts were rejected.
+- `ALTER TYPE x RENAME TO y` renames the enum: its Rust name follows the new
+  name (schema-prefixed only on a clash, as for `CREATE TYPE`), its
+  `sqlx(type_name)` becomes `y`, and the columns using it keep working. The
+  clause used to fail every table using the type.
 
 ### Changed
 
@@ -73,6 +95,18 @@ the *generated* API count as breaking (see ADR 0012).
   generates: the tenant column has no `*_is_null` filter field and no sort
   key variant, so it collides with nothing. The check now runs after the
   conventions are applied.
+
+### Added
+
+- `ALTER TABLE … ALTER COLUMN` is applied instead of failing the table:
+  `[SET DATA] TYPE` (with or without `USING`), `SET`/`DROP NOT NULL`,
+  `SET`/`DROP DEFAULT`, and `ADD GENERATED … AS IDENTITY`. The column ends
+  up in its final shape, and its primary key, unique keys, and typed id
+  follow a type change. A change rok-sqlc can't apply (a type with no
+  mapping, a serial type, `DROP NOT NULL` on a primary key column, identity
+  on a nullable column, a missing column) still fails the table with a
+  `path:line` diagnostic. Dropping a managed column's default can now leave
+  it without a source of values, which fails its table.
 
 ## [0.1.0] - 2026-10-17
 

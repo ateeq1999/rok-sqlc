@@ -64,6 +64,19 @@ CREATE TABLE revised_notes (
     legacy TEXT NOT NULL
 );
 
+-- Reshaped by alter_schema.sql's ALTER COLUMN changes: the key and `amount`
+-- widen to BIGINT, `code` (a unique key) becomes TEXT, `amount` gains
+-- NOT NULL, `label` loses its default, `note` loses NOT NULL, and `views`
+-- gains a default.
+CREATE TABLE meter_readings (
+    id INTEGER PRIMARY KEY,
+    code VARCHAR(16) UNIQUE,
+    amount INTEGER,
+    label TEXT NOT NULL DEFAULT 'unlabelled',
+    note TEXT NOT NULL,
+    views INTEGER NOT NULL
+);
+
 -- Foreign keys to two tables named `patch_targets` in different schemas.
 -- `app.patch_targets` is generated, so `target_id` uses its typed id;
 -- `legacy.patch_targets` is created by tests/fixture-app/tests/postgres.rs
@@ -88,10 +101,26 @@ CREATE TABLE app.tickets (
     watch_levels ticket_priority[] NOT NULL DEFAULT '{}'
 );
 
--- An enum primary key: key parameters and the keyset cursor use the enum.
+-- An enum primary key gets a typed id wrapping the enum (`PriorityNoteId`),
+-- which key parameters, the keyset cursor, and the foreign key into it use.
 CREATE TABLE priority_notes (
     priority ticket_priority PRIMARY KEY,
     note TEXT NOT NULL
+);
+
+CREATE TABLE priority_escalations (
+    id BIGSERIAL PRIMARY KEY,
+    priority ticket_priority NOT NULL REFERENCES priority_notes (priority)
+);
+
+-- Renamed to `contact_channel` by alter_schema.sql, so the enum is
+-- `ContactChannel` and both columns use it.
+CREATE TYPE ticket_channel AS ENUM ('email', 'Phone');
+
+CREATE TABLE ticket_contacts (
+    id BIGSERIAL PRIMARY KEY,
+    channel ticket_channel NOT NULL,
+    fallbacks ticket_channel[]
 );
 
 -- Value-list columns: text columns a CHECK restricts to fixed values become

@@ -164,6 +164,199 @@ fn foreign_keys_resolve_to_the_table_in_their_schema() -> Result<()> {
     Ok(())
 }
 
+const SAME_NAMED_USERS: &str = "CREATE TABLE core.users (id UUID PRIMARY KEY);
+CREATE TABLE audit.users (id BIGSERIAL PRIMARY KEY);
+CREATE TABLE posts (
+    id BIGSERIAL PRIMARY KEY,
+    author_id UUID NOT NULL REFERENCES core.users (id),
+    auditor_id BIGINT REFERENCES audit.users (id)
+);
+";
+
+/// Runs the binary in `dir` (holding `schema.sql`) with `args`, checks both
+/// users modules, and returns `posts/models.rs`.
+fn renamed_users(dir: &Path, args: &[&str]) -> Result<String> {
+    let output = run_binary_in(dir, args);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let out = dir.join("out");
+    let users = fs::read_to_string(out.join("users/models.rs"))?;
+    assert!(
+        users.contains("pub struct UserId(pub uuid::Uuid);"),
+        "{users}"
+    );
+    let audit = fs::read_to_string(out.join("audit_users/models.rs"))?;
+    assert!(audit.contains("pub struct AuditUser {"), "{audit}");
+    assert!(
+        audit.contains("pub struct AuditUserId(pub i64);"),
+        "{audit}"
+    );
+    let read = fs::read_to_string(out.join("audit_users/read.rs"))?;
+    assert!(read.contains("FROM audit.users\n"), "{read}");
+    let mod_rs = fs::read_to_string(out.join("mod.rs"))?;
+    assert!(mod_rs.contains("pub mod audit_users;"), "{mod_rs}");
+    Ok(fs::read_to_string(out.join("posts/models.rs"))?)
+}
+
+#[test]
+fn a_module_rename_generates_same_named_tables_of_two_schemas() -> Result<()> {
+    let dir = TempDir::new()?;
+    fs::write(dir.path().join("schema.sql"), SAME_NAMED_USERS)?;
+    fs::write(
+        dir.path().join("rok-sqlc.toml"),
+        "schema = \"schema.sql\"\noutput = \"out\"\n\n[modules]\n\"audit.users\" = \"audit_users\"\n",
+    )?;
+
+    let posts = renamed_users(dir.path(), &["g"])?;
+
+    assert!(
+        posts.contains("use super::super::audit_users::models::AuditUserId;"),
+        "{posts}"
+    );
+    assert!(
+        posts.contains("use super::super::users::models::UserId;"),
+        "{posts}"
+    );
+    assert!(posts.contains("    pub author_id: UserId,\n"), "{posts}");
+    assert!(
+        posts.contains("    pub auditor_id: Option<AuditUserId>,\n"),
+        "{posts}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_module_rename_can_come_from_the_json_payload() -> Result<()> {
+    let dir = TempDir::new()?;
+    fs::write(dir.path().join("schema.sql"), SAME_NAMED_USERS)?;
+
+    let posts = renamed_users(
+        dir.path(),
+        &[
+            "g",
+            "--schema",
+            "schema.sql",
+            "--output",
+            "out",
+            "--json",
+            r#"{"modules": {"audit.users": "audit_users"}}"#,
+        ],
+    )?;
+
+    assert!(
+        posts.contains("    pub auditor_id: Option<AuditUserId>,\n"),
+        "{posts}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_module_rename_must_name_a_table_and_a_free_module() -> Result<()> {
+    let cases = [
+        (
+            "\"audit.accounts\" = \"audit_accounts\"",
+            "`modules.\"audit.accounts\"` in the configuration names no table of the schema",
+        ),
+        (
+            "\"audit.users\" = \"Audit Users\"",
+            "`modules.\"audit.users\"` in the configuration renames the module to `Audit Users`, which is not a snake_case Rust identifier",
+        ),
+        (
+            "\"audit.users\" = \"posts\"",
+            "module name `posts` is already used by another table",
+        ),
+    ];
+    for (entry, expected) in cases {
+        let dir = TempDir::new()?;
+        fs::write(dir.path().join("schema.sql"), SAME_NAMED_USERS)?;
+        fs::write(
+            dir.path().join("rok-sqlc.toml"),
+            format!("schema = \"schema.sql\"\noutput = \"out\"\n\n[modules]\n{entry}\n"),
+        )?;
+
+        let output = run_binary_in(dir.path(), &["g"]);
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{entry}");
+        assert!(stderr.contains(expected), "{entry}: {stderr}");
+        assert!(!dir.path().join("out").exists(), "{entry}");
+    }
+    Ok(())
+}
+
+/// The error a run on `schema` fails with; nothing is written.
+fn generation_error(schema: &str) -> Result<String> {
+    let dir = TempDir::new()?;
+    let path = dir.path().join("schema.sql");
+    fs::write(&path, schema)?;
+    let err = run(&[
+        "generate",
+        "--schema",
+        path.to_str().unwrap(),
+        "--output",
+        output_dir(&dir).to_str().unwrap(),
+    ])
+    .expect_err("generation should fail");
+    assert!(!output_dir(&dir).exists());
+    Ok(format!("{err:#}"))
+}
+
+// `user` and `users` both have the struct `User`, so both define `UserId`.
+
+#[test]
+fn two_imported_ids_with_one_name_fail_generation() -> Result<()> {
+    let message = generation_error(
+        "CREATE TABLE \"user\" (id BIGSERIAL PRIMARY KEY);
+         CREATE TABLE users (id UUID PRIMARY KEY);
+         CREATE TABLE posts (
+             id BIGSERIAL PRIMARY KEY,
+             editor_id BIGINT REFERENCES \"user\" (id),
+             author_id UUID REFERENCES users (id)
+         );",
+    )?;
+    assert!(
+        message.contains(
+            "`posts` would import two typed ids named `UserId`, from `user` and `users`; rename a module under `[modules]`"
+        ),
+        "{message}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_id_colliding_with_an_imported_id_fails_generation() -> Result<()> {
+    let message = generation_error(
+        "CREATE TABLE \"user\" (id BIGSERIAL PRIMARY KEY);
+         CREATE TABLE users (id UUID PRIMARY KEY, legacy_id BIGINT REFERENCES \"user\" (id));",
+    )?;
+    assert!(
+        message.contains(
+            "the typed id `UserId` imported from `user` collides with the typed id `UserId` that `users` generates; rename a module under `[modules]`"
+        ),
+        "{message}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_imported_id_colliding_with_a_row_struct_fails_generation() -> Result<()> {
+    // `x_ids` has the row struct `XId`, which is also the id of `x`.
+    let message = generation_error(
+        "CREATE TABLE x (id BIGSERIAL PRIMARY KEY);
+         CREATE TABLE x_ids (id BIGSERIAL PRIMARY KEY, x_id BIGINT NOT NULL REFERENCES x (id));",
+    )?;
+    assert!(
+        message.contains(
+            "the typed id `XId` imported from `x` collides with the row struct `XId` that `x_ids` generates; rename a module under `[modules]`"
+        ),
+        "{message}"
+    );
+    Ok(())
+}
+
 #[test]
 fn generates_write_helpers_with_defaults_and_serial() -> Result<()> {
     let dir = TempDir::new()?;

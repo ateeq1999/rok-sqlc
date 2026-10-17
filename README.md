@@ -301,7 +301,12 @@ pub struct Product {
 
 A composite primary key gets a key struct instead (`OrderItemKey`, with a
 `key()` accessor on the row). A foreign key to a table outside the run keeps
-its raw type.
+its raw type. An enum primary key's typed id wraps the enum
+(`PriorityNoteId(pub types::TicketPriority)`). Like the enum, it is neither
+`Ord` nor `Display`. Two tables whose struct names agree (`user` and `users`)
+both define `UserId`. A file that would import both, or an imported id named
+like one of the file's own items, fails the run. Rename one table under
+[`[modules]`](#rok-sqlctoml).
 
 **Create inputs and update patches.** `NewProduct` leaves out generated
 columns (serial, identity, `GENERATED`). A column with a default becomes an
@@ -487,7 +492,9 @@ are:
 - an `INSERT … VALUES` position, an `UPDATE … SET` target, or
   `ON CONFLICT … DO UPDATE SET`;
 - `LIMIT`/`OFFSET` (`i64`);
-- an explicit cast to a supported type.
+- an explicit cast to a supported type, including an enum type
+  (`$1::product_status` takes `types::ProductStatus`, and
+  `$1::product_status[]` a slice of them).
 
 A placeholder anywhere else fails generation. The error names the fix, a
 `-- param:` override.
@@ -681,8 +688,8 @@ relationship.
 Options come from four layers. The most specific wins:
 **flags > JSON payload (`-j`) > `rok-sqlc.toml` > defaults**. A list (such as
 `schema`, `queries` or `derive`) replaces the lower layer's list whole and is
-never appended to. `[conventions]` keys and `[relationships]` entries merge
-one by one.
+never appended to. `[conventions]` keys, `[relationships]` entries and
+`[modules]` entries merge one by one.
 
 ### `rok-sqlc.toml`
 
@@ -711,7 +718,16 @@ version_column     = "row_version"
 [relationships.invoices]     # by table, then by inferred relationship name
 created_by_user  = "author"  # rename: load_author, get_with_author, filter field author
 approved_by_user = false     # opt out, together with the other side
+
+[modules]                    # by table: generate it as another module
+"audit.users" = "audit_users"  # db::audit_users, with AuditUser and AuditUserId
 ```
+
+`[modules]` renames a table's module, and its row struct, typed id and key
+struct follow the new name. That's how same-named tables of two schemas
+(`core.users` and `audit.users`) both generate. A key is the table's
+schema-qualified name or its SQL name. A key that names no table, or a name
+that isn't a snake_case Rust identifier, fails the run.
 
 `[relationships]` entries are checked against the whole schema. An unknown
 table or relationship, an invalid name, or a rename that collides fails with
@@ -795,8 +811,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 The library never reads `rok-sqlc.toml` and never prints: a build script gets
 exactly the `Config` it built. Set `config.conventions`
 (`rok_sqlc::Conventions::rok()`), `config.derive`
-(`rok_sqlc::Derive::Serde`) and `config.relationships`
-(`rok_sqlc::RelationshipChange`) to match the config file's sections.
+(`rok_sqlc::Derive::Serde`), `config.relationships`
+(`rok_sqlc::RelationshipChange`) and `config.modules` to match the config
+file's sections.
 `Config` is `#[non_exhaustive]`, so start from `Config::default()` and set
 fields. The `Report` lists written, unchanged, refused and stale files and
 any skipped tables or queries.
@@ -866,12 +883,17 @@ generated code uses.
   and value-list `CHECK`s. Other `CHECK`s are ignored.
 - `ALTER TABLE`: `ADD COLUMN`, `DROP COLUMN`, `RENAME COLUMN`,
   `ADD CONSTRAINT` (primary key, unique, foreign key, value-list check;
-  other `CHECK`s are ignored, as in `CREATE TABLE`), and
-  `ENABLE`/`DISABLE ROW LEVEL SECURITY`.
+  other `CHECK`s are ignored, as in `CREATE TABLE`),
+  `ENABLE`/`DISABLE ROW LEVEL SECURITY`, and `ALTER COLUMN` with
+  `[SET DATA] TYPE` (with or without `USING`), `SET`/`DROP NOT NULL`,
+  `SET`/`DROP DEFAULT`, and `ADD GENERATED … AS IDENTITY`. The column ends up
+  in its final shape, and its keys follow a type change.
 - `CREATE UNIQUE INDEX` on plain columns, which becomes a unique key with a
   lookup. A partial index over live rows (`WHERE deleted_at IS NULL`) counts
   under the soft-delete convention. Expression indexes are ignored.
-- `CREATE TYPE … AS ENUM`, and `ALTER TYPE … ADD VALUE`/`RENAME VALUE`.
+- `CREATE TYPE … AS ENUM`, and `ALTER TYPE … ADD VALUE`/`RENAME VALUE`/
+  `RENAME TO`. A renamed enum takes the Rust name of its new name, and the
+  columns using it follow.
 - `DROP TABLE`, which removes the table, so its generated files become stale
   and are removed. Foreign keys other tables hold to it go too, as with
   `CASCADE`: those columns keep their raw type and lose the relationship.
@@ -898,9 +920,10 @@ problems count.
 | Column types not in the table above (network types, `MONEY`, ranges, …) | There is no chosen Rust mapping yet, and rok-sqlc doesn't guess one. |
 | `INTERVAL` and `TIME WITH TIME ZONE` with `derive = ["serde"]` | SQLx's `PgInterval` and `PgTimeTz` implement no serde traits, so the serde derives wouldn't compile. The whole run fails, even with `--lenient`. |
 | `NUMERIC(p, s)` with `p` > 28 | `rust_decimal` holds 28 significant digits, so the value would fail to decode at runtime. |
-| Other `ALTER TABLE` clauses (`ALTER COLUMN … TYPE`/`SET NOT NULL`, `RENAME TO`, …) | The table's shape after the change is unknown, so the table fails. |
-| Other `ALTER TYPE` clauses | The tables that use the type fail. |
-| A table whose module name is reserved or already taken | Its module would collide with a generated one. |
+| Other `ALTER TABLE` clauses (`RENAME TO`, `ALTER COLUMN … TYPE` to an unsupported type, `DROP NOT NULL` on a primary key column, …) | The table's shape after the change is unknown, so the table fails. |
+| An `ALTER TYPE` that can't be applied (an existing label or type name, an unknown label) | The tables that use the type fail. |
+| A table whose module name is reserved or already taken | Its module would collide with a generated one. Rename it in `[modules]`. |
+| Two typed ids of one name imported into one file, or an imported id named like one of the file's own items | The generated code wouldn't compile. Rename a module in `[modules]`. |
 | Columns whose filter or sort-key names collide (`weight` next to `weight_is_null`) | The generated code wouldn't compile. |
 | Two relationships of one table with the same name, or a relationship named like a filter field | Rename one in `[relationships]`. |
 | A soft-delete column that is not a nullable timestamp | `delete` couldn't record the time. |
@@ -917,9 +940,6 @@ problems count.
   unsupported, in tables and in query casts (`$1::inet`).
 - `INTERVAL` and `TIME WITH TIME ZONE` columns can't be generated with
   `derive = ["serde"]`.
-- Casts to enum types in query files (`$1::product_status`) are rejected.
-  Compare against the enum column instead (`status = $1`); that infers
-  `types::ProductStatus`.
 - Partial-index `ON CONFLICT` targets are rejected, including the
   soft-delete convention's `WHERE deleted_at IS NULL` unique indexes,
   because PostgreSQL infers a partial index only from a target that repeats
@@ -929,7 +949,9 @@ problems count.
 - Keyset pagination (`search_after`) follows primary-key order only. Array
   and JSON columns get only null checks in filters.
 - `WITH RECURSIVE` and data-modifying CTEs are rejected in query files.
-- `ALTER COLUMN` changes fail the table.
+- `ALTER COLUMN … DROP IDENTITY`, `SET STATISTICS`, `SET STORAGE`,
+  `DROP EXPRESSION`, and other `ALTER COLUMN` forms the SQL parser doesn't
+  know stop the run as a syntax error in their file, even with `--lenient`.
 - Typed ids and relationships cover only the tables generated together. A
   foreign key into another migration set keeps its raw type and makes no
   relationship.
