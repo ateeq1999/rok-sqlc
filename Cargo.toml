@@ -40,3 +40,8 @@ toml = "1"
 
 [dev-dependencies]
 tempfile = "3"
+
+# Release binaries (GitHub releases and `cargo install`) ship without debug
+# symbols; they are several megabytes of the binary's size.
+[profile.release]
+strip = true
