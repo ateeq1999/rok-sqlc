@@ -19,3 +19,14 @@ ALTER TABLE refunds ADD CONSTRAINT refunds_reason_known CHECK (reason IN ('damag
 
 -- A unique key added by a later migration: `products` gains `get_by_sku`.
 ALTER TABLE products ADD CONSTRAINT products_sku_key UNIQUE (sku);
+
+-- Column changes: `meter_readings` ends up in its final shape, and its
+-- primary key and unique key follow their columns' new types.
+ALTER TABLE meter_readings ALTER COLUMN id TYPE BIGINT;
+ALTER TABLE meter_readings ALTER COLUMN code SET DATA TYPE TEXT;
+ALTER TABLE meter_readings
+    ALTER COLUMN amount TYPE BIGINT USING amount::bigint,
+    ALTER COLUMN amount SET NOT NULL;
+ALTER TABLE meter_readings ALTER COLUMN label DROP DEFAULT;
+ALTER TABLE meter_readings ALTER COLUMN note DROP NOT NULL;
+ALTER TABLE meter_readings ALTER COLUMN views SET DEFAULT 0;

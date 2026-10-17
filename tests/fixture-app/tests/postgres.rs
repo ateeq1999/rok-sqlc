@@ -66,6 +66,7 @@ async fn generated_crud_against_postgres() {
     query_modules_per_file(&pool).await;
     search_filters_and_pages(&pool).await;
     altered_table_has_its_final_columns(&pool).await;
+    altered_columns_round_trip_in_their_final_shape(&pool).await;
     enums_keep_their_exact_labels(&pool).await;
     value_list_columns_round_trip(&pool).await;
     typed_ids_flow_from_rows_to_foreign_keys(&pool).await;
@@ -1368,6 +1369,54 @@ async fn altered_table_has_its_final_columns(pool: &PgPool) {
             headline: "renamed".to_owned(),
             body: "added".to_owned(),
         }
+    );
+}
+
+/// `meter_readings` is reshaped by alter_schema.sql's `ALTER COLUMN`
+/// changes; the generated code binds and reads every column in its final
+/// shape: widened `BIGINT` key and amount, a `TEXT` unique key, a `label`
+/// with no default, a nullable `note`, and a defaulted `views`.
+async fn altered_columns_round_trip_in_their_final_shape(pool: &PgPool) {
+    use db::meter_readings::models::{MeterReading, MeterReadingId, NewMeterReading};
+    use db::meter_readings::{read, write};
+
+    // Both exceed `i32`, which the columns were created as.
+    let id = MeterReadingId::from(5_000_000_001_i64);
+    let amount = 9_000_000_000_i64;
+    let created = write::create(
+        pool,
+        NewMeterReading {
+            id,
+            code: Some("M-1".to_owned()),
+            amount,
+            label: "kitchen".to_owned(),
+            note: None,
+            views: None,
+        },
+    )
+    .await
+    .unwrap();
+    let expected = MeterReading {
+        id,
+        code: Some("M-1".to_owned()),
+        amount,
+        label: "kitchen".to_owned(),
+        note: None,
+        views: 0,
+    };
+    assert_eq!(created, expected);
+    assert_eq!(read::get_by_id(pool, id).await.unwrap(), Some(expected.clone()));
+    assert_eq!(read::get_by_code(pool, "M-1").await.unwrap(), Some(expected));
+
+    // `label` lost its default, so the database now requires it, as the
+    // generated `NewMeterReading` does.
+    let missing_label = sqlx::query("INSERT INTO meter_readings (id, amount, views) VALUES (1, 1, 1)")
+        .execute(pool)
+        .await
+        .unwrap_err();
+    assert!(
+        missing_label.to_string().contains("label"),
+        "{missing_label}"
     );
 }
 
