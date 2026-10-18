@@ -207,6 +207,7 @@ enum IdGenerationName {
     UuidV4,
     UuidV7,
     Ulid,
+    Cuid2,
 }
 
 impl IdGenerationName {
@@ -216,6 +217,7 @@ impl IdGenerationName {
             IdGenerationName::UuidV4 => Some(IdGeneration::UuidV4),
             IdGenerationName::UuidV7 => Some(IdGeneration::UuidV7),
             IdGenerationName::Ulid => Some(IdGeneration::Ulid),
+            IdGenerationName::Cuid2 => Some(IdGeneration::Cuid2),
         }
     }
 }

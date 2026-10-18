@@ -98,6 +98,16 @@ fn generate_fixture() -> Result<Vec<PathBuf>> {
     validated.extractors = vec![rok_sqlc::Extractor::Axum, rok_sqlc::Extractor::ActixWeb];
     let report = rok_sqlc::generate(&validated)?;
     files.extend(report.written.into_iter().chain(report.unchanged));
+
+    // CUID2 text keys get a fourth `db` module, so `plain_db` keeps making
+    // UUID version 7 keys.
+    let mut cuid = rok_sqlc::Config::default();
+    cuid.schema = vec![app_dir().join("cuid_schema.sql")];
+    cuid.output = app_dir().join("src/cuid_db");
+    cuid.force = true;
+    cuid.conventions.primary_key_ids = Some(rok_sqlc::IdGeneration::Cuid2);
+    let report = rok_sqlc::generate(&cuid)?;
+    files.extend(report.written.into_iter().chain(report.unchanged));
     Ok(files)
 }
 

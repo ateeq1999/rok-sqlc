@@ -390,6 +390,7 @@ fn render_typed_id(output: &mut String, table: &Table, key: &Column, name: &str,
             IdGeneration::UuidV4 => "a random UUID (version 4)",
             IdGeneration::UuidV7 => "a UUID version 7, ordered by creation time",
             IdGeneration::Ulid => "a ULID, ordered by creation time",
+            IdGeneration::Cuid2 => "a CUID2, random and collision-resistant",
         };
         output.push_str(&format!("impl {name} {{\n"));
         push_doc(

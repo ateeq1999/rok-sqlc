@@ -55,6 +55,10 @@ async fn fresh_database() -> Option<PgPool> {
         .execute(&pool)
         .await
         .expect("apply the fixture schema generated without serde");
+    sqlx::raw_sql(rok_sqlc_fixture_app::cuid_db::schema::SCHEMA_SQL)
+        .execute(&pool)
+        .await
+        .expect("apply the fixture schema generated with CUID2 keys");
     Some(pool)
 }
 
@@ -76,6 +80,7 @@ async fn generated_crud_against_postgres() {
     keys::uuid_keys_listing_and_pagination(&pool).await;
     keys::composite_keys_arrays_and_numeric(&pool).await;
     keys::generated_uuid_v7_keys(&pool).await;
+    keys::generated_cuid2_keys(&pool).await;
     queries::annotated_queries(&pool).await;
     queries::query_modules_per_file(&pool).await;
     queries::partial_index_upserts_and_recursive_ctes(&pool).await;

@@ -198,7 +198,8 @@ pub struct Conventions {
     /// The version column, for optimistic concurrency on update.
     pub version_column: Option<String>,
     /// How generated code makes new primary key values for tables keyed by
-    /// one `UUID` column (or, with [`IdGeneration::Ulid`], one text column).
+    /// one `UUID` column (with [`IdGeneration::Ulid`] also one text column;
+    /// with [`IdGeneration::Cuid2`] one text column instead).
     /// Such a table's typed id gets a `generate()` constructor, and its
     /// `create` input takes the key as an `Option`: `None` inserts a new id
     /// made in Rust (over any database default). Off by default.
@@ -220,6 +221,9 @@ pub enum IdGeneration {
     /// 26-character text in a text key. Needs the `ulid` crate (with its
     /// `uuid` feature for `UUID` keys).
     Ulid,
+    /// A CUID2: 24 random, collision-resistant lowercase characters, for
+    /// text keys only (a `UUID` key is left alone). Needs the `cuid` crate.
+    Cuid2,
 }
 
 impl IdGeneration {
@@ -229,6 +233,7 @@ impl IdGeneration {
             IdGeneration::UuidV4 => "uuid_v4",
             IdGeneration::UuidV7 => "uuid_v7",
             IdGeneration::Ulid => "ulid",
+            IdGeneration::Cuid2 => "cuid2",
         }
     }
 }

@@ -638,14 +638,15 @@ preset = "rok"
 | `soft_delete_column` | `deleted_at` | `delete` sets it, `restore` clears it, and `delete_permanently` removes the row. Reads skip deleted rows, and filters get `include_deleted`. It must be a nullable `TIMESTAMP`/`TIMESTAMPTZ`. |
 | `managed_columns` | `["updated_at", "row_version"]` | Left out of create inputs and update patches, but kept in rows. The database maintains them. |
 | `version_column` | `row_version` | `update` takes `expected_version` and returns `UpdateOutcome` (optimistic concurrency). The column is always managed. |
-| `primary_key_ids` | off | `"uuid_v4"`, `"uuid_v7"` or `"ulid"`: the generated code makes new primary keys (see below). |
+| `primary_key_ids` | off | `"uuid_v4"`, `"uuid_v7"`, `"ulid"` or `"cuid2"`: the generated code makes new primary keys (see below). |
 
 Each explicit key overrides the preset's value. An empty string turns a
 single-column convention off (`version_column = ""`), and
 `primary_key_ids = "none"` turns key generation off.
 
 `primary_key_ids` applies to tables whose primary key is one `UUID` column,
-or with `"ulid"` also one text column. Their typed id gets a constructor
+or with `"ulid"` also one text column; `"cuid2"` applies to one text column
+only and leaves `UUID` keys alone. Their typed id gets a constructor
 (`EventId::generate()`), and `create` takes the id as an `Option`. `None`
 inserts a new id made in Rust, even when the column has a database default:
 
@@ -655,6 +656,7 @@ inserts a new id made in Rust, even when the column has a database default:
 | `uuid_v7` | `UUID` | `uuid::Uuid::now_v7()`, ordered by creation time | `uuid` with its `v7` feature |
 | `ulid` | `UUID` | `uuid::Uuid::from(ulid::Ulid::new())` | `ulid` with its `uuid` feature |
 | `ulid` | text | `ulid::Ulid::new().to_string()`, 26 characters | `ulid` |
+| `cuid2` | text | `cuid::cuid2()`, 24 characters | `cuid` 2 |
 
 The generated `mod.rs` lists these dependencies too.
 
@@ -935,7 +937,7 @@ user_setting       = "app.user_id"
 soft_delete_column = "deleted_at"
 managed_columns    = ["updated_at", "row_version"]
 version_column     = "row_version"
-primary_key_ids    = "uuid_v7"   # or "uuid_v4", "ulid", "none"
+primary_key_ids    = "uuid_v7"   # or "uuid_v4", "ulid", "cuid2", "none"
 
 [relationships.invoices]     # by table, then by inferred relationship name
 created_by_user  = "author"  # rename: load_author, get_with_author, filter field author
