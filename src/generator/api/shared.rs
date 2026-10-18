@@ -9,8 +9,8 @@
 
 use std::path::{Path, PathBuf};
 
-use super::HEADER;
 use crate::ApiConfig;
+use crate::generator::HEADER;
 
 /// The data-layer path the templates are written against.
 const TEMPLATE_DB_PATH: &str = "crate::db::";
@@ -349,6 +349,23 @@ impl<T> PaginatedResponse<T> {
         }
     }
 }
+
+/// `value` as one path segment, such as a key in a `Location`: every byte
+/// but the unreserved characters (`A-Z`, `a-z`, `0-9`, `-`, `.`, `_`, `~`)
+/// percent-encoded, so a `/` or a space in it stays inside the segment.
+#[must_use]
+pub fn path_segment(value: &impl std::fmt::Display) -> String {
+    let text = value.to_string();
+    let mut encoded = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
 "#;
 
 const TENANT: &str = r#"//! [`Tenant`]: the tenant of a request, as the auth middleware found it.
@@ -403,10 +420,33 @@ impl<T: Clone + 'static> FromRequest for Tenant<T> {
 }
 "#;
 
-const VALIDATION: &str = r#"//! Validated JSON bodies: a handler takes [`ValidatedJson`], which checks
-//! the body's rules and answers a bad body with a [`BodyRejection`] in the
-//! wire standard's error body.
+const VALIDATION: &str = r#"//! Reading a request: validated JSON bodies, and the wire standard's `400`
+//! for a malformed path or query.
+//!
+//! A handler takes [`ValidatedJson`], which checks the body's rules and
+//! answers a bad body with a [`BodyRejection`] in the wire standard's error
+//! body. Every feature's scope uses [`path_config`] and [`query_config`].
+
+use actix_web::web;
+
+use crate::error::AppError;
 
 pub use crate::db::http::BodyRejection;
 pub use crate::db::http::actix_web::ValidatedJson;
+
+/// The `web::PathConfig` of every feature's scope: a path that doesn't
+/// parse, such as `/notes/not-a-uuid`, is a `400` with `bad_request`.
+#[must_use]
+pub fn path_config() -> web::PathConfig {
+    web::PathConfig::default()
+        .error_handler(|error, _| AppError::BadRequest(error.to_string()).into())
+}
+
+/// The `web::QueryConfig` of every feature's scope: a query string that
+/// doesn't parse, such as `?page=abc`, is a `400` with `bad_request`.
+#[must_use]
+pub fn query_config() -> web::QueryConfig {
+    web::QueryConfig::default()
+        .error_handler(|error, _| AppError::BadRequest(error.to_string()).into())
+}
 "#;

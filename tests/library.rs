@@ -447,10 +447,11 @@ fn the_actix_web_extractor_is_generated_alone_or_beside_axum() -> Result<()> {
 
 /// `Config::api` is checked like the config file's `[api]`: it needs the
 /// derives and the actix-web extractor, its entries must fit the schema, and
-/// it adds only `db/pool.rs` to the generated data layer. The table `spans`, skipped
+/// it adds `db/pool.rs` and list reads to the generated data layer. The table `spans`, skipped
 /// as unsupported, is not generated, so the API can't name it.
 #[test]
-fn the_api_configuration_is_checked_and_adds_only_the_pool_to_the_data_layer() -> Result<()> {
+fn the_api_configuration_is_checked_and_adds_the_pool_and_list_reads_to_the_data_layer()
+-> Result<()> {
     use rok_sqlc::{ApiAccess, ApiConfig, ApiEndpoint, Derive, Extractor};
     let inputs = Inputs::new()?;
     let mut plain = inputs.config("plain");
@@ -477,19 +478,34 @@ fn the_api_configuration_is_checked_and_adds_only_the_pool_to_the_data_layer() -
     config.extractors = plain.extractors.clone();
     rok_sqlc::generate(&config)?;
     // The API adds `db/pool.rs` (declared in `db/mod.rs`, which hints
-    // `tracing`) and nothing else to the data layer.
+    // `tracing`), the list reads of `users` (declared in `users/mod.rs`) and
+    // the `q` helper in `search.rs` to the data layer, and nothing else.
     let mut generated = tree(&inputs.path("gen"))?;
     assert!(generated.remove(Path::new("pool.rs")).is_some());
+    assert!(
+        generated
+            .remove(&Path::new("users").join("listing.rs"))
+            .is_some()
+    );
+    let search = generated
+        .get_mut(Path::new("search.rs"))
+        .expect("search.rs");
+    let helper = search.find("\n/// Appends ` AND (").expect("the q helper");
+    search.truncate(helper);
     let mut plain_tree = tree(&inputs.path("plain"))?;
     for files in [&mut generated, &mut plain_tree] {
-        if let Some(text) = files.get_mut(Path::new("mod.rs")) {
+        for text in files.values_mut() {
             *text = text
                 .replace("pub mod pool;\n", "")
-                .replace("//   tracing = \"0.1\"\n", "");
+                .replace("//   tracing = \"0.1\"\n", "")
+                .replace(
+                    "/// The API list endpoint's page of rows and its sort keys.\npub mod listing;\n",
+                    "",
+                );
         }
     }
     assert_eq!(generated, plain_tree);
-    assert!(!inputs.path("features").exists());
+    assert!(inputs.path("features/users/service_api.rs").is_file());
 
     api.sort.insert("spans".into(), vec!["id".into()]);
     config.api = Some(api);

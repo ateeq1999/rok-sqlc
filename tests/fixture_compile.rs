@@ -342,16 +342,49 @@ fn generate_api_app() -> Result<Vec<PathBuf>> {
     copy_skeleton(&scratch.path().join("src"), &api_app_dir().join("src"))?;
 
     let mut config = rok_sqlc::Config::default();
-    config.schema = vec![api_app_dir().join("migrations")];
     config.output = api_app_dir().join("src/db");
     config.force = true;
     // What `init`'s `rok-sqlc.toml` sets.
     config.derive = vec![rok_sqlc::Derive::Serde, rok_sqlc::Derive::Validate];
     config.extractors = vec![rok_sqlc::Extractor::ActixWeb];
     config.conventions.primary_key_ids = Some(rok_sqlc::IdGeneration::UuidV7);
-    config.api = Some(rok_sqlc::ApiConfig::new(api_app_dir().join("src/features")));
+    let mut api = rok_sqlc::ApiConfig::new(api_app_dir().join("src/features"));
+    let names = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
+    api.search.insert("notes".into(), names(&["title", "body"]));
+    api.search.insert("labels".into(), names(&["name"]));
+    api.sort
+        .insert("notes".into(), names(&["title", "priority", "created_at"]));
+    api.skip
+        .insert("labels".into(), vec![rok_sqlc::ApiEndpoint::Remove]);
+    api.routes
+        .insert("audit_events".into(), "/audit-log".to_owned());
+    config.api = Some(api);
+
+    // The regeneration scenario: the features are generated from the first
+    // migration, where `drafts` has no key, then from both, where it has
+    // one. The fixture's own `drafts/service.rs` survives both runs as it
+    // is checked in, and compiles against the trait the second run widens.
+    let service = api_app_dir().join("src/features/drafts/service.rs");
+    let checked_in = std::fs::read(&service).context("read drafts/service.rs")?;
+    config.schema = vec![api_app_dir().join("migrations/0001_notes.sql")];
+    let first = rok_sqlc::generate(&config)?;
+    config.schema = vec![api_app_dir().join("migrations")];
     let report = rok_sqlc::generate(&config)?;
-    Ok(report.written.into_iter().chain(report.unchanged).collect())
+    ensure!(
+        std::fs::read(&service)? == checked_in,
+        "regeneration changed the scaffolded drafts/service.rs"
+    );
+    for run in [&first, &report] {
+        ensure!(
+            !run.written.contains(&service) && !run.scaffolded.contains(&service),
+            "regeneration wrote the scaffolded drafts/service.rs"
+        );
+    }
+    // The Rust files: `README.md` is generated too.
+    let files = report.written.into_iter().chain(report.unchanged);
+    Ok(files
+        .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+        .collect())
 }
 
 /// Copies the files under `from` to `to`, all but `from/main.rs`.
@@ -431,6 +464,92 @@ fn api_app_generated_code_is_rustfmt_clean() -> Result<()> {
         output.status.success(),
         "generated API code is not rustfmt-clean:\n{}",
         String::from_utf8_lossy(&output.stdout)
+    );
+    Ok(())
+}
+
+/// The project `rok-sqlc init` scaffolds, as a user gets it: `init`, a
+/// migration, `rok-sqlc g` reading `init`'s `rok-sqlc.toml`, and a
+/// `Cargo.toml` holding exactly the dependencies the two hint at (`init`'s
+/// `rok-sqlc.toml` and the generated `src/db/mod.rs`). The binary builds.
+#[test]
+fn init_then_generate_builds_end_to_end() -> Result<()> {
+    if let Some(reason) = common::generated_code_skip_reason(&api_app_dir()) {
+        eprintln!("{reason}");
+        return Ok(());
+    }
+    let project = tempfile::TempDir::new()?;
+    let dir = project.path();
+    let rok_sqlc = |args: &[&str]| -> Result<()> {
+        let output = Command::new(env!("CARGO_BIN_EXE_rok-sqlc"))
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .context("failed to run rok-sqlc")?;
+        ensure!(
+            output.status.success(),
+            "rok-sqlc {args:?} failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    };
+    rok_sqlc(&["init"])?;
+    std::fs::write(
+        dir.join("migrations/0001_init.sql"),
+        "CREATE TABLE users (
+    id UUID PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE posts (
+    id UUID PRIMARY KEY,
+    author_id UUID NOT NULL REFERENCES users (id),
+    title TEXT NOT NULL CHECK (char_length(title) <= 120)
+);
+",
+    )?;
+    rok_sqlc(&["g"])?;
+
+    // The dependency lines of `rok-sqlc.toml`'s `# [dependencies]` block,
+    // then the data layer's `//   name = ...` lines, which win a tie.
+    let mut dependencies = std::collections::BTreeMap::new();
+    let toml = std::fs::read_to_string(dir.join("rok-sqlc.toml"))?;
+    let block = toml
+        .lines()
+        .skip_while(|line| *line != "# [dependencies]")
+        .skip(1)
+        .take_while(|line| *line != "#")
+        .filter_map(|line| line.strip_prefix("# "));
+    let db_mod = std::fs::read_to_string(dir.join("src/db/mod.rs"))?;
+    let generated = db_mod.lines().filter_map(|line| line.strip_prefix("//   "));
+    for hint in block.chain(generated) {
+        if let Some((name, _)) = hint.split_once(" = ") {
+            dependencies.insert(name.to_owned(), hint.to_owned());
+        }
+    }
+    ensure!(
+        dependencies.contains_key("actix-web") && dependencies.contains_key("sqlx"),
+        "the hints name no dependencies: {dependencies:?}"
+    );
+    let manifest = format!(
+        "[package]\nname = \"init-e2e\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[dependencies]\n{}\n",
+        dependencies
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    std::fs::write(dir.join("Cargo.toml"), &manifest)?;
+    // Resolve against the API fixture's lock file, not the newest releases.
+    std::fs::copy(api_app_dir().join("Cargo.lock"), dir.join("Cargo.lock"))?;
+
+    let output = cargo(dir, &["build", "--quiet"])
+        .output()
+        .context("failed to run cargo build")?;
+    ensure!(
+        output.status.success(),
+        "the project `init` and `g` made does not build:\n{manifest}\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
     Ok(())
 }

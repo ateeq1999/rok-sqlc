@@ -11,3 +11,7 @@ tests/api-app/src/error.rs
 tests/api-app/src/db/
 tests/api-app/src/shared/
 tests/api-app/src/features/mod.rs
+tests/api-app/src/features/generated.rs
+tests/api-app/src/features/README.md
+tests/api-app/src/features/*/*
+!tests/api-app/src/features/drafts/service.rs

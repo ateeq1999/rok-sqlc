@@ -29,8 +29,8 @@ the *generated* API count as breaking (see ADR 0012).
   `exclude`, and the table-keyed `[api.skip]`, `[api.routes]`,
   `[api.access]`, `[api.owner]`, `[api.hidden]`, `[api.search]` and
   `[api.sort]`, in the config file and the JSON payload. The library takes
-  it as `Config::api` (`ApiConfig`, `ApiAccess`, `ApiEndpoint`). It is
-  checked against the schema but generates nothing yet.
+  it as `Config::api` (`ApiConfig`, `ApiAccess`, `ApiEndpoint`), checked
+  against the schema. `access`, `owner` and `hidden` take effect later.
 - With `api.output`, a run generates the infrastructure of ADR 0016:
   `db/pool.rs` (`PoolSettings`, `init_pool`, `check_health`) and, in
   `shared/` beside the features directory, `response.rs`
@@ -38,6 +38,21 @@ the *generated* API count as breaking (see ADR 0012).
   `Pagination`, `SortOrder`), `validation.rs`, `tenant.rs` (`Tenant<T>`) and
   `health.rs` (`/health/live`, `/health/ready`). Paths into the data
   layer follow `api.db_path`.
+- API features (ADR 0016): with `api.output`, every table but join tables
+  and `api.exclude`d ones gets `api.output/<module>/` with `mod.rs`,
+  `routes.rs`, `handlers.rs`, `dto.rs` (`CreateXDto`, `UpdateXDto`,
+  `XResponse`, `ListXsQuery`), `model.rs`, `repo.rs`, `service_api.rs` (the
+  `XsServiceApi` trait with a default per endpoint, each write split into
+  `<write>_in` on the caller's connection and `<write>` in a transaction)
+  and a scaffolded `service.rs`; plus `generated.rs` (`register_services`,
+  `configure_all`) and `README.md`. Endpoints: `GET /` (`page`, `per_page`,
+  `q`, `sort`, `order`), `POST /` (`201` with `Location`), and `GET`,
+  `PATCH` and `DELETE /{key}`; `[api.skip]` drops any. The data layer
+  gains `<table>/listing.rs` (`XSort`, `list_matching`, `count_matching`)
+  and `search::push_contains_any`; `shared/` gains `response::path_segment`
+  and `validation::{path_config, query_config}`. Tables with a tenant or
+  version column are refused for now. Generated files under `api.output`
+  and `shared/` are removed once stale; scaffolded ones never are.
 - `rok-sqlc init [DIR]` scaffolds the actix-web application skeleton of
   ADR 0016 (`rok-sqlc.toml`, `migrations/`, `src/{main,app,config,error}.rs`,
   `src/shared/{mod,auth}.rs`, `src/features/mod.rs` and `AGENTS.md`), each

@@ -2,9 +2,9 @@
 //! compiled with the generated data layer, shared tools and API features.
 //!
 //! `tests/fixture_compile.rs` in rok-sqlc writes everything but this file,
-//! `main.rs` and the `features/generated.rs` stand-in: the skeleton comes
-//! from `rok-sqlc init`, the rest from `rok-sqlc g`, and none of it is
-//! checked in. The skeleton's modules are declared here, not in `main.rs`,
+//! `main.rs` and `features/drafts/service.rs` (a scaffolded service the
+//! fixture changed): the skeleton comes from `rok-sqlc init`, the rest from
+//! `rok-sqlc g`, and none of it is checked in. The skeleton's modules are declared here, not in `main.rs`,
 //! so the integration tests can build the application. The lints below are
 //! the generated-code quality bar (ADR 0013), with the ones the generated
 //! actix-web code passes too.

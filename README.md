@@ -989,7 +989,12 @@ With `output`, a run also generates `db/pool.rs` in the data layer
 (`PoolSettings`, `init_pool`, `check_health`) and the shared tools in
 `shared/`, the directory beside `output`: `response.rs`, `pagination.rs`,
 `validation.rs`, `tenant.rs` and `health.rs`. `rok-sqlc init` scaffolds
-`shared/mod.rs`, which declares them.
+`shared/mod.rs`, which declares them. Each table but join tables and
+`exclude`d ones gets an API feature in `output/<module>/`, whose list reads
+go in the data layer's `<table>/listing.rs`; `output/generated.rs` declares
+the features and `output/README.md` maps which files are generated and
+which (`service.rs`) are yours. Generated files there and in `shared/` are
+removed once stale.
 
 `[modules]` renames a table's module, and its row struct, typed id and key
 struct follow the new name. That's how same-named tables of two schemas

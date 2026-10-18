@@ -213,6 +213,23 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
         let dir = output_dir.join(&table.module_name);
         stale.retain(|path| !path.starts_with(&dir));
     }
+    // `api.output` and `shared/` hold generated files beside the user's
+    // own: a generated one this run doesn't produce is stale too. Scaffolded
+    // files lack the generated marker, so they never are.
+    let mut stale_roots = vec![(output_dir.clone(), stale)];
+    if let Some(api) = &config.api {
+        for root in generator::api_owned_dirs(api) {
+            let found: Vec<PathBuf> = output::find_stale(&root, &keep)?
+                .into_iter()
+                .filter(|path| !stale_roots.iter().any(|(_, seen)| seen.contains(path)))
+                .collect();
+            stale_roots.push((root, found));
+        }
+    }
+    let stale: Vec<PathBuf> = stale_roots
+        .iter()
+        .flat_map(|(_, paths)| paths.iter().cloned())
+        .collect();
 
     if config.check {
         (report.missing, report.changed) = output::compare_files(&files)?;
@@ -244,7 +261,9 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
     report.written = applied.written;
     report.scaffolded = applied.scaffolded;
     if !dry_run {
-        output::remove_stale(output_dir, &stale)?;
+        for (root, paths) in &stale_roots {
+            output::remove_stale(root, paths)?;
+        }
     }
     report.stale = stale;
     Ok(())

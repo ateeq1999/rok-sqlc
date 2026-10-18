@@ -71,29 +71,67 @@ fn stderr(output: &Output) -> String {
 }
 
 #[test]
-fn an_api_section_adds_only_the_pool_and_the_shared_tools() -> Result<()> {
+fn an_api_section_adds_the_features_the_pool_and_the_shared_tools() -> Result<()> {
     let with_api = api_project(FULL_API)?;
     let without = api_project("")?;
 
     assert_success(&run_binary_in(with_api.path(), &["g"]));
     assert_success(&run_binary_in(without.path(), &["g"]));
 
-    // The data layer gains `pool.rs`, declared in `mod.rs`, and nothing else.
+    // The data layer gains `pool.rs`, declared in `mod.rs`, the list reads
+    // of each table with a feature (`audit_log` is excluded), declared in
+    // its `mod.rs`, and the `q` helper in `search.rs`. Nothing else changes.
     let mut with_pool = read_tree(&with_api.path().join("out"))?;
     assert!(with_pool.remove(Path::new("pool.rs")).is_some());
+    for table in ["users", "posts"] {
+        let listing = Path::new(table).join("listing.rs");
+        assert!(with_pool.remove(&listing).is_some(), "{listing:?}");
+    }
+    assert!(!with_pool.contains_key(Path::new("audit_log/listing.rs")));
+    let search = with_pool
+        .get_mut(Path::new("search.rs"))
+        .expect("search.rs");
+    let helper = search
+        .find("\n/// Appends ` AND (<column> ILIKE <pattern> OR ...)`")
+        .expect("the q helper");
+    search.truncate(helper);
     let mut plain = read_tree(&without.path().join("out"))?;
     for files in [&mut with_pool, &mut plain] {
-        if let Some(text) = files.get_mut(Path::new("mod.rs")) {
+        for text in files.values_mut() {
             *text = text
                 .replace("pub mod pool;\n", "")
-                .replace("//   tracing = \"0.1\"\n", "");
+                .replace("//   tracing = \"0.1\"\n", "")
+                .replace(
+                    "/// The API list endpoint's page of rows and its sort keys.\npub mod listing;\n",
+                    "",
+                );
         }
     }
     assert_eq!(with_pool, plain);
     let shared = read_tree(&with_api.path().join("src/shared"))?;
     assert_eq!(shared.len(), 5, "{:?}", shared.keys());
     assert!(!without.path().join("src").exists());
-    assert!(!with_api.path().join("src/features").exists());
+
+    // The features: `users` under its configured route base and the
+    // `/api/v2` prefix, and `posts` without `remove`.
+    let features = read_tree(&with_api.path().join("src/features"))?;
+    let modules: Vec<&Path> = features
+        .keys()
+        .filter_map(|path| path.parent())
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .collect();
+    assert!(
+        modules
+            .iter()
+            .all(|dir| *dir == Path::new("users") || *dir == Path::new("posts"))
+    );
+    let routes = &features[Path::new("users/routes.rs")];
+    assert!(
+        routes.contains("web::scope(\"/api/v2/members\")"),
+        "{routes}"
+    );
+    let routes = &features[Path::new("posts/routes.rs")];
+    assert!(!routes.contains("handlers::remove"), "{routes}");
     Ok(())
 }
 
