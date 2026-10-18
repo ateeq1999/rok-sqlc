@@ -136,7 +136,7 @@ fn render_handler(output: &mut String, uses: &mut Uses, feature: &Feature<'_>, e
     if endpoint == Endpoint::Update && feature.version.is_some() {
         doc.push("`If-Match` must hold the row's current `ETag`.".to_owned());
     }
-    let includes = endpoint == Endpoint::GetOne && relation_routes::has_includes(feature);
+    let includes = endpoint == Endpoint::GetOne && !feature.includes().is_empty();
     if includes {
         doc.push("`?include=` embeds a to-one relationship.".to_owned());
     }

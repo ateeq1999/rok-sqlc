@@ -393,9 +393,11 @@ fn digest(text: &str) -> u64 {
 /// The record was made with milestone 1's binary (commit a685022) and
 /// differs from it only where a later change was meant to reach output
 /// without OpenAPI too: `db/pool.rs`'s doc comments (the 0.4 CI fixes) and
-/// health's handlers, renamed `liveness` and `readiness` (milestone 2). To
-/// rewrite it after another such change, run
-/// `ROK_SQLC_UPDATE_SNAPSHOTS=1 cargo test --test api_openapi`, and diff
+/// health's handlers, renamed `liveness` and `readiness` (milestone 2), and
+/// the milestone 2 review: plain backticks for doc links an OpenAPI
+/// description would show, and `PageQuery`, without `q`, for the lists of
+/// tables with no search columns. To rewrite it after another such change,
+/// run `ROK_SQLC_UPDATE_EXPECTED=1 cargo test --test api_openapi`, and diff
 /// the output against that commit's binary to check nothing else moved.
 #[test]
 fn without_openapi_the_output_is_milestone_1s() -> Result<()> {
@@ -426,7 +428,7 @@ fn without_openapi_the_output_is_milestone_1s() -> Result<()> {
         let text = text.replace("\r\n", "\n");
         record.push_str(&format!("{:016x} {path}\n", digest(&text)));
     }
-    if std::env::var_os("ROK_SQLC_UPDATE_SNAPSHOTS").is_some() {
+    if std::env::var_os("ROK_SQLC_UPDATE_EXPECTED").is_some() {
         fs::write(milestone_1_record(), &record)?;
         return Ok(());
     }

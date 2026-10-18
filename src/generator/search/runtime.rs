@@ -1,7 +1,9 @@
 //! The shared `db/search.rs` runtime module every resource's search uses.
 
 use crate::generator::openapi::TO_SCHEMA;
-use crate::generator::{DeriveOptions, HEADER, push_derives, push_serde_snake_case, serde_derives};
+use crate::generator::{
+    DeriveOptions, HEADER, push_derives, push_serde_snake_case, replace_once, serde_derives,
+};
 
 /// The `Ordered::Between` variant, which utoipa 5 can't describe as two
 /// values of a generic type: with `openapi`, it is described as any value.
@@ -32,15 +34,12 @@ pub fn render_shared(derives: DeriveOptions) -> String {
     }
     output.push_str(SHARED[SHARED.len() - 1]);
     if derives.openapi {
-        output = output.replacen(
+        let between = replace_once(
             BETWEEN,
-            &BETWEEN.replacen(
-                "    Between",
-                "    #[schema(value_type = Value)]\n    Between",
-                1,
-            ),
-            1,
+            "    Between",
+            "    #[schema(value_type = Value)]\n    Between",
         );
+        output = replace_once(&output, BETWEEN, &between);
     }
     output
 }
@@ -410,3 +409,21 @@ where
 }
 "#,
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The template still holds [`BETWEEN`]: a patch that misses panics in a
+    /// debug build.
+    #[test]
+    fn between_is_described_as_any_value() {
+        let derives = DeriveOptions {
+            serde: true,
+            validate: false,
+            openapi: true,
+        };
+        let text = render_shared(derives);
+        assert!(text.contains("    #[schema(value_type = Value)]\n    Between(T, T),\n"));
+    }
+}

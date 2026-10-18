@@ -38,7 +38,7 @@ pub fn render_dto<'a>(
             "`per_page` page them, as the list's query does.",
         ],
     );
-    push_search_derives(output, feature.openapi);
+    push_search_derives(output, feature);
     let default = feature
         .default_sort()
         .map(|column| column.sql_name.clone())
@@ -50,7 +50,7 @@ pub fn render_dto<'a>(
         ""
     };
     output.push_str(&format!(
-        "pub struct {body} {{\n    /// The conditions rows must meet.\n    #[validate(nested)]\n{filter_default}    pub filter: {filter},\n    /// A [`{sort}`] key, `{default}` unless given.\n    #[validate(custom(function = \"sort_key\"))]\n    pub sort: Option<String>,\n    /// The order, `desc` unless given.\n    pub order: Option<SortOrder>,\n    /// The page, from 1.\n    pub page: Option<u32>,\n    /// The rows per page: 20 unless given, at most 100.\n    pub per_page: Option<u32>,\n}}\n"
+        "pub struct {body} {{\n    /// The conditions rows must meet.\n    #[validate(nested)]\n{filter_default}    pub filter: {filter},\n    /// A `{sort}` key, `{default}` unless given.\n    #[validate(custom(function = \"sort_key\"))]\n    pub sort: Option<String>,\n    /// The order, `desc` unless given.\n    pub order: Option<SortOrder>,\n    /// The page, from 1.\n    pub page: Option<u32>,\n    /// The rows per page: 20 unless given, at most 100.\n    pub per_page: Option<u32>,\n}}\n"
     ));
 
     let db_filter = feature.db_filter();
@@ -60,11 +60,11 @@ pub fn render_dto<'a>(
         output,
         0,
         &[
-            &format!("The search body's conditions by column: [`{db_filter}`] without its"),
+            &format!("The search body's conditions by column: `{db_filter}` without its"),
             "relationship filters. A hidden column can't be named.",
         ],
     );
-    push_search_derives(output, feature.openapi);
+    push_search_derives(output, feature);
     output.push_str(&format!("pub struct {filter} {{\n"));
     let mut columns = Vec::new();
     let mut fields = Vec::new();
@@ -180,12 +180,12 @@ pub fn render_dto<'a>(
 }
 
 /// The attributes of the search body and its filter, which deny unknown
-/// fields; with `openapi`, they derive `ToSchema`.
-fn push_search_derives(output: &mut String, openapi: bool) {
+/// fields; with `feature.openapi`, they derive `ToSchema`.
+fn push_search_derives(output: &mut String, feature: &Feature<'_>) {
     output.push_str(
         "#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize, validator::Validate)]\n",
     );
-    push_to_schema(output, openapi);
+    push_to_schema(output, feature.openapi);
     output.push_str("#[serde(default, deny_unknown_fields)]\n");
 }
 

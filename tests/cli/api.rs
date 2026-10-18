@@ -376,3 +376,43 @@ fn api_keys_layer_across_the_file_the_payload_and_the_flag() -> Result<()> {
     );
     Ok(())
 }
+
+/// `init` scaffolds `src/openapi.rs` over the generated `GeneratedApiDoc`
+/// and never rewrites it, so turning the document off leaves it naming a
+/// type that is no longer generated: `g` says which files to edit.
+#[test]
+fn openapi_off_warns_about_a_scaffolded_document() -> Result<()> {
+    let config = "[api]\noutput = \"src/features\"\nopenapi = false\n";
+    let dir = api_project(config)?;
+    let output = run_binary_in(dir.path(), &["g"]);
+    assert_success(&output);
+    assert!(!stderr(&output).contains("warning"), "{}", stderr(&output));
+
+    fs::write(
+        dir.path().join("src/openapi.rs"),
+        "use crate::features::GeneratedApiDoc;\n",
+    )?;
+    let output = run_binary_in(dir.path(), &["g"]);
+    assert_success(&output);
+    let warning = stderr(&output);
+    for expected in [
+        "warning: `[api] openapi = false`",
+        "src/openapi.rs",
+        "GeneratedApiDoc",
+        "docs/guide/openapi.md",
+    ] {
+        assert!(warning.contains(expected), "{expected}: {warning}");
+    }
+
+    // With the document on, the file is what `init` meant.
+    fs::write(
+        dir.path().join("rok-sqlc.toml"),
+        format!(
+            "schema = \"schema.sql\"\noutput = \"out\"\n{API_OPTIONS}\n[api]\noutput = \"src/features\"\n"
+        ),
+    )?;
+    let output = run_binary_in(dir.path(), &["g"]);
+    assert_success(&output);
+    assert!(!stderr(&output).contains("warning"), "{}", stderr(&output));
+    Ok(())
+}

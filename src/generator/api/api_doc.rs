@@ -6,7 +6,7 @@
 
 use super::feature::{Endpoint, Feature};
 use super::paths::handler_names;
-use super::relations::Kind;
+use super::schemas::{HEALTH_ROUTES, HEALTH_TAG};
 
 /// The imports `generated.rs` needs for the addon.
 pub const USES: &str = "use utoipa::openapi::Components;
@@ -15,15 +15,15 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 
 /// `GeneratedApiDoc` and its `BearerAuth` addon, over `features`.
 pub fn render(features: &[Feature<'_>]) -> String {
-    let mut paths = vec![
-        "crate::shared::health::liveness".to_owned(),
-        "crate::shared::health::readiness".to_owned(),
-    ];
+    let mut paths: Vec<String> = HEALTH_ROUTES
+        .iter()
+        .map(|route| format!("crate::shared::health::{}", route.handler))
+        .collect();
     // The sort keys and `?include=` names are `$ref`s from the params,
     // which utoipa doesn't follow, and an embedding's response is only
     // described in prose.
     let mut schemas = vec!["crate::shared::pagination::SortOrder".to_owned()];
-    let mut tags = vec!["health".to_owned()];
+    let mut tags = vec![HEALTH_TAG.to_owned()];
     for feature in features {
         let module = feature.module();
         let names = handler_names(feature);
@@ -38,11 +38,7 @@ pub fn render(features: &[Feature<'_>]) -> String {
         if feature.serves(Endpoint::List) || feature.serves(Endpoint::Search) {
             schemas.push(format!("{module}::dto::{}", feature.sort_enum()));
         }
-        let includes: Vec<_> = feature
-            .relations
-            .iter()
-            .filter(|relation| matches!(relation.kind, Kind::ToOne { .. }))
-            .collect();
+        let includes = feature.includes();
         if !includes.is_empty() {
             schemas.push(format!("{module}::dto::{}", feature.include_enum()));
             schemas.extend(
@@ -87,9 +83,11 @@ pub struct BearerAuth;
 
 impl utoipa::Modify for BearerAuth {{
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {{
+        let description = \"A JWT the application signed, sent as `Bearer <token>`.\";
         let scheme = HttpBuilder::new()
             .scheme(HttpAuthScheme::Bearer)
             .bearer_format(\"JWT\")
+            .description(Some(description))
             .build();
         openapi
             .components

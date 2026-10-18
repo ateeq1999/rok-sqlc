@@ -202,6 +202,31 @@ fn a_table_without_a_key_serves_list_and_create_and_skips_drop_methods() -> Resu
     Ok(())
 }
 
+/// A feature serving only its list declares no `404` helper, which nothing
+/// would call: `-D warnings` rejects dead code.
+#[test]
+fn a_list_only_feature_declares_no_unused_helper() -> Result<()> {
+    let project = Project::new(SCHEMA)?;
+    let mut config = project.config();
+    api(&mut config).skip.insert(
+        "users".into(),
+        vec![
+            ApiEndpoint::Create,
+            ApiEndpoint::GetOne,
+            ApiEndpoint::Update,
+            ApiEndpoint::Remove,
+        ],
+    );
+    rok_sqlc::generate(&config)?;
+    let service = project.read("src/features/users/service_api.rs")?;
+    assert!(service.contains("async fn list("), "{service}");
+    assert!(!service.contains("not_found"), "{service}");
+    // A feature reading its rows by key keeps it.
+    let service = project.read("src/features/posts/service_api.rs")?;
+    assert!(service.contains("fn not_found() -> AppError"), "{service}");
+    Ok(())
+}
+
 /// Generated files under `api.output` and the generated tools in `shared/`
 /// are stale once nothing plans them, like `db/`'s; the user's files there,
 /// scaffolded `service.rs` files included, never are.

@@ -7,8 +7,10 @@ document at `/api-docs/openapi.json` with Swagger UI at `/docs/`. The
 samples on this page come from [`docs/examples/api`](../examples/api).
 
 `[api] openapi = false` turns all of it off. The generated files then
-mention no utoipa, exactly as before the document existed, and you can
-leave both dependencies out.
+mention no utoipa, exactly as before the document existed. The files
+`init` scaffolded are yours and are never rewritten, so in a project
+`init` started, turning the document off takes the edits in
+[Turning the document off](#turning-the-document-off).
 
 ## What is generated
 
@@ -39,6 +41,9 @@ The request and response bodies derive `ToSchema`, and the query strings
 `IntoParams`; the data layer's typed ids, enums, sort keys and search
 conditions derive `ToSchema` too. A typed id shows as its inner type (a
 UUID is `{"type": "string", "format": "uuid"}`), and an enum by its labels.
+A list takes and documents `q` only when its table has `[api.search]`
+columns; its query string is then the shared `ListQuery`, otherwise
+`PageQuery`, which has no `q`.
 
 `features/generated.rs` collects every generated path, the schemas utoipa
 can't reach from them, one tag per feature, and the `bearer_auth` security
@@ -146,3 +151,24 @@ rok-sqlc generated the document keeps its `lib.rs` and `app.rs`. After
 4. in `app.rs`, `use utoipa_swagger_ui::SwaggerUi;`,
    `use crate::openapi::document;` and the two `cfg.service(...)` lines of
    `configure`.
+
+## Turning the document off
+
+With `[api] openapi = false`, `rok-sqlc g` stops generating
+`GeneratedApiDoc` and every utoipa annotation, but the files `init`
+scaffolded still use them, so the project doesn't build until you remove
+the document's wiring by hand. `rok-sqlc g` warns while `src/openapi.rs`
+still uses `GeneratedApiDoc`. Remove:
+
+1. `src/openapi.rs`: delete the file;
+2. in `src/lib.rs`, the line `pub mod openapi;`;
+3. in `src/app.rs`, the lines `use utoipa_swagger_ui::SwaggerUi;` and
+   `use crate::openapi::document;`, and the two-line statement in
+   `configure` starting `cfg.service(web::redirect("/docs", "/docs/")`,
+   which serves the document and Swagger UI;
+4. in `Cargo.toml`, the `utoipa-swagger-ui` dependency (`init`'s
+   `rok-sqlc.toml` lists it) and `utoipa`, which the generated
+   `src/db/mod.rs` no longer lists.
+
+To turn the document back on, set `openapi = true` (or remove the key)
+and undo these edits: `rok-sqlc init` writes `src/openapi.rs` again.

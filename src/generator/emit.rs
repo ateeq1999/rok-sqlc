@@ -88,6 +88,18 @@ impl DeriveOptions {
     }
 }
 
+/// `template` with the first `pattern` replaced by `with`. A template
+/// written without `pattern` is a bug in the template or in its patch, so a
+/// debug build panics instead of leaving the text silently unpatched; each
+/// patched template has a unit test running its patches.
+pub fn replace_once(template: &str, pattern: &str, with: &str) -> String {
+    debug_assert!(
+        template.contains(pattern),
+        "the template no longer holds {pattern:?}"
+    );
+    template.replacen(pattern, with, 1)
+}
+
 /// Adds `extra` derives to the `#[derive(...)]` line `output` ends with, laid
 /// out as rustfmt lays out a derive list: on one line when it fits,
 /// otherwise one derive per line. No `extra` derive leaves `output` as is.

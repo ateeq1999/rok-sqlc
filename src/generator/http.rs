@@ -4,24 +4,24 @@
 
 use std::path::Path;
 
-use super::HEADER;
+use super::{DeriveOptions, HEADER, replace_once};
 use crate::Extractor;
 
 /// The module `extractors` generates, and so reserves while they are set.
 pub const MODULE: &str = "http";
 
 /// The `db/http/` files for `extractors`, under `output`; none without
-/// extractors. With `openapi`, the error body derives `ToSchema`.
+/// extractors. With `derives.openapi`, the error body derives `ToSchema`.
 pub fn render(
     output: &Path,
     extractors: &[Extractor],
-    openapi: bool,
+    derives: DeriveOptions,
 ) -> Vec<(std::path::PathBuf, String)> {
     if extractors.is_empty() {
         return Vec::new();
     }
     let dir = output.join(MODULE);
-    let mut files = vec![(dir.join("mod.rs"), render_mod(extractors, openapi))];
+    let mut files = vec![(dir.join("mod.rs"), render_mod(extractors, derives))];
     if extractors.contains(&Extractor::ActixWeb) {
         files.push((dir.join("actix_web.rs"), format!("{HEADER}\n{ACTIX_WEB}")));
     }
@@ -32,7 +32,7 @@ pub fn render(
 }
 
 /// `db/http/mod.rs`: a module per framework, then the shared items.
-fn render_mod(extractors: &[Extractor], openapi: bool) -> String {
+fn render_mod(extractors: &[Extractor], derives: DeriveOptions) -> String {
     let mut output = format!("{HEADER}\n{MOD_DOC}\n");
     // Sorted the way rustfmt sorts `mod` declarations.
     if extractors.contains(&Extractor::ActixWeb) {
@@ -42,7 +42,7 @@ fn render_mod(extractors: &[Extractor], openapi: bool) -> String {
         output.push_str("pub mod axum;\n");
     }
     output.push('\n');
-    if openapi {
+    if derives.openapi {
         output.push_str(&described(SHARED));
     } else {
         output.push_str(SHARED);
@@ -55,16 +55,16 @@ fn render_mod(extractors: &[Extractor], openapi: bool) -> String {
 fn described(shared: &str) -> String {
     let mut text = shared.to_owned();
     for item in ["pub struct ErrorBody {", "pub struct ErrorPayload {"] {
-        text = text.replacen(
+        text = replace_once(
+            &text,
             &format!("Serialize, Deserialize)]\n{item}"),
             &format!("Serialize, Deserialize, utoipa::ToSchema)]\n{item}"),
-            1,
         );
     }
-    text.replacen(
+    replace_once(
+        &text,
         "    pub details: Option<ValidationErrors>,",
         "    #[schema(value_type = Option<Object>)]\n    pub details: Option<ValidationErrors>,",
-        1,
     )
 }
 
@@ -130,11 +130,11 @@ impl ErrorBody {
     }
 }
 
-/// The `error` of an [`ErrorBody`].
+/// The `error` of an `ErrorBody`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ErrorPayload {
-    /// A `snake_case` code for programs, such as [`BAD_REQUEST`],
-    /// [`PAYLOAD_TOO_LARGE`] or [`VALIDATION_FAILED`].
+    /// A `snake_case` code for programs, such as `BAD_REQUEST`,
+    /// `PAYLOAD_TOO_LARGE` or `VALIDATION_FAILED`.
     pub code: String,
     /// A message for people.
     pub message: String,
@@ -482,3 +482,20 @@ impl ResponseError for BodyRejection {
     }
 }
 ";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `SHARED` still holds what [`described`] patches: a patch that misses
+    /// panics in a debug build.
+    #[test]
+    fn the_error_body_is_described() {
+        let text = described(SHARED);
+        for item in ["pub struct ErrorBody {", "pub struct ErrorPayload {"] {
+            let derived = format!("Deserialize, utoipa::ToSchema)]\n{item}");
+            assert!(text.contains(&derived), "{text}");
+        }
+        assert!(text.contains("#[schema(value_type = Option<Object>)]\n    pub details"));
+    }
+}

@@ -1002,8 +1002,10 @@ exposes derives utoipa's `ToSchema` (or `IntoParams` for a query string),
 as do the data layer's typed ids, enums, sort keys and search conditions
 inside them; each handler carries `#[utoipa::path]`, `generated.rs` holds
 `GeneratedApiDoc`, and the data layer's `mod.rs` names the `utoipa` and
-`utoipa-swagger-ui` dependencies. With `openapi = false` the output is
-exactly as without the document: nothing mentions utoipa.
+`utoipa-swagger-ui` dependencies. With `openapi = false` the generated
+output is exactly as without the document: nothing mentions utoipa. The
+scaffolded files `init` wired the document into are yours to edit (see
+the OpenAPI guide).
 
 A feature's handlers take the caller as `AuthUser` (`user`) or `AdminUser`
 (`admin`), from the scaffolded `shared/auth.rs`, so no valid token is a
@@ -1116,7 +1118,7 @@ route base (`/tasks`), and `[api.skip]` drops any of them:
 
 | Route | Endpoint (`[api.skip]` name) | Answer |
 |---|---|---|
-| `GET /` `?page=&per_page=&q=&sort=&order=` | `list` | `200` `{items, page, per_page, total}` |
+| `GET /` `?page=&per_page=&q=&sort=&order=` (`q` with `[api.search]` columns) | `list` | `200` `{items, page, per_page, total}` |
 | `POST /` | `create` | `201` with `Location` |
 | `GET /{id}` | `get_one` | `200` |
 | `PATCH /{id}` | `update` | `200`; with `If-Match` on a versioned table |
@@ -1154,7 +1156,10 @@ schema no path reaches in `components(schemas(...))`. A project scaffolded
 before the document adds `src/openapi.rs`, the routes in `app.rs` and the
 `utoipa-swagger-ui` dependency by hand (the
 [OpenAPI guide](docs/guide/openapi.md) lists the steps). `[api] openapi =
-false` turns the document off, leaving output with no utoipa at all.
+false` turns the document off, leaving generated output with no utoipa at
+all; `init`'s `src/openapi.rs` and the document's lines in `app.rs` and
+`lib.rs` are yours, so remove them by hand (the guide lists them, and
+`rok-sqlc g` warns while `src/openapi.rs` uses `GeneratedApiDoc`).
 
 The handlers call a generated service trait with a working default per
 endpoint. A business rule overrides one method in the feature's

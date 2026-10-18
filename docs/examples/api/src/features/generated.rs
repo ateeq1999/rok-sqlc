@@ -70,9 +70,11 @@ pub struct BearerAuth;
 
 impl utoipa::Modify for BearerAuth {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let description = "A JWT the application signed, sent as `Bearer <token>`.";
         let scheme = HttpBuilder::new()
             .scheme(HttpAuthScheme::Bearer)
             .bearer_format("JWT")
+            .description(Some(description))
             .build();
         openapi
             .components

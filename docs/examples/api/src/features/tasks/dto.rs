@@ -14,7 +14,7 @@ pub use crate::db::tasks::listing::TaskSort;
 /// `sort` takes a [`TaskSort`], `created_at` unless given.
 pub type ListTasksQuery = ListQuery<TaskSort>;
 
-/// `POST /api/v1/tasks`'s body, checked by the rules of [`NewTask`].
+/// `POST /api/v1/tasks`'s body, checked by the rules of `NewTask`.
 /// A field for a defaulted column may be left out.
 #[derive(Debug, Clone, PartialEq, serde::Deserialize, validator::Validate, utoipa::ToSchema)]
 pub struct CreateTaskDto {
@@ -45,7 +45,7 @@ impl CreateTaskDto {
     }
 }
 
-/// `PATCH /api/v1/tasks/{id}`'s body, checked by the rules of [`UpdateTask`].
+/// `PATCH /api/v1/tasks/{id}`'s body, checked by the rules of `UpdateTask`.
 /// Every field is optional: a field left out keeps its column's value, and
 /// `null` sets a nullable column to `NULL`.
 #[derive(

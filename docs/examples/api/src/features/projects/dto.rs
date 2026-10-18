@@ -12,7 +12,7 @@ pub use crate::db::projects::listing::ProjectSort;
 /// `sort` takes a [`ProjectSort`], `created_at` unless given.
 pub type ListProjectsQuery = ListQuery<ProjectSort>;
 
-/// `POST /api/v1/projects`'s body, checked by the rules of [`NewProject`].
+/// `POST /api/v1/projects`'s body, checked by the rules of `NewProject`.
 /// A field for a defaulted column may be left out.
 #[derive(Debug, Clone, PartialEq, serde::Deserialize, validator::Validate, utoipa::ToSchema)]
 pub struct CreateProjectDto {
@@ -40,7 +40,7 @@ impl CreateProjectDto {
     }
 }
 
-/// `PATCH /api/v1/projects/{id}`'s body, checked by the rules of [`UpdateProject`].
+/// `PATCH /api/v1/projects/{id}`'s body, checked by the rules of `UpdateProject`.
 /// Every field is optional: a field left out keeps its column's value, and
 /// `null` sets a nullable column to `NULL`.
 #[derive(

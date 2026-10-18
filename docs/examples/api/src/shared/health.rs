@@ -38,7 +38,7 @@ pub async fn liveness() -> HttpResponse {
 }
 
 /// `200 {"status": "ready"}` when the database answers, otherwise `503`
-/// with [`SERVICE_UNAVAILABLE`].
+/// with `SERVICE_UNAVAILABLE`.
 #[utoipa::path(
     get,
     path = "/health/ready",

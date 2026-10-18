@@ -14,6 +14,7 @@ mod files;
 mod handlers;
 mod layout;
 pub mod listing;
+mod operation;
 mod paths;
 mod relation_routes;
 mod relation_service;
@@ -80,7 +81,7 @@ pub fn render(features: &[Feature<'_>], api: &ApiConfig) -> Vec<(PathBuf, String
     }
     files.push((
         root.join("generated.rs"),
-        root::render_generated(features, api.openapi),
+        root::render_generated(features, api),
     ));
     files.push((root.join("README.md"), root::render_readme(features)));
     files

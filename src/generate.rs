@@ -28,6 +28,7 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
     let (dry_run, force, lenient) = (config.dry_run, config.force, config.lenient);
 
     check_options(config)?;
+    report.warnings.extend(scaffolded_document_warning(config));
     for (key, module) in &config.modules {
         if parser::naming::rust_identifier(module).as_deref() != Ok(module.as_str()) {
             bail!(
@@ -267,6 +268,22 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
     }
     report.stale = stale;
     Ok(())
+}
+
+/// The warning of a run with `[api] openapi = false` whose project still
+/// has the `src/openapi.rs` `init` scaffolds (beside `api.output`), using
+/// `GeneratedApiDoc`: a scaffolded file is never rewritten, so the project
+/// no longer builds until the user removes the document's wiring.
+fn scaffolded_document_warning(config: &Config) -> Option<String> {
+    let api = config.api.as_ref().filter(|api| !api.openapi)?;
+    let path = api.output.parent()?.join("openapi.rs");
+    let text = std::fs::read_to_string(&path).ok()?;
+    text.contains("GeneratedApiDoc").then(|| {
+        format!(
+            "`[api] openapi = false`, but {} uses `GeneratedApiDoc`, which is no longer generated: delete it, `pub mod openapi;` in `lib.rs` and the OpenAPI lines of `app.rs` (see \"Turning the document off\" in docs/guide/openapi.md)",
+            display_path(&path)
+        )
+    })
 }
 
 /// Fails a run whose options need ones it doesn't set (ADRs 0015, 0016):

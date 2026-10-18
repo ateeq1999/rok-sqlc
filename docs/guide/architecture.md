@@ -219,7 +219,7 @@ inner type.
 
 <!-- source: docs/examples/api/src/features/tasks/dto.rs -->
 ```rust
-/// `POST /api/v1/tasks`'s body, checked by the rules of [`NewTask`].
+/// `POST /api/v1/tasks`'s body, checked by the rules of `NewTask`.
 /// A field for a defaulted column may be left out.
 #[derive(Debug, Clone, PartialEq, serde::Deserialize, validator::Validate, utoipa::ToSchema)]
 pub struct CreateTaskDto {

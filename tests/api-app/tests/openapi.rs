@@ -1,13 +1,13 @@
 //! The OpenAPI document as a whole (milestone 2): the served
-//! `/api-docs/openapi.json` matches the checked-in snapshot,
-//! `tests/snapshots/openapi.json`, and every operation in it follows the
+//! `/api-docs/openapi.json` matches the checked-in expected document,
+//! `tests/expected/openapi.json`, and every operation in it follows the
 //! wire standard.
 //!
-//! A change to the generated annotations fails the snapshot test. When the
-//! change is meant, rewrite the snapshot and review its diff:
+//! A change to the generated annotations fails the comparison. When the
+//! change is meant, rewrite the expected document and review its diff:
 //!
 //! ```text
-//! ROK_SQLC_UPDATE_SNAPSHOTS=1 cargo test --test openapi
+//! ROK_SQLC_UPDATE_EXPECTED=1 cargo test --test openapi
 //! ```
 //!
 //! (`tests/fixture_compile/` in rok-sqlc generates this crate first.)
@@ -19,15 +19,15 @@ use std::path::PathBuf;
 use common::document;
 use serde_json::{Map, Value};
 
-/// Set to rewrite the snapshot from the served document.
-const UPDATE: &str = "ROK_SQLC_UPDATE_SNAPSHOTS";
+/// Set to rewrite the expected document from the served one.
+const UPDATE: &str = "ROK_SQLC_UPDATE_EXPECTED";
 
 /// `[api] prefix`, the default.
 const PREFIX: &str = "/api/v1/";
 
-/// The snapshot file.
-fn snapshot_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/openapi.json")
+/// The expected document.
+fn expected_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/expected/openapi.json")
 }
 
 /// `value` with every object's keys sorted, so the text is stable whatever
@@ -48,27 +48,27 @@ fn sorted(value: &Value) -> Value {
     }
 }
 
-/// The document's text as the snapshot holds it: sorted keys, two-space
-/// indents, a final newline.
-fn snapshot_text(doc: &Value) -> String {
+/// The document's text as the expected document holds it: sorted keys,
+/// two-space indents, a final newline.
+fn document_text(doc: &Value) -> String {
     let mut text = serde_json::to_string_pretty(&sorted(doc)).expect("a JSON document");
     text.push('\n');
     text
 }
 
 #[actix_web::test]
-async fn the_document_matches_the_snapshot() {
-    let actual = snapshot_text(&document().await);
-    let path = snapshot_path();
+async fn the_document_is_the_expected_one() {
+    let actual = document_text(&document().await);
+    let path = expected_path();
     if std::env::var_os(UPDATE).is_some() {
-        std::fs::create_dir_all(path.parent().expect("a parent")).expect("create snapshots/");
-        std::fs::write(&path, &actual).expect("write the snapshot");
+        std::fs::create_dir_all(path.parent().expect("a parent")).expect("create expected/");
+        std::fs::write(&path, &actual).expect("write the expected document");
         return;
     }
     let expected = std::fs::read_to_string(&path)
         .unwrap_or_else(|_| {
             panic!(
-                "no snapshot at {}; set {UPDATE}=1 to write it",
+                "no expected document at {}; set {UPDATE}=1 to write it",
                 path.display()
             )
         })
@@ -281,4 +281,65 @@ async fn operation_ids_are_handler_names_and_tags_are_kebab_case() {
         doc["paths"]["/health/ready"]["get"]["operationId"],
         "readiness"
     );
+}
+
+/// Every string under a `summary` or `description` key in `value`, with
+/// the path to it.
+fn prose(value: &Value, at: &str, found: &mut Vec<(String, String)>) {
+    match value {
+        Value::Object(map) => {
+            for (key, item) in map {
+                let here = format!("{at}/{key}");
+                match item {
+                    Value::String(text) if key == "summary" || key == "description" => {
+                        found.push((here, text.clone()));
+                    }
+                    _ => prose(item, &here, found),
+                }
+            }
+        }
+        Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                prose(item, &format!("{at}/{index}"), found);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Summaries and descriptions read as prose: no rustdoc link syntax
+/// (`` [`Name`] `` or `[text](target)`) leaks in from a doc comment.
+#[actix_web::test]
+async fn descriptions_hold_no_rustdoc_links() {
+    let doc = document().await;
+    let mut found = Vec::new();
+    prose(&doc, "", &mut found);
+    assert!(found.len() > 50, "{found:?}");
+    let links: Vec<_> = found
+        .iter()
+        .filter(|(_, text)| text.contains("[`") || text.contains("]("))
+        .collect();
+    assert!(links.is_empty(), "{links:#?}");
+}
+
+/// The names of the query parameters `GET path` documents.
+fn query_params(doc: &Value, path: &str) -> Vec<String> {
+    doc["paths"][path]["get"]["parameters"]
+        .as_array()
+        .expect("parameters")
+        .iter()
+        .filter(|param| param["in"] == "query")
+        .filter_map(|param| param["name"].as_str().map(str::to_owned))
+        .collect()
+}
+
+/// A list documents `q` only when its table has search columns: `notes`
+/// has (`[api.search]`), `tasks` hasn't.
+#[actix_web::test]
+async fn only_a_list_with_search_columns_documents_q() {
+    let doc = document().await;
+    let notes = query_params(&doc, "/api/v1/notes");
+    assert!(notes.contains(&"q".to_owned()), "{notes:?}");
+    let tasks = query_params(&doc, "/api/v1/tasks");
+    assert_eq!(tasks, ["page", "per_page", "sort", "order"]);
 }

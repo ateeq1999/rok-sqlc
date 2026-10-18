@@ -130,6 +130,14 @@ the *generated* API count as breaking (see ADR 0012).
   `utoipa-swagger-ui` with `vendored`, so builds need no network. Health's
   handlers are `liveness` and `readiness`, the target document's
   operation ids. The guide gains an OpenAPI page.
+- A list takes and documents `q` only when its table has `[api.search]`
+  columns: the others' query string is the new shared `PageQuery`, which
+  has no `q` (an unknown parameter is ignored, as before). The `bearer_auth`
+  scheme has a description, and no OpenAPI description shows rustdoc link
+  syntax.
+- With `[api] openapi = false`, `rok-sqlc g` warns while the scaffolded
+  `src/openapi.rs` still uses `GeneratedApiDoc` (`Report::warnings` in the
+  library), and the OpenAPI guide lists the scaffolded lines to remove.
 
 ## [0.3.0] - 2026-10-17
 

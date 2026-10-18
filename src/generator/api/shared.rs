@@ -142,7 +142,7 @@ pub async fn check_health(pool: &PgPool) -> Result<(), sqlx::Error> {
 }
 "#;
 
-const HEALTH: &str = r#"//! `GET /health/live` and `GET /health/ready`, outside the API prefix.
+pub(super) const HEALTH: &str = r#"//! `GET /health/live` and `GET /health/ready`, outside the API prefix.
 
 use actix_web::{HttpResponse, web};
 use serde::Serialize;
@@ -173,7 +173,7 @@ pub async fn liveness() -> HttpResponse {
 }
 
 /// `200 {"status": "ready"}` when the database answers, otherwise `503`
-/// with [`SERVICE_UNAVAILABLE`].
+/// with `SERVICE_UNAVAILABLE`.
 pub async fn readiness(pool: web::Data<PgPool>) -> HttpResponse {
     match check_health(&pool).await {
         Ok(()) => HttpResponse::Ok().json(Status { status: "ready" }),
@@ -185,8 +185,8 @@ pub async fn readiness(pool: web::Data<PgPool>) -> HttpResponse {
 }
 "#;
 
-const PAGINATION: &str = r#"//! A list endpoint's query, `?page=&per_page=&q=&sort=&order=`, and the
-//! page it asks for.
+pub(super) const PAGINATION: &str = r#"//! A list endpoint's query, `?page=&per_page=&q=&sort=&order=` (`q` only
+//! where the table has search columns), and the page it asks for.
 
 use serde::{Deserialize, Serialize};
 
@@ -242,6 +242,45 @@ impl<S> Default for ListQuery<S> {
 }
 
 impl<S> ListQuery<S> {
+    /// The page asked for, with the defaults and limits applied.
+    #[must_use]
+    pub fn pagination(&self) -> Pagination {
+        Pagination::new(self.page, self.per_page)
+    }
+
+    /// The sort's direction, `desc` unless `order` says otherwise.
+    #[must_use]
+    pub fn sort_order(&self) -> SortOrder {
+        self.order.unwrap_or_default()
+    }
+}
+
+/// The query string of a list whose table has no search columns: a
+/// `ListQuery` without `q`. `S` is what `sort` takes.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PageQuery<S = String> {
+    /// The page, from 1. Defaults to 1.
+    pub page: Option<u32>,
+    /// The rows a page holds, 1 to 100. Defaults to 20.
+    pub per_page: Option<u32>,
+    /// What to sort by.
+    pub sort: Option<S>,
+    /// The sort's direction. Defaults to `desc`.
+    pub order: Option<SortOrder>,
+}
+
+impl<S> Default for PageQuery<S> {
+    fn default() -> Self {
+        PageQuery {
+            page: None,
+            per_page: None,
+            sort: None,
+            order: None,
+        }
+    }
+}
+
+impl<S> PageQuery<S> {
     /// The page asked for, with the defaults and limits applied.
     #[must_use]
     pub fn pagination(&self) -> Pagination {
@@ -311,7 +350,7 @@ impl From<Pagination> for Page {
 }
 "#;
 
-const RESPONSE: &str = r#"//! What handlers answer besides a bare row: the wire standard's error body,
+pub(super) const RESPONSE: &str = r#"//! What handlers answer besides a bare row: the wire standard's error body,
 //! a page of a list, a path segment, and a versioned row's `ETag`.
 
 use serde::{Deserialize, Serialize};
@@ -434,7 +473,7 @@ impl<T: Clone + 'static> FromRequest for Tenant<T> {
 }
 "#;
 
-const VALIDATION: &str = r#"//! Reading a request: validated JSON bodies, the wire standard's `400` for a
+pub(super) const VALIDATION: &str = r#"//! Reading a request: validated JSON bodies, the wire standard's `400` for a
 //! malformed path or query, a versioned row's `If-Match`, and a
 //! many-to-many sync's list of keys.
 //!

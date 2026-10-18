@@ -47,7 +47,12 @@ async fn the_document_is_served_with_the_bearer_scheme() {
     assert_eq!(doc["info"]["version"], "0.1.0");
     assert_eq!(
         doc["components"]["securitySchemes"]["bearer_auth"],
-        json!({"type": "http", "scheme": "bearer", "bearerFormat": "JWT"})
+        json!({
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": "A JWT the application signed, sent as `Bearer <token>`.",
+        })
     );
     let paths = doc["paths"].as_object().expect("paths");
     for path in [

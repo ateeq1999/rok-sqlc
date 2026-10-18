@@ -151,6 +151,93 @@ impl<'a> Relation<'a> {
     pub fn attaches(&self) -> bool {
         self.writes().is_some_and(|writes| writes.inserts)
     }
+
+    /// The handlers of a to-many relation, in the order `handlers.rs` holds
+    /// them: its list, then a many-to-many's sync, attach and detach where
+    /// served. None for a to-one relation, which `GET /{key}` embeds.
+    pub fn actions(&self) -> Vec<Action> {
+        if !matches!(self.kind, Kind::ToMany { .. }) {
+            return Vec::new();
+        }
+        let mut actions = vec![Action::List];
+        if self.writes().is_some() {
+            if self.syncs() {
+                actions.push(Action::Sync);
+            }
+            if self.attaches() {
+                actions.push(Action::Attach);
+            }
+            actions.push(Action::Detach);
+        }
+        actions
+    }
+
+    /// The name of `action`'s handler, which is also its operation id, such
+    /// as `list_labels`.
+    pub fn handler(&self, action: Action) -> String {
+        format!("{}_{}", action.name(), self.name)
+    }
+
+    /// `action`'s route under the feature's route base, such as
+    /// `/{id}/labels/{other}`.
+    pub fn path(&self, feature: &Feature<'_>, action: Action) -> String {
+        let path = format!("{}/{}", feature.key_path(), self.segment());
+        if action.names_other() {
+            format!("{path}/{{other}}")
+        } else {
+            path
+        }
+    }
+}
+
+/// A handler of a to-many relation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    /// `GET /{key}/<name>`: the related rows.
+    List,
+    /// `PUT /{key}/<name>`: pairs the row with exactly the rows named.
+    Sync,
+    /// `PUT /{key}/<name>/{other}`: pairs the row with another.
+    Attach,
+    /// `DELETE /{key}/<name>/{other}`: unpairs them.
+    Detach,
+}
+
+impl Action {
+    /// The handler's name before the relation's: `list`, `sync`, `attach`
+    /// or `detach`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Action::List => "list",
+            Action::Sync => "sync",
+            Action::Attach => "attach",
+            Action::Detach => "detach",
+        }
+    }
+
+    /// The HTTP method, lowercase.
+    pub fn method(self) -> &'static str {
+        match self {
+            Action::List => "get",
+            Action::Sync | Action::Attach => "put",
+            Action::Detach => "delete",
+        }
+    }
+
+    /// Whether the route names the related row too, as `{other}`.
+    pub fn names_other(self) -> bool {
+        matches!(self, Action::Attach | Action::Detach)
+    }
+}
+
+impl<'a> Feature<'a> {
+    /// The to-one relations, which `GET /{key}?include=` embeds.
+    pub fn includes(&self) -> Vec<&Relation<'a>> {
+        self.relations
+            .iter()
+            .filter(|relation| matches!(relation.kind, Kind::ToOne { .. }))
+            .collect()
+    }
 }
 
 /// The relations of `feature`, among `features` (each with its table in

@@ -157,7 +157,10 @@ fn imports(uses: &mut Uses, feature: &Feature<'_>, fields: &[&Column], create: b
         }
     }
     if feature.serves(Endpoint::List) {
-        uses.add("crate::shared::pagination::ListQuery");
+        uses.add(&format!(
+            "crate::shared::pagination::{}",
+            list_query_base(feature)
+        ));
     }
     if fields
         .iter()
@@ -167,14 +170,29 @@ fn imports(uses: &mut Uses, feature: &Feature<'_>, fields: &[&Column], create: b
     }
 }
 
-fn render_list_query(output: &mut String, feature: &Feature<'_>) {
-    let mut doc = vec![format!(
-        "`GET {}`'s query string: `?page=&per_page=&q=&sort=&order=`.",
-        feature.url
-    )];
+/// The shared query string a list takes: `ListQuery`, with `q`, when the
+/// table has search columns, otherwise `PageQuery`, which neither takes
+/// nor documents `q`.
+fn list_query_base(feature: &Feature<'_>) -> &'static str {
     if feature.search.is_empty() {
-        doc.push("`q` is ignored: the table has no search columns.".to_owned());
+        "PageQuery"
     } else {
+        "ListQuery"
+    }
+}
+
+fn render_list_query(output: &mut String, feature: &Feature<'_>) {
+    let mut doc = Vec::new();
+    if feature.search.is_empty() {
+        doc.push(format!(
+            "`GET {}`'s query string: `?page=&per_page=&sort=&order=`.",
+            feature.url
+        ));
+    } else {
+        doc.push(format!(
+            "`GET {}`'s query string: `?page=&per_page=&q=&sort=&order=`.",
+            feature.url
+        ));
         let names: Vec<String> = feature
             .search
             .iter()
@@ -193,7 +211,7 @@ fn render_list_query(output: &mut String, feature: &Feature<'_>) {
     let doc: Vec<&str> = doc.iter().map(String::as_str).collect();
     push_doc(output, 0, &doc);
     let alias = format!("pub type {} =", feature.list_query());
-    let target = format!("ListQuery<{}>;", feature.sort_enum());
+    let target = format!("{}<{}>;", list_query_base(feature), feature.sort_enum());
     if alias.len() + 1 + target.len() <= MAX_WIDTH {
         output.push_str(&format!("{alias} {target}\n"));
     } else {
@@ -238,7 +256,7 @@ fn render_create(output: &mut String, feature: &Feature<'_>, columns: &[&Column]
         0,
         &[
             &format!(
-                "`POST {}`'s body, checked by the rules of [`{new}`].",
+                "`POST {}`'s body, checked by the rules of `{new}`.",
                 feature.url
             ),
             "A field for a defaulted column may be left out.",
@@ -303,7 +321,7 @@ fn render_update(output: &mut String, feature: &Feature<'_>, columns: &[&Column]
         0,
         &[
             &format!(
-                "`PATCH {}{}`'s body, checked by the rules of [`{patch}`].",
+                "`PATCH {}{}`'s body, checked by the rules of `{patch}`.",
                 feature.url,
                 feature.key_path()
             ),

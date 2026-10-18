@@ -22,7 +22,7 @@
       },
       "AccountSearchFilter": {
         "additionalProperties": false,
-        "description": "The search body's conditions by column: [`AccountFilter`] without its\nrelationship filters. A hidden column can't be named.",
+        "description": "The search body's conditions by column: `AccountFilter` without its\nrelationship filters. A hidden column can't be named.",
         "properties": {
           "email": {
             "default": [],
@@ -81,7 +81,7 @@
       },
       "AuditEventSearchFilter": {
         "additionalProperties": false,
-        "description": "The search body's conditions by column: [`AuditEventFilter`] without its\nrelationship filters. A hidden column can't be named.",
+        "description": "The search body's conditions by column: `AuditEventFilter` without its\nrelationship filters. A hidden column can't be named.",
         "properties": {
           "action": {
             "default": [],
@@ -126,7 +126,7 @@
         "type": "string"
       },
       "CreateAccountDto": {
-        "description": "`POST /api/v1/accounts`'s body, checked by the rules of [`NewAccount`].\nA field for a defaulted column may be left out.",
+        "description": "`POST /api/v1/accounts`'s body, checked by the rules of `NewAccount`.\nA field for a defaulted column may be left out.",
         "properties": {
           "email": {
             "description": "The `email` column.",
@@ -144,7 +144,7 @@
         "type": "object"
       },
       "CreateAuditEventDto": {
-        "description": "`POST /api/v1/audit-log`'s body, checked by the rules of [`NewAuditEvent`].\nA field for a defaulted column may be left out.",
+        "description": "`POST /api/v1/audit-log`'s body, checked by the rules of `NewAuditEvent`.\nA field for a defaulted column may be left out.",
         "properties": {
           "action": {
             "description": "The `action` column.",
@@ -172,7 +172,7 @@
         "type": "object"
       },
       "CreateDocumentDto": {
-        "description": "`POST /api/v1/documents`'s body, checked by the rules of [`NewDocument`].\nA field for a defaulted column may be left out.",
+        "description": "`POST /api/v1/documents`'s body, checked by the rules of `NewDocument`.\nA field for a defaulted column may be left out.",
         "properties": {
           "code": {
             "description": "The `code` column.",
@@ -221,7 +221,7 @@
         "type": "object"
       },
       "CreateDraftDto": {
-        "description": "`POST /api/v1/drafts`'s body, checked by the rules of [`NewDraft`].\nA field for a defaulted column may be left out.",
+        "description": "`POST /api/v1/drafts`'s body, checked by the rules of `NewDraft`.\nA field for a defaulted column may be left out.",
         "properties": {
           "title": {
             "description": "The `title` column.",
@@ -234,7 +234,7 @@
         "type": "object"
       },
       "CreateGadgetDto": {
-        "description": "`POST /api/v1/gadgets`'s body, checked by the rules of [`NewGadget`].\nA field for a defaulted column may be left out.",
+        "description": "`POST /api/v1/gadgets`'s body, checked by the rules of `NewGadget`.\nA field for a defaulted column may be left out.",
         "properties": {
           "host": {
             "description": "The `host` column.",
@@ -277,7 +277,7 @@
         "type": "object"
       },
       "CreateLabelDto": {
-        "description": "`POST /api/v1/labels`'s body, checked by the rules of [`NewLabel`].\nA field for a defaulted column may be left out.",
+        "description": "`POST /api/v1/labels`'s body, checked by the rules of `NewLabel`.\nA field for a defaulted column may be left out.",
         "properties": {
           "name": {
             "description": "The `name` column.",
@@ -290,7 +290,7 @@
         "type": "object"
       },
       "CreateMemberDto": {
-        "description": "`POST /api/v1/members`'s body, checked by the rules of [`NewMember`].\nA field for a defaulted column may be left out.",
+        "description": "`POST /api/v1/members`'s body, checked by the rules of `NewMember`.\nA field for a defaulted column may be left out.",
         "properties": {
           "note_id": {
             "description": "The `note_id` column.",
@@ -316,7 +316,7 @@
         "type": "object"
       },
       "CreateNoteDto": {
-        "description": "`POST /api/v1/notes`'s body, checked by the rules of [`NewNote`].\nA field for a defaulted column may be left out.",
+        "description": "`POST /api/v1/notes`'s body, checked by the rules of `NewNote`.\nA field for a defaulted column may be left out.",
         "properties": {
           "body": {
             "description": "The `body` column.",
@@ -357,7 +357,7 @@
         "type": "object"
       },
       "CreateTaskDto": {
-        "description": "`POST /api/v1/tasks`'s body, checked by the rules of [`NewTask`].\nA field for a defaulted column may be left out.",
+        "description": "`POST /api/v1/tasks`'s body, checked by the rules of `NewTask`.\nA field for a defaulted column may be left out.",
         "properties": {
           "created_at": {
             "description": "The `created_at` column.",
@@ -466,7 +466,7 @@
       },
       "DocumentSearchFilter": {
         "additionalProperties": false,
-        "description": "The search body's conditions by column: [`DocumentFilter`] without its\nrelationship filters. A hidden column can't be named.",
+        "description": "The search body's conditions by column: `DocumentFilter` without its\nrelationship filters. A hidden column can't be named.",
         "properties": {
           "code": {
             "default": [],
@@ -652,7 +652,7 @@
       },
       "DraftSearchFilter": {
         "additionalProperties": false,
-        "description": "The search body's conditions by column: [`DraftFilter`] without its\nrelationship filters. A hidden column can't be named.",
+        "description": "The search body's conditions by column: `DraftFilter` without its\nrelationship filters. A hidden column can't be named.",
         "properties": {
           "id": {
             "default": [],
@@ -1392,10 +1392,10 @@
         "type": "object"
       },
       "ErrorPayload": {
-        "description": "The `error` of an [`ErrorBody`].",
+        "description": "The `error` of an `ErrorBody`.",
         "properties": {
           "code": {
-            "description": "A `snake_case` code for programs, such as [`BAD_REQUEST`],\n[`PAYLOAD_TOO_LARGE`] or [`VALIDATION_FAILED`].",
+            "description": "A `snake_case` code for programs, such as `BAD_REQUEST`,\n`PAYLOAD_TOO_LARGE` or `VALIDATION_FAILED`.",
             "type": "string"
           },
           "details": {
@@ -1475,7 +1475,7 @@
       },
       "GadgetSearchFilter": {
         "additionalProperties": false,
-        "description": "The search body's conditions by column: [`GadgetFilter`] without its\nrelationship filters. A hidden column can't be named.",
+        "description": "The search body's conditions by column: `GadgetFilter` without its\nrelationship filters. A hidden column can't be named.",
         "properties": {
           "host": {
             "default": [],
@@ -1619,7 +1619,7 @@
       },
       "LabelSearchFilter": {
         "additionalProperties": false,
-        "description": "The search body's conditions by column: [`LabelFilter`] without its\nrelationship filters. A hidden column can't be named.",
+        "description": "The search body's conditions by column: `LabelFilter` without its\nrelationship filters. A hidden column can't be named.",
         "properties": {
           "id": {
             "default": [],
@@ -1680,7 +1680,7 @@
       },
       "MemberSearchFilter": {
         "additionalProperties": false,
-        "description": "The search body's conditions by column: [`MemberFilter`] without its\nrelationship filters. A hidden column can't be named.",
+        "description": "The search body's conditions by column: `MemberFilter` without its\nrelationship filters. A hidden column can't be named.",
         "properties": {
           "note_id": {
             "default": [],
@@ -1787,7 +1787,7 @@
       },
       "NoteSearchFilter": {
         "additionalProperties": false,
-        "description": "The search body's conditions by column: [`NoteFilter`] without its\nrelationship filters. A hidden column can't be named.",
+        "description": "The search body's conditions by column: `NoteFilter` without its\nrelationship filters. A hidden column can't be named.",
         "properties": {
           "body": {
             "default": [],
@@ -3048,7 +3048,7 @@
           },
           "sort": {
             "default": null,
-            "description": "A [`AccountSort`] key, `id` unless given.",
+            "description": "A `AccountSort` key, `id` unless given.",
             "type": [
               "string",
               "null"
@@ -3104,7 +3104,7 @@
           },
           "sort": {
             "default": null,
-            "description": "A [`AuditEventSort`] key, `created_at` unless given.",
+            "description": "A `AuditEventSort` key, `created_at` unless given.",
             "type": [
               "string",
               "null"
@@ -3160,7 +3160,7 @@
           },
           "sort": {
             "default": null,
-            "description": "A [`DocumentSort`] key, `created_at` unless given.",
+            "description": "A `DocumentSort` key, `created_at` unless given.",
             "type": [
               "string",
               "null"
@@ -3216,7 +3216,7 @@
           },
           "sort": {
             "default": null,
-            "description": "A [`DraftSort`] key, `id` unless given.",
+            "description": "A `DraftSort` key, `id` unless given.",
             "type": [
               "string",
               "null"
@@ -3272,7 +3272,7 @@
           },
           "sort": {
             "default": null,
-            "description": "A [`GadgetSort`] key, `id` unless given.",
+            "description": "A `GadgetSort` key, `id` unless given.",
             "type": [
               "string",
               "null"
@@ -3328,7 +3328,7 @@
           },
           "sort": {
             "default": null,
-            "description": "A [`LabelSort`] key, `id` unless given.",
+            "description": "A `LabelSort` key, `id` unless given.",
             "type": [
               "string",
               "null"
@@ -3384,7 +3384,7 @@
           },
           "sort": {
             "default": null,
-            "description": "A [`MemberSort`] key, `team` unless given.",
+            "description": "A `MemberSort` key, `team` unless given.",
             "type": [
               "string",
               "null"
@@ -3440,7 +3440,7 @@
           },
           "sort": {
             "default": null,
-            "description": "A [`NoteSort`] key, `created_at` unless given.",
+            "description": "A `NoteSort` key, `created_at` unless given.",
             "type": [
               "string",
               "null"
@@ -3496,7 +3496,7 @@
           },
           "sort": {
             "default": null,
-            "description": "A [`TaskSort`] key, `created_at` unless given.",
+            "description": "A `TaskSort` key, `created_at` unless given.",
             "type": [
               "string",
               "null"
@@ -3559,7 +3559,7 @@
       },
       "TaskSearchFilter": {
         "additionalProperties": false,
-        "description": "The search body's conditions by column: [`TaskFilter`] without its\nrelationship filters. A hidden column can't be named.",
+        "description": "The search body's conditions by column: `TaskFilter` without its\nrelationship filters. A hidden column can't be named.",
         "properties": {
           "created_at": {
             "default": [],
@@ -3765,7 +3765,7 @@
         ]
       },
       "UpdateAccountDto": {
-        "description": "`PATCH /api/v1/accounts/{id}`'s body, checked by the rules of [`UpdateAccount`].\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
+        "description": "`PATCH /api/v1/accounts/{id}`'s body, checked by the rules of `UpdateAccount`.\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
         "properties": {
           "email": {
             "default": null,
@@ -3787,7 +3787,7 @@
         "type": "object"
       },
       "UpdateDocumentDto": {
-        "description": "`PATCH /api/v1/documents/{id}`'s body, checked by the rules of [`UpdateDocument`].\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
+        "description": "`PATCH /api/v1/documents/{id}`'s body, checked by the rules of `UpdateDocument`.\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
         "properties": {
           "code": {
             "default": null,
@@ -3844,7 +3844,7 @@
         "type": "object"
       },
       "UpdateDraftDto": {
-        "description": "`PATCH /api/v1/drafts/{id}`'s body, checked by the rules of [`UpdateDraft`].\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
+        "description": "`PATCH /api/v1/drafts/{id}`'s body, checked by the rules of `UpdateDraft`.\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
         "properties": {
           "title": {
             "default": null,
@@ -3858,7 +3858,7 @@
         "type": "object"
       },
       "UpdateGadgetDto": {
-        "description": "`PATCH /api/v1/gadgets/{id}`'s body, checked by the rules of [`UpdateGadget`].\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
+        "description": "`PATCH /api/v1/gadgets/{id}`'s body, checked by the rules of `UpdateGadget`.\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
         "properties": {
           "host": {
             "default": null,
@@ -3916,7 +3916,7 @@
         "type": "object"
       },
       "UpdateLabelDto": {
-        "description": "`PATCH /api/v1/labels/{id}`'s body, checked by the rules of [`UpdateLabel`].\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
+        "description": "`PATCH /api/v1/labels/{id}`'s body, checked by the rules of `UpdateLabel`.\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
         "properties": {
           "name": {
             "default": null,
@@ -3930,7 +3930,7 @@
         "type": "object"
       },
       "UpdateMemberDto": {
-        "description": "`PATCH /api/v1/members/{team}/{note_id}`'s body, checked by the rules of [`UpdateMember`].\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
+        "description": "`PATCH /api/v1/members/{team}/{note_id}`'s body, checked by the rules of `UpdateMember`.\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
         "properties": {
           "role": {
             "default": null,
@@ -3944,7 +3944,7 @@
         "type": "object"
       },
       "UpdateNoteDto": {
-        "description": "`PATCH /api/v1/notes/{id}`'s body, checked by the rules of [`UpdateNote`].\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
+        "description": "`PATCH /api/v1/notes/{id}`'s body, checked by the rules of `UpdateNote`.\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
         "properties": {
           "body": {
             "default": null,
@@ -3992,7 +3992,7 @@
         "type": "object"
       },
       "UpdateTaskDto": {
-        "description": "`PATCH /api/v1/tasks/{id}`'s body, checked by the rules of [`UpdateTask`].\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
+        "description": "`PATCH /api/v1/tasks/{id}`'s body, checked by the rules of `UpdateTask`.\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
         "properties": {
           "created_at": {
             "default": null,
@@ -4026,6 +4026,7 @@
     "securitySchemes": {
       "bearer_auth": {
         "bearerFormat": "JWT",
+        "description": "A JWT the application signed, sent as `Bearer <token>`.",
         "scheme": "bearer",
         "type": "http"
       }
@@ -4065,15 +4066,6 @@
               "format": "int32",
               "minimum": 0,
               "type": "integer"
-            }
-          },
-          {
-            "description": "The text to search for.",
-            "in": "query",
-            "name": "q",
-            "required": false,
-            "schema": {
-              "type": "string"
             }
           },
           {
@@ -4783,15 +4775,6 @@
             }
           },
           {
-            "description": "The text to search for.",
-            "in": "query",
-            "name": "q",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
             "in": "query",
             "name": "sort",
             "required": false,
@@ -4981,15 +4964,6 @@
               "format": "int32",
               "minimum": 0,
               "type": "integer"
-            }
-          },
-          {
-            "description": "The text to search for.",
-            "in": "query",
-            "name": "q",
-            "required": false,
-            "schema": {
-              "type": "string"
             }
           },
           {
@@ -5867,15 +5841,6 @@
             }
           },
           {
-            "description": "The text to search for.",
-            "in": "query",
-            "name": "q",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
             "in": "query",
             "name": "sort",
             "required": false,
@@ -6261,15 +6226,6 @@
               "format": "int32",
               "minimum": 0,
               "type": "integer"
-            }
-          },
-          {
-            "description": "The text to search for.",
-            "in": "query",
-            "name": "q",
-            "required": false,
-            "schema": {
-              "type": "string"
             }
           },
           {
@@ -7544,15 +7500,6 @@
             }
           },
           {
-            "description": "The text to search for.",
-            "in": "query",
-            "name": "q",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
             "in": "query",
             "name": "sort",
             "required": false,
@@ -8762,15 +8709,6 @@
             }
           },
           {
-            "description": "The text to search for.",
-            "in": "query",
-            "name": "q",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
             "in": "query",
             "name": "sort",
             "required": false,
@@ -9613,7 +9551,7 @@
             "description": "The database is not reachable"
           }
         },
-        "summary": "`200 {\"status\": \"ready\"}` when the database answers, otherwise `503`\nwith [`SERVICE_UNAVAILABLE`].",
+        "summary": "`200 {\"status\": \"ready\"}` when the database answers, otherwise `503`\nwith `SERVICE_UNAVAILABLE`.",
         "tags": [
           "health"
         ]
