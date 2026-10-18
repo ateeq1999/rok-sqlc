@@ -24,6 +24,13 @@ the *generated* API count as breaking (see ADR 0012).
 - The Release workflow publishes the crate to crates.io once every binary
   builds, using the `CARGO_REGISTRY_TOKEN` repository secret. A version
   crates.io already has is skipped, so running a tag again doesn't fail.
+- The `[api]` configuration for generated API features (ADR 0016):
+  `output` (`-a/--api-output`), `db_path`, `prefix`, `search_endpoint`,
+  `exclude`, and the table-keyed `[api.skip]`, `[api.routes]`,
+  `[api.access]`, `[api.owner]`, `[api.hidden]`, `[api.search]` and
+  `[api.sort]`, in the config file and the JSON payload. The library takes
+  it as `Config::api` (`ApiConfig`, `ApiAccess`, `ApiEndpoint`). It is
+  checked against the schema but generates nothing yet.
 - `primary_key_ids = "cuid2"` (`IdGeneration::Cuid2`, ADR 0016) makes new
   text primary keys with `cuid::cuid2()` (24 characters): the typed id gets
   `generate()`, and `create` fills a key the input leaves out. `UUID` keys

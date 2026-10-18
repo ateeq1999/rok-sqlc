@@ -9,6 +9,7 @@ use tempfile::TempDir;
 #[path = "../common/mod.rs"]
 mod common;
 
+mod api;
 mod collisions;
 mod config;
 mod derives;

@@ -206,6 +206,42 @@ fn every_config_key_in_the_code_is_documented_and_no_other() -> Result<()> {
         expected_names(r#"{"derive": ["not_a_derive"]}"#)?,
         "derive names"
     );
+
+    let api = reference["api"]
+        .as_table()
+        .context("the reference has an [api] table")?;
+    assert_eq!(
+        keys(api),
+        expected_names(r#"{"api": {"not_a_key": 1}}"#)?,
+        "[api] keys"
+    );
+    // The names a table-keyed `[api.<key>]` section's values use.
+    let names = |key: &str| -> BTreeSet<String> {
+        let values = api[key].as_table().into_iter().flat_map(|t| t.values());
+        let mut names = BTreeSet::new();
+        for value in values {
+            match value {
+                toml::Value::String(name) => {
+                    names.insert(name.clone());
+                }
+                toml::Value::Array(list) => {
+                    names.extend(list.iter().filter_map(|v| v.as_str().map(str::to_owned)));
+                }
+                _ => {}
+            }
+        }
+        names
+    };
+    assert_eq!(
+        names("access"),
+        expected_names(r#"{"api": {"access": {"t": "not_an_access"}}}"#)?,
+        "[api.access] names"
+    );
+    assert_eq!(
+        names("skip"),
+        expected_names(r#"{"api": {"skip": {"t": ["not_an_endpoint"]}}}"#)?,
+        "[api.skip] names"
+    );
     Ok(())
 }
 

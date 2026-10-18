@@ -20,6 +20,7 @@
 //! Anything else reachable from this crate is an implementation detail with
 //! no stability promise (see ADR 0012).
 
+mod api_config;
 mod config;
 mod config_file;
 mod generate;
@@ -38,6 +39,7 @@ pub mod parser;
 #[doc(hidden)]
 pub mod queries;
 
+pub use api_config::{ApiAccess, ApiConfig, ApiEndpoint};
 pub use config::{Config, Conventions, Derive, Extractor, IdGeneration, RelationshipChange};
 pub use report::{Error, QueryFailure, RefusedFile, Report, Result, TableFailure};
 
