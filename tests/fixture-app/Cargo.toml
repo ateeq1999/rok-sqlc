@@ -24,6 +24,8 @@ actix-web = { version = "4", default-features = false, features = ["macros"] }
 serde_json = "1"
 # `db/http/axum.rs` takes serde's message from inside axum's rejection.
 serde_path_to_error = "0.1"
+# `src/cuid_db/` generates with `primary_key_ids = "cuid2"`.
+cuid = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
@@ -32,5 +34,5 @@ tower = { version = "0.5", features = ["util"] }
 
 [features]
 # Compiles src/typed_id_mixup.rs, which must fail to compile (see
-# tests/fixture_compile.rs in rok-sqlc).
+# tests/fixture_compile/ in rok-sqlc).
 typed-id-mixup = []

@@ -314,9 +314,11 @@ dependencies = [
  "anyhow",
  "clap",
  "heck",
+ "proc-macro2",
  "serde",
  "serde_json",
  "sqlparser",
+ "syn 2.0.119",
  "tempfile",
  "toml",
 ]

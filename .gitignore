@@ -2,4 +2,17 @@
 tests/fixture-app/src/db/
 tests/fixture-app/src/plain_db/
 tests/fixture-app/src/validated_db/
+tests/fixture-app/src/cuid_db/
 tests/modules-app/src/db/
+# `tests/fixture_compile/` scaffolds (`rok-sqlc init`) and generates these.
+tests/api-app/src/app.rs
+tests/api-app/src/main.rs
+tests/api-app/src/config.rs
+tests/api-app/src/error.rs
+tests/api-app/src/db/
+tests/api-app/src/shared/
+tests/api-app/src/features/mod.rs
+tests/api-app/src/features/generated.rs
+tests/api-app/src/features/README.md
+tests/api-app/src/features/*/*
+!tests/api-app/src/features/drafts/service.rs

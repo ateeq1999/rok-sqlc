@@ -15,7 +15,7 @@ fn read(body: &str) -> Result<NewMember, BodyRejection> {
 /// The response body rejecting `body`.
 fn rejection(body: &str) -> Value {
     let rejection = read(body).expect_err("a bad body");
-    serde_json::to_value(rejection.body()).expect("the envelope serializes")
+    serde_json::to_value(rejection.body()).expect("the error body serializes")
 }
 
 #[test]
@@ -24,10 +24,9 @@ fn a_body_breaking_rules_gets_422_with_details() {
     let expected: Value = serde_json::from_str(
         r#"
 {
-  "success": false,
   "error": {
+    "code": "validation_failed",
     "message": "the request body failed validation",
-    "code": "VALIDATION_FAILED",
     "details": {
       "name": [
         {
@@ -58,10 +57,9 @@ fn a_body_that_does_not_fit_gets_422_without_details() {
     assert_eq!(
         rejection(body),
         json!({
-            "success": false,
             "error": {
-                "message": "missing field `handle` at line 1 column 15",
-                "code": "VALIDATION_FAILED"
+                "code": "validation_failed",
+                "message": "missing field `handle` at line 1 column 15"
             }
         })
     );
@@ -70,7 +68,7 @@ fn a_body_that_does_not_fit_gets_422_without_details() {
 #[test]
 fn a_body_that_is_not_json_gets_400() {
     let body = rejection(r#"{"name": "#);
-    assert_eq!(body["error"]["code"], "MALFORMED_BODY");
+    assert_eq!(body["error"]["code"], "bad_request");
 }
 
 #[test]

@@ -153,8 +153,8 @@ async fn post_json(path: &str, body: &str) -> (StatusCode, Value) {
     (status, serde_json::from_str(&text).unwrap())
 }
 
-fn envelope(message: &str, code: &str) -> Value {
-    json!({"success": false, "error": {"message": message, "code": code}})
+fn error_body(message: &str, code: &str) -> Value {
+    json!({"error": {"code": code, "message": message}})
 }
 
 #[actix_web::test]
@@ -180,14 +180,14 @@ async fn a_valid_body_reaches_the_handler() {
 }
 
 #[actix_web::test]
-async fn bad_syntax_is_a_malformed_body() {
+async fn bad_syntax_is_a_bad_request() {
     assert_eq!(
         post_json("/teams", r#"{"code": "NORTH","#).await,
         (
             StatusCode::BAD_REQUEST,
-            envelope(
+            error_body(
                 "the request body is not valid JSON: EOF while parsing a value at line 1 column 17",
-                "MALFORMED_BODY"
+                "bad_request"
             )
         )
     );
@@ -195,20 +195,20 @@ async fn bad_syntax_is_a_malformed_body() {
         post_json("/teams", "").await,
         (
             StatusCode::BAD_REQUEST,
-            envelope(
+            error_body(
                 "the request body is not valid JSON: EOF while parsing a value at line 1 column 0",
-                "MALFORMED_BODY"
+                "bad_request"
             )
         )
     );
 }
 
 #[actix_web::test]
-async fn a_missing_or_wrong_content_type_is_a_malformed_body() {
+async fn a_missing_or_wrong_content_type_is_a_bad_request() {
     let body = r#"{"code": "NORTH", "name": "Northern"}"#;
-    let expected = envelope(
+    let expected = error_body(
         "expected a request with `Content-Type: application/json`",
-        "MALFORMED_BODY",
+        "bad_request",
     );
     for content_type in [None, Some("text/plain"), Some("application/jsonp")] {
         let (status, text) = post_raw("/teams", content_type, body).await;
@@ -235,9 +235,9 @@ async fn a_body_over_the_size_limit_is_too_large_in_both_frameworks() {
     assert_eq!(content_type.as_deref(), Some("application/json"));
     assert_eq!(
         serde_json::from_str::<Value>(&text).unwrap(),
-        envelope(
+        error_body(
             "the request body is over the size limit",
-            "PAYLOAD_TOO_LARGE"
+            "payload_too_large"
         )
     );
     // The same body within the limit is accepted.
@@ -285,9 +285,9 @@ async fn json_that_does_not_fit_the_type_fails_validation_without_details() {
         post_json("/teams", r#"{"code": "NORTH"}"#).await,
         (
             StatusCode::UNPROCESSABLE_ENTITY,
-            envelope(
+            error_body(
                 "missing field `name` at line 1 column 17",
-                "VALIDATION_FAILED"
+                "validation_failed"
             )
         )
     );
@@ -295,9 +295,9 @@ async fn json_that_does_not_fit_the_type_fails_validation_without_details() {
         post_json("/teams", r#"{"code": "NORTH", "name": 7}"#).await,
         (
             StatusCode::UNPROCESSABLE_ENTITY,
-            envelope(
+            error_body(
                 "invalid type: integer `7`, expected a string at line 1 column 27",
-                "VALIDATION_FAILED"
+                "validation_failed"
             )
         )
     );
@@ -310,10 +310,9 @@ async fn a_body_breaking_rules_fails_validation_with_details() {
     assert_eq!(
         body,
         json!({
-            "success": false,
             "error": {
                 "message": "the request body failed validation",
-                "code": "VALIDATION_FAILED",
+                "code": "validation_failed",
                 "details": {
                     "name": [{
                         "code": "length",
@@ -342,10 +341,9 @@ async fn a_hand_written_type_goes_through_the_same_extractor() {
         (
             StatusCode::UNPROCESSABLE_ENTITY,
             json!({
-                "success": false,
                 "error": {
                     "message": "the request body failed validation",
-                    "code": "VALIDATION_FAILED",
+                    "code": "validation_failed",
                     "details": {
                         "email": [{
                             "code": "email",
@@ -366,9 +364,9 @@ async fn a_hand_written_type_goes_through_the_same_extractor() {
         .await,
         (
             StatusCode::UNPROCESSABLE_ENTITY,
-            envelope(
+            error_body(
                 "unknown variant `gold`, expected `free` or `pro` at line 1 column 43",
-                "VALIDATION_FAILED"
+                "validation_failed"
             )
         )
     );

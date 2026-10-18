@@ -85,6 +85,32 @@ fn ulid_makes_uuid_and_text_keys() -> Result<()> {
 }
 
 #[test]
+fn cuid2_makes_text_keys_and_leaves_uuid_keys_alone() -> Result<()> {
+    let dir = ids_project("cuid2")?;
+    let slugs = models(&dir, "slugs")?;
+    assert!(
+        slugs.contains("    pub fn generate() -> Self {\n        Self(cuid::cuid2())\n    }"),
+        "{slugs}"
+    );
+    assert!(slugs.contains("    pub id: Option<SlugId>,"), "{slugs}");
+    let write = resource_file(&dir, "slugs", "write.rs")?;
+    assert!(
+        write.contains(".bind(input.id.unwrap_or_else(SlugId::generate))"),
+        "{write}"
+    );
+    let db_mod = fs::read_to_string(dir.path().join("out/mod.rs"))?;
+    assert!(db_mod.contains("//   cuid = \"2\"\n"), "{db_mod}");
+
+    // A UUID key is left as it is, as are integer and composite keys.
+    for module in ["events", "counters", "pairs"] {
+        let source = models(&dir, module)?;
+        assert!(!source.contains("fn generate"), "{module}: {source}");
+    }
+    assert!(models_field(&dir, "events", "id")?.contains("pub id: EventId,"));
+    Ok(())
+}
+
+#[test]
 fn an_unknown_strategy_fails_the_run() -> Result<()> {
     let (_dir, config) = project_with(
         ID_SCHEMA,

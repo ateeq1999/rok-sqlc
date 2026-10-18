@@ -7,11 +7,111 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+### Breaking changes to the generated API
+
+- `extractors`: `db/http/` answers a rejected body with the wire standard
+  of ADR 0016, `{"error": {"code", "message", "details"?}}`, on both axum
+  and actix-web. The `success` field is gone and the codes are snake_case:
+  `400` `bad_request` (was `MALFORMED_BODY`), `413` `payload_too_large`
+  (was `PAYLOAD_TOO_LARGE`) and `422` `validation_failed` (was
+  `VALIDATION_FAILED`). In `db::http`, `ErrorBody` loses `success`,
+  `ErrorPayload` serializes `code` before `message`, the constant
+  `MALFORMED_BODY` is now `BAD_REQUEST`, and `ErrorBody::new(code, message)`
+  builds a body for any other error answer.
+
 ### Added
 
 - The Release workflow publishes the crate to crates.io once every binary
   builds, using the `CARGO_REGISTRY_TOKEN` repository secret. A version
   crates.io already has is skipped, so running a tag again doesn't fail.
+- The `[api]` configuration for generated API features (ADR 0016):
+  `output` (`-a/--api-output`), `db_path`, `prefix`, `search_endpoint`,
+  `exclude`, and the table-keyed `[api.skip]`, `[api.routes]`,
+  `[api.access]`, `[api.owner]`, `[api.hidden]`, `[api.search]` and
+  `[api.sort]`, in the config file and the JSON payload. The library takes
+  it as `Config::api` (`ApiConfig`, `ApiAccess`, `ApiEndpoint`), checked
+  against the schema: an owner on a `public` table, or a search or sort
+  column that is hidden, fails the run.
+- With `api.output`, a run generates the infrastructure of ADR 0016:
+  `db/pool.rs` (`PoolSettings`, `init_pool`, `check_health`) and, in
+  `shared/` beside the features directory, `response.rs`
+  (`PaginatedResponse` and the error body), `pagination.rs` (`ListQuery`,
+  `Pagination`, `SortOrder`), `validation.rs`, `tenant.rs` (`Tenant<T>`) and
+  `health.rs` (`/health/live`, `/health/ready`). Paths into the data
+  layer follow `api.db_path`.
+- API features (ADR 0016): with `api.output`, every table but join tables
+  and `api.exclude`d ones gets `api.output/<module>/` with `mod.rs`,
+  `routes.rs`, `handlers.rs`, `dto.rs` (`CreateXDto`, `UpdateXDto`,
+  `XResponse`, `ListXsQuery`), `model.rs`, `repo.rs`, `service_api.rs` (the
+  `XsServiceApi` trait with a default per endpoint, each write split into
+  `<write>_in` on the caller's connection and `<write>` in a transaction)
+  and a scaffolded `service.rs`; plus `generated.rs` (`register_services`,
+  `configure_all`) and `README.md`. Endpoints: `GET /` (`page`, `per_page`,
+  `q`, `sort`, `order`), `POST /` (`201` with `Location`), and `GET`,
+  `PATCH` and `DELETE /{key}`; `[api.skip]` drops any. The data layer
+  gains `<table>/listing.rs` (`XSort`, `list_matching`, `count_matching`)
+  and `search::push_contains_any`; `shared/` gains `response::path_segment`
+  and `validation::{path_config, query_config}`. Generated files under
+  `api.output` and `shared/` are removed once stale; scaffolded ones never
+  are. The scaffolded service has `XsService::new(pool)`, which
+  `register_services` calls.
+- Access, owners and hidden columns in API features: handlers take
+  `AuthUser` (`[api.access]` `user`, the default; `401` without a valid
+  token) or `AdminUser` (`admin`; `403` for a caller who isn't an admin),
+  or no caller (`public`). On an owned table (`[api.owner]`) the service
+  methods take the `AuthUser`, every read is scoped to the caller's id,
+  `update_in` and `remove_in` lock the caller's row before writing (another
+  caller's row is a `404`), and `create` sets the owner, which neither body
+  holds (`CreateXDto::into_new(owner)`). `[api.hidden]` columns stay in
+  both bodies but never appear in `XResponse`. `listing.rs` gains
+  `get_owned` and `lock_owned`.
+- API features serve the rest of ADR 0016's routes, each skippable in
+  `[api.skip]`: `GET /by-<column>/{value}` per single-column unique key that
+  isn't hidden; `POST /search` (`{filter, sort, order, page, per_page}`)
+  with `api.search_endpoint`, whose filter is the data layer's less hidden
+  columns (a `422` naming the field) and relationship filters; relationship
+  routes to tables with a feature (`GET /{key}?include=<name>` for a to-one,
+  `GET /{key}/<name>` for a to-many, answering a bare JSON array, and for
+  a many-to-many `PUT /{key}/<name>` sync and `PUT`/`DELETE
+  /{key}/<name>/{other}`), answering
+  through the related feature's response under its access and owner; and
+  on soft-delete tables `POST /{key}/restore` and `DELETE
+  /{key}?permanent=true`. Versioned tables answer `ETag` and need `If-Match`
+  on `PATCH` (`428` without, `412` when stale); tenant-scoped tables take
+  `Tenant<T>`. `shared/` gains `response::etag` and
+  `validation::{IfMatch, IdList}`; `generated.rs` re-exports the responses
+  relationship routes use, and `listing.rs` gains the search reads,
+  `owned_by`/`owned`/`retain_owned`, and the join tables' writes.
+- `rok-sqlc init [DIR]` scaffolds the actix-web application skeleton of
+  ADR 0016 (`rok-sqlc.toml`, `migrations/`, `src/{lib,main,app,config,error}.rs`,
+  `src/shared/{mod,auth}.rs`, `src/features/mod.rs` and `AGENTS.md`), each
+  file only when absent. It generates nothing. The application is a library
+  crate (`lib.rs` declares the modules `pub`, `main.rs` starts it), so a
+  fresh project passes `cargo clippy --all-targets -- -D warnings`.
+- `rok-sqlc init` after `cargo new` replaces cargo's untouched default
+  `src/main.rs` (hello world) with the scaffolded one and says so; any other
+  `src/main.rs` is kept.
+- `rok-sqlc check-arch` (`a`) checks a project against ADR 0016's
+  architecture, reading `api.output` and `api.db_path` from
+  `rok-sqlc.toml` (`-c/--config`): the feature layout (eight files, no
+  `utils`/`helpers`/`common`, no unknown top-level directory under `src/`;
+  warnings under `-l/--lenient`) and, parsing the source with `syn`, rules
+  1, 2, 4, 5 and 6 and the cross-feature write rule. It prints each
+  violation as `path:line: rule: message` and exits 1 if there are any.
+  `init`'s `AGENTS.md` states exactly the rules it enforces.
+- Scaffolded files: a planned file starting with the scaffold header is
+  written only when absent, never rewritten, never reported as changed and
+  never stale; `--check` reports a missing one. `Report::scaffolded` lists
+  the ones written.
+- `primary_key_ids = "cuid2"` (`IdGeneration::Cuid2`, ADR 0016) makes new
+  text primary keys with `cuid::cuid2()` (24 characters): the typed id gets
+  `generate()`, and `create` fills a key the input leaves out. `UUID` keys
+  are left alone. `db/mod.rs` hints `cuid = "2"`.
+- The API guide in `docs/guide/`: the architecture guidelines, with the
+  rules `check-arch` enforces, and which files are generated, scaffolded or
+  yours. The README gains a "Generated APIs" section. Their samples come
+  from `docs/examples/api`, a project started with `init`, which the test
+  suite regenerates, compiles and runs `check-arch` on.
 
 ## [0.3.0] - 2026-10-17
 

@@ -2,9 +2,10 @@
 //! compiled the way a consuming crate compiles it.
 //!
 //! `src/db/`, `src/plain_db/` (generated without serde, see
-//! `plain_schema.sql`) and `src/validated_db/` (generated with validation
-//! rules, see `validated_schema.sql`) are written by
-//! `tests/fixture_compile.rs` in rok-sqlc and are not checked in. The lints
+//! `plain_schema.sql`), `src/validated_db/` (generated with validation
+//! rules, see `validated_schema.sql`) and `src/cuid_db/` (generated with
+//! CUID2 keys, see `cuid_schema.sql`) are written by
+//! `tests/fixture_compile/` in rok-sqlc and are not checked in. The lints
 //! below are the generated-code quality bar (ADR 0013).
 
 #![deny(missing_docs, warnings)]
@@ -31,6 +32,7 @@
     clippy::unnecessary_wraps
 )]
 
+pub mod cuid_db;
 pub mod db;
 pub mod plain_db;
 pub mod validated_db;

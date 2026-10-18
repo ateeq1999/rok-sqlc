@@ -65,6 +65,9 @@ sync.
 - [Conventions and the `rok` preset](#conventions-and-the-rok-preset)
 - [Validated bodies and HTTP extractors](#validated-bodies-and-http-extractors)
 - [Configuration](#configuration)
+- [Generated APIs](#generated-apis)
+- [Starting an API project: `rok-sqlc init`](#starting-an-api-project-rok-sqlc-init)
+- [Checking the architecture: `rok-sqlc check-arch`](#checking-the-architecture-rok-sqlc-check-arch)
 - [Using it from `build.rs`](#using-it-from-buildrs)
 - [CI with `--check`](#ci-with---check)
 - [Supported SQL and type mapping](#supported-sql-and-type-mapping)
@@ -461,7 +464,7 @@ same name fail generation, and the error names both.
 | `types.rs` | A Rust enum for each enum type and each value-list column, keeping its exact database labels. |
 | `session.rs` | `set_tenant` and `set_user`, when the conventions name a setting. |
 | `queries.rs` or `queries/` | One function per annotated query. |
-| `http/` | With `extractors`: `BodyRejection`, the error envelope, and a `ValidatedJson<T>` per framework (`axum.rs`, `actix_web.rs`). |
+| `http/` | With `extractors`: `BodyRejection`, the error body (`ErrorBody`), and a `ValidatedJson<T>` per framework (`axum.rs`, `actix_web.rs`). |
 
 <!-- source: docs/examples/quickstart/src/db/types.rs -->
 ```rust
@@ -638,14 +641,15 @@ preset = "rok"
 | `soft_delete_column` | `deleted_at` | `delete` sets it, `restore` clears it, and `delete_permanently` removes the row. Reads skip deleted rows, and filters get `include_deleted`. It must be a nullable `TIMESTAMP`/`TIMESTAMPTZ`. |
 | `managed_columns` | `["updated_at", "row_version"]` | Left out of create inputs and update patches, but kept in rows. The database maintains them. |
 | `version_column` | `row_version` | `update` takes `expected_version` and returns `UpdateOutcome` (optimistic concurrency). The column is always managed. |
-| `primary_key_ids` | off | `"uuid_v4"`, `"uuid_v7"` or `"ulid"`: the generated code makes new primary keys (see below). |
+| `primary_key_ids` | off | `"uuid_v4"`, `"uuid_v7"`, `"ulid"` or `"cuid2"`: the generated code makes new primary keys (see below). |
 
 Each explicit key overrides the preset's value. An empty string turns a
 single-column convention off (`version_column = ""`), and
 `primary_key_ids = "none"` turns key generation off.
 
 `primary_key_ids` applies to tables whose primary key is one `UUID` column,
-or with `"ulid"` also one text column. Their typed id gets a constructor
+or with `"ulid"` also one text column; `"cuid2"` applies to one text column
+only and leaves `UUID` keys alone. Their typed id gets a constructor
 (`EventId::generate()`), and `create` takes the id as an `Option`. `None`
 inserts a new id made in Rust, even when the column has a database default:
 
@@ -655,6 +659,7 @@ inserts a new id made in Rust, even when the column has a database default:
 | `uuid_v7` | `UUID` | `uuid::Uuid::now_v7()`, ordered by creation time | `uuid` with its `v7` feature |
 | `ulid` | `UUID` | `uuid::Uuid::from(ulid::Ulid::new())` | `ulid` with its `uuid` feature |
 | `ulid` | text | `ulid::Ulid::new().to_string()`, 26 characters | `ulid` |
+| `cuid2` | text | `cuid::cuid2()`, 24 characters | `cuid` 2 |
 
 The generated `mod.rs` lists these dependencies too.
 
@@ -808,7 +813,7 @@ value lists are not rules: the database or deserialization already enforces
 them. A typed id over `NUMERIC` gets no range rule.
 
 `extractors` (which needs `validate`) generates `db/http/`: `mod.rs` holds
-the shared `BodyRejection` and the error envelope, and `axum.rs` and
+the shared `BodyRejection` and the error body, and `axum.rs` and
 `actix_web.rs` each hold a `ValidatedJson<T>` extractor for any
 `T: DeserializeOwned + Validate`, a generated input or patch or a
 hand-written request type. The handler runs only for a validated body:
@@ -842,25 +847,25 @@ and needs no `JsonConfig` error handler:
     }
 ```
 
-Any other body is answered in the Rok error envelope, the same on both
+Any other body is answered with the wire standard's error body
+(`{"error": {"code", "message", "details"?}}`, ADR 0016), the same on both
 frameworks:
 
 | The body | Status | `code` | `details` |
 |---|---|---|---|
-| no JSON `Content-Type`, bad JSON syntax, or unreadable | `400` | `MALFORMED_BODY` | none |
-| over the framework's size limit | `413` | `PAYLOAD_TOO_LARGE` | none |
-| JSON that doesn't fit the type (a missing field, a wrong type, an unknown label) | `422` | `VALIDATION_FAILED`, with serde's message | none |
-| breaks a validation rule | `422` | `VALIDATION_FAILED` | validator's errors by field |
+| no JSON `Content-Type`, bad JSON syntax, or unreadable | `400` | `bad_request` | none |
+| over the framework's size limit | `413` | `payload_too_large` | none |
+| JSON that doesn't fit the type (a missing field, a wrong type, an unknown label) | `422` | `validation_failed`, with serde's message | none |
+| breaks a validation rule | `422` | `validation_failed` | validator's errors by field |
 
 `{"name": "", "handle": "ada", "age": 7}` is answered `422` with:
 
-<!-- source: docs/examples/validated-api/tests/envelope.rs -->
+<!-- source: docs/examples/validated-api/tests/error_body.rs -->
 ```json
 {
-  "success": false,
   "error": {
+    "code": "validation_failed",
     "message": "the request body failed validation",
-    "code": "VALIDATION_FAILED",
     "details": {
       "name": [
         {
@@ -908,8 +913,8 @@ and `actix-web` dependencies to add. The complete crate is in
 Options come from four layers. The most specific wins:
 **flags > JSON payload (`-j`) > `rok-sqlc.toml` > defaults**. A list (such as
 `schema`, `queries`, `derive` or `extractors`) replaces the lower layer's list whole and is
-never appended to. `[conventions]` keys, `[relationships]` entries and
-`[modules]` entries merge one by one.
+never appended to. `[conventions]` keys, `[relationships]` entries,
+`[modules]` entries and `[api]` keys and table entries merge one by one.
 
 ### `rok-sqlc.toml`
 
@@ -935,7 +940,7 @@ user_setting       = "app.user_id"
 soft_delete_column = "deleted_at"
 managed_columns    = ["updated_at", "row_version"]
 version_column     = "row_version"
-primary_key_ids    = "uuid_v7"   # or "uuid_v4", "ulid", "none"
+primary_key_ids    = "uuid_v7"   # or "uuid_v4", "ulid", "cuid2", "none"
 
 [relationships.invoices]     # by table, then by inferred relationship name
 created_by_user  = "author"  # rename: load_author, get_with_author, filter field author
@@ -943,7 +948,65 @@ approved_by_user = false     # opt out, together with the other side
 
 [modules]                    # by table: generate it as another module
 "audit.users" = "audit_users"  # db::audit_users, with AuditUser and AuditUserId
+
+[api]                        # generated actix-web API features (ADR 0016); off without `output`
+output          = "src/features"  # needs derive = ["serde", "validate"] and extractors with "actix_web"
+db_path         = "crate::db"     # the default: where the generated data layer is
+prefix          = "/api/v1"       # the default URL prefix
+search_endpoint = true            # POST /search with per-field filters; off by default
+exclude         = ["audit_log"]   # tables with no API feature
+
+[api.skip]                   # by table: endpoints to leave out
+invoices = ["list", "get_one", "create", "update", "remove"]
+users    = ["search", "restore", "lookups", "relationships"]
+
+[api.routes]                 # by table: route base, starting with `/` and unique
+users = "/members"           # default: `/` and the kebab-case module name
+
+[api.access]                 # by table: who may call; "user" (AuthUser) is the default
+products = "public"
+invoices = "user"
+users    = "admin"           # AdminUser
+
+[api.owner]                  # by table: a UUID NOT NULL column scoping rows to the caller
+invoices = "created_by"
+
+[api.hidden]                 # by table: columns left out of responses; not key columns
+users = ["password_hash"]
+
+[api.search]                 # by table: text columns the list's `q` matches
+products = ["name", "sku"]
+
+[api.sort]                   # by table: number, date, time or text columns `sort` takes
+products = ["name", "price", "created_at"]
 ```
+
+`[api]` configures the generated API features (ADR 0016). Without `output`
+(or `-a`), every other `[api]` key is ignored. Its single keys and
+`exclude` layer like the top-level keys; its table-keyed sections merge by
+table. A table key is the table's SQL, schema-qualified or module name. Each
+table it names must be generated and each column must exist, or the run
+fails naming the key, the table and the column (`api.owner.invoices`).
+With `output`, a run also generates `db/pool.rs` in the data layer
+(`PoolSettings`, `init_pool`, `check_health`) and the shared tools in
+`shared/`, the directory beside `output`: `response.rs`, `pagination.rs`,
+`validation.rs`, `tenant.rs` and `health.rs`. `rok-sqlc init` scaffolds
+`shared/mod.rs`, which declares them. Each table but join tables and
+`exclude`d ones gets an API feature in `output/<module>/`, whose list reads
+go in the data layer's `<table>/listing.rs`; `output/generated.rs` declares
+the features and `output/README.md` maps which files are generated and
+which (`service.rs`) are yours. Generated files there and in `shared/` are
+removed once stale.
+
+A feature's handlers take the caller as `AuthUser` (`user`) or `AdminUser`
+(`admin`), from the scaffolded `shared/auth.rs`, so no valid token is a
+`401` and a caller who isn't an admin a `403`; a `public` feature takes
+none. An owned table (`[api.owner]`) can't be `public`: its service methods
+take the `AuthUser`, every read and write is scoped to the caller's id
+(another caller's row is a `404`), and `create` sets the owner, which
+neither body holds. A hidden column (`[api.hidden]`) stays in both bodies
+but never appears in a response, and no `[api.search]` or `[api.sort]`
+entry may name it.
 
 `[modules]` renames a table's module, and its row struct, typed id and key
 struct follow the new name. That's how same-named tables of two schemas
@@ -976,7 +1039,12 @@ layers over `rok-sqlc.toml` and doesn't turn discovery off.
 ### Flags
 
 The command is `generate`, or `g` for short (`rok-sqlc g`). The `help`
-command prints the help (`rok-sqlc help generate`).
+command prints the help (`rok-sqlc help generate`). `init` (`i`) starts an API
+project (see [Starting an API project](#starting-an-api-project-rok-sqlc-init))
+and takes only the project directory. `check-arch` (`a`) checks an API
+project's architecture (see [Checking the
+architecture](#checking-the-architecture-rok-sqlc-check-arch)) and takes
+only `-c` and `-l`.
 
 | Flag | Meaning |
 |---|---|
@@ -988,6 +1056,7 @@ command prints the help (`rok-sqlc help generate`).
 | `-j`, `--json <PAYLOAD>` | The JSON payload: inline, `@FILE`, or `-` for stdin. |
 | `-d`, `--derive <NAME>` | Add a derive to generated types (`serde`, or `validate`, which needs `serde`). Repeatable. |
 | `-e`, `--extractor <FRAMEWORK>` | Generate a validated-body extractor for `axum` or `actix_web` (needs `validate`). Repeatable. |
+| `-a`, `--api-output <DIR>` | Generate actix-web API features into this directory (`api.output`; needs `-d serde -d validate -e actix_web`). |
 | `-n`, `--dry-run` | Print what would be written, removed or refused, and touch nothing. |
 | `-k`, `--check` | Write nothing. List missing, changed and stale files, and exit 1 if there are any. |
 | `-f`, `--force` | Overwrite existing files that rok-sqlc did not generate. |
@@ -998,6 +1067,160 @@ command prints the help (`rok-sqlc help generate`).
 `--dry-run`, `--check`, `--force` and `--lenient` are flags only, because
 they describe a run rather than a project. A run with no schema (no
 `--schema` and no `schema` key) is a usage error. Errors exit with code 1.
+
+## Generated APIs
+
+With `[api] output` set, rok-sqlc generates an actix-web API on top of the
+data layer: one **API feature** per table, with routes, thin handlers,
+request and response bodies, and a service where business rules go. It
+follows one architecture, described in the guide
+([`docs/guide/`](docs/guide/index.md)):
+
+- [Architecture guidelines](docs/guide/architecture.md): the layout, the
+  rules `check-arch` enforces, services, transactions and ports;
+- [Generated and scaffolded files](docs/guide/layout.md): which files are
+  rok-sqlc's, which are yours, and what regeneration does to each.
+
+The workflow is three commands: `rok-sqlc init` scaffolds the application
+skeleton once, `rok-sqlc g` generates `src/db/`, `src/shared/` and
+`src/features/` from your migrations, and `rok-sqlc check-arch` checks the
+rules in CI. The complete project the guide's samples come from is
+[`docs/examples/api`](docs/examples/api). Its configuration is `init`'s plus
+a query file, owners and search columns:
+
+<!-- source: docs/examples/api/rok-sqlc.toml -->
+```toml
+[api]
+output = "src/features"
+
+[api.owner]                  # each caller sees and changes only their own rows
+projects = "owner_id"
+tasks = "owner_id"
+
+[api.search]                 # the columns the list's `q` matches
+projects = ["name"]
+tasks = ["title"]
+```
+
+Each feature serves these routes under `[api] prefix` (`/api/v1`) and its
+route base (`/tasks`), and `[api.skip]` drops any of them:
+
+| Route | Endpoint (`[api.skip]` name) | Answer |
+|---|---|---|
+| `GET /` `?page=&per_page=&q=&sort=&order=` | `list` | `200` `{items, page, per_page, total}` |
+| `POST /` | `create` | `201` with `Location` |
+| `GET /{id}` | `get_one` | `200` |
+| `PATCH /{id}` | `update` | `200`; with `If-Match` on a versioned table |
+| `DELETE /{id}` | `remove` | `204`; `?permanent=true` on a soft-delete table |
+| `POST /search` (`[api] search_endpoint = true`) | `search` | `200`, a page; body `{filter, sort, order, page, per_page}` |
+| `POST /{id}/restore` (soft-delete tables) | `restore` | `200` |
+| `GET /by-<column>/{value}` (single-column unique keys) | `lookups` | `200` |
+| `GET /{id}?include=<name>`, `GET /{id}/<name>`, `PUT`/`DELETE /{id}/<name>/{other}`, `PUT /{id}/<name>` | `relationships` | `200`, `200` with a JSON array, `204`, `204` |
+
+`/health/live` and `/health/ready` sit outside the prefix. Errors follow
+one wire standard, `{"error": {"code", "message", "details"?}}`, with the
+snake_case codes `bad_request`, `unauthorized`, `forbidden`, `not_found`,
+`conflict`, `payload_too_large`, `validation_failed`,
+`precondition_required`, `version_conflict` and `internal_error`.
+
+The handlers call a generated service trait with a working default per
+endpoint. A business rule overrides one method in the feature's
+`service.rs`, which is scaffolded once and then yours:
+
+<!-- source: docs/examples/api/src/features/tasks/service.rs -->
+```rust
+impl TasksServiceApi for TasksService {
+    fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
+    /// A task goes only into one of the caller's projects, and counts as
+    /// one of its open tasks. Both writes share `conn`, so `create` commits
+    /// them together.
+    async fn create_in(
+        &self,
+        conn: &mut PgConnection,
+        user: AuthUser,
+        input: CreateTaskDto,
+    ) -> Result<Task, AppError> {
+        self.projects
+            .task_opened(&mut *conn, user, input.project_id)
+            .await?;
+        let row = repo::create(&mut *conn, input.into_new(user.id)).await?;
+        Ok(row)
+    }
+}
+```
+
+`[api]`'s keys are in the [configuration reference](#rok-sqlctoml), and the
+next two sections document `init` and `check-arch`.
+
+## Starting an API project: `rok-sqlc init`
+
+`rok-sqlc init [DIR]` (default: the current directory) scaffolds the
+actix-web application skeleton of ADR 0016 into a project. It generates
+nothing; `rok-sqlc g` does that once there are migrations.
+
+| File | What it is |
+|---|---|
+| `rok-sqlc.toml` | `schema = "migrations/"`, `derive = ["serde", "validate"]`, `extractors = ["actix_web"]`, `primary_key_ids = "uuid_v7"` and `api.output = "src/features"`, followed by the dependencies to add to `Cargo.toml`, as comments |
+| `migrations/` | empty: your migrations go here |
+| `src/lib.rs` | declares every module `pub`: the application is a library, so generated code it does not use yet never warns |
+| `src/main.rs` | starts the server through the library (named after `Cargo.toml`'s package), nothing else |
+| `src/app.rs` | the only wiring file: the pool, the generated `register_services` and `configure_all`, and health |
+| `src/config.rs` | `Config::from_env` (`DATABASE_URL`, `BIND_ADDR`, `JWT_SECRET`, pool settings), the only environment reader |
+| `src/error.rs` | `AppError`, answered with the wire standard's error body, and the `sqlx` error mapping |
+| `src/shared/mod.rs`, `src/shared/auth.rs` | the shared tools, and the `AuthUser` and `AdminUser` extractors (HS256 JWT bearer tokens) |
+| `src/features/mod.rs` | `mod generated; pub use generated::*;` |
+| `AGENTS.md` | the architecture rules, and where each piece of code goes |
+
+Every file is a scaffolded file: it is written only when absent, starts
+with `// Scaffolded once by rok-sqlc; this file is yours.`, and is never
+rewritten. Running `init` again restores a deleted file and keeps every
+other one as it is. Generation scaffolds files the same way (a feature's
+`service.rs`): `--check` reports a missing one, never its contents, and a
+scaffolded file is never stale.
+
+One exception: run after `cargo new`, `init` replaces `src/main.rs` when it
+is still cargo's untouched hello-world default (line endings and a trailing
+newline aside), and prints `replaced cargo's default src/main.rs`. Any other
+`src/main.rs` is kept.
+
+## Checking the architecture: `rok-sqlc check-arch`
+
+`rok-sqlc check-arch` (`a`) checks an API project against ADR 0016's
+architecture, the rules its `AGENTS.md` states. It reads `api.output` (the
+features directory) and `api.db_path` (the data layer, default `crate::db`)
+from `rok-sqlc.toml`, discovered like `generate` does or named with
+`-c`/`--config`, and checks the project's `src/`. Each violation is printed
+as `path:line: rule: message`, and any violation exits with code 1, for CI:
+
+```text
+src/features/notes/service.rs:3: rule-1: `actix_web::HttpResponse`: only routes.rs, handlers.rs, app.rs, main.rs, error.rs, features/generated.rs, shared/ and db/ may use actix_web
+```
+
+The layout checks (`layout`):
+
+- a feature directory holds only `mod.rs`, `routes.rs`, `handlers.rs`,
+  `dto.rs`, `model.rs`, `repo.rs`, `service_api.rs` and `service.rs`;
+- no file or directory is named `utils`, `helpers` or `common`;
+- `src/` has no top-level directory but the data layer's, `shared/`, the
+  features directory's and `bin/`.
+
+The rules, read from the Rust source with `syn` (comments, strings and
+test code, `#[cfg(test)]` or `#[test]`, never count):
+
+| Rule | What it allows |
+|---|---|
+| `rule-1` | `actix_web` only in a feature's `routes.rs` and `handlers.rs`, `app.rs`, `main.rs`, `error.rs`, the features' `generated.rs`, `shared/` and the data layer |
+| `rule-2` | `sqlx` only in a feature's `repo.rs` and `model.rs`, `app.rs`, `error.rs`, the features' `generated.rs`, `shared/` and the data layer; a feature's `service.rs` and `service_api.rs` may name `sqlx::PgPool` and `sqlx::PgConnection` and nothing else |
+| `rule-4` | a feature never refers to another feature's modules |
+| `rule-5` | `shared/` never refers to the features module |
+| `rule-6` | no `unwrap()`, `expect()` (as methods or called through a path, `Option::unwrap(x)`), `panic!`, `todo!`, `println!` or `dbg!` |
+| `cross-feature-write` | a feature never refers to another table's `<db_path>::<table>::write`; reads are fine |
+
+`-l`/`--lenient` prints layout violations as warnings on stderr instead of
+failing; rule violations still fail. Generated code passes every check.
 
 ## Using it from `build.rs`
 
@@ -1037,14 +1260,16 @@ exactly the `Config` it built. Set `config.conventions`
 (`rok_sqlc::Conventions::rok()`), `config.derive`
 (`rok_sqlc::Derive::Serde`), `config.extractors` (`rok_sqlc::Extractor`),
 `config.relationships`
-(`rok_sqlc::RelationshipChange`) and `config.modules` to match the config
+(`rok_sqlc::RelationshipChange`), `config.modules` and `config.api`
+(`rok_sqlc::ApiConfig::new`, with `ApiAccess` and `ApiEndpoint`) to match the config
 file's sections.
 `Config` is `#[non_exhaustive]`, so start from `Config::default()` and set
 fields. The `Report` lists written, unchanged, refused and stale files and
 any skipped tables or queries.
 
 The stable library API is `generate`, `Config`, `Conventions`, `Derive`,
-`Extractor`, `IdGeneration`, `RelationshipChange`, `Report` (with `RefusedFile`, `TableFailure` and
+`Extractor`, `IdGeneration`, `RelationshipChange`, `ApiConfig`, `ApiAccess`,
+`ApiEndpoint`, `Report` (with `RefusedFile`, `TableFailure` and
 `QueryFailure`), and `Error`. Changing the *generated* API counts as a
 breaking change too (see [ADR 0012](docs/adr/0012-library-api-and-stability.md)).
 
@@ -1242,7 +1467,7 @@ cargo fmt --all -- --check
 
 - **Two toolchains.** The tool builds on Rust 1.88 (so no `if let` guards in
   `match`, for example). The suites that compile generated code
-  (`tests/fixture_compile.rs`, `tests/module_fixtures/`, and
+  (`tests/fixture_compile/`, `tests/module_fixtures/`, and
   `the_examples_compile` in `tests/readme.rs`) need Rust 1.94. Below that,
   they print a skip notice and pass. CI runs 1.88, 1.94 and stable.
 - **PostgreSQL suite.** Set `ROK_SQLC_TEST_DATABASE_URL` to a throwaway

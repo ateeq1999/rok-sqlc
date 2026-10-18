@@ -18,7 +18,10 @@ use serde::Deserialize;
 use serde::de::{self, Deserializer, Visitor};
 
 use crate::report::display_path;
-use crate::{Conventions, Derive, Extractor, IdGeneration, RelationshipChange};
+use crate::{
+    ApiAccess, ApiConfig, ApiEndpoint, Conventions, Derive, Extractor, IdGeneration,
+    RelationshipChange,
+};
 
 /// The file name looked for during discovery.
 pub(crate) const FILE_NAME: &str = "rok-sqlc.toml";
@@ -42,6 +45,8 @@ pub(crate) struct FileConfig {
     pub(crate) relationships: RelationshipKeys,
     /// The `[modules]` renames, by table.
     pub(crate) modules: BTreeMap<String, String>,
+    /// The `[api]` keys, with `output` resolved.
+    pub(crate) api: ApiKeys,
 }
 
 /// The `[relationships]` entries one source sets, by table and then by
@@ -65,6 +70,7 @@ impl FileConfig {
             extractors: self.extractors.or(lower.extractors),
             relationships: relationships_over(self.relationships, lower.relationships),
             modules: modules_over(self.modules, lower.modules),
+            api: self.api.over(lower.api),
         }
     }
 }
@@ -105,6 +111,8 @@ struct RawFile {
     relationships: BTreeMap<String, BTreeMap<String, ChangeValue>>,
     #[serde(default)]
     modules: BTreeMap<String, String>,
+    #[serde(default)]
+    api: ApiKeys,
 }
 
 /// A `[relationships]` value: a new name renames the relationship, `false`
@@ -178,6 +186,10 @@ impl RawFile {
                 })
                 .collect(),
             modules: self.modules,
+            api: ApiKeys {
+                output: self.api.output.as_ref().map(|p| base.join(p)),
+                ..self.api
+            },
         }
     }
 }
@@ -207,6 +219,7 @@ enum IdGenerationName {
     UuidV4,
     UuidV7,
     Ulid,
+    Cuid2,
 }
 
 impl IdGenerationName {
@@ -216,6 +229,7 @@ impl IdGenerationName {
             IdGenerationName::UuidV4 => Some(IdGeneration::UuidV4),
             IdGenerationName::UuidV7 => Some(IdGeneration::UuidV7),
             IdGenerationName::Ulid => Some(IdGeneration::Ulid),
+            IdGenerationName::Cuid2 => Some(IdGeneration::Cuid2),
         }
     }
 }
@@ -304,6 +318,156 @@ impl ConventionKeys {
             conventions.primary_key_ids = ids.id_generation();
         }
         conventions
+    }
+}
+
+/// The `[api]` keys one source sets. Single keys merge one by one across
+/// sources; a list replaces the lower list; table-keyed sections merge by
+/// table, an upper entry replacing the lower one.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ApiKeys {
+    output: Option<PathBuf>,
+    db_path: Option<String>,
+    prefix: Option<String>,
+    search_endpoint: Option<bool>,
+    exclude: Option<Vec<String>>,
+    #[serde(default)]
+    skip: BTreeMap<String, Vec<EndpointName>>,
+    #[serde(default)]
+    routes: BTreeMap<String, String>,
+    #[serde(default)]
+    access: BTreeMap<String, AccessName>,
+    #[serde(default)]
+    owner: BTreeMap<String, String>,
+    #[serde(default)]
+    hidden: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    search: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    sort: BTreeMap<String, Vec<String>>,
+}
+
+/// An `[api.access]` value. Deserializing an unknown name fails with the
+/// list of known ones.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AccessName {
+    Public,
+    User,
+    Admin,
+}
+
+impl AccessName {
+    fn access(self) -> ApiAccess {
+        match self {
+            AccessName::Public => ApiAccess::Public,
+            AccessName::User => ApiAccess::User,
+            AccessName::Admin => ApiAccess::Admin,
+        }
+    }
+}
+
+/// An `[api.skip]` entry. Deserializing an unknown name fails with the list
+/// of known ones.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum EndpointName {
+    List,
+    GetOne,
+    Create,
+    Update,
+    Remove,
+    Search,
+    Restore,
+    Lookups,
+    Relationships,
+}
+
+impl EndpointName {
+    fn endpoint(self) -> ApiEndpoint {
+        match self {
+            EndpointName::List => ApiEndpoint::List,
+            EndpointName::GetOne => ApiEndpoint::GetOne,
+            EndpointName::Create => ApiEndpoint::Create,
+            EndpointName::Update => ApiEndpoint::Update,
+            EndpointName::Remove => ApiEndpoint::Remove,
+            EndpointName::Search => ApiEndpoint::Search,
+            EndpointName::Restore => ApiEndpoint::Restore,
+            EndpointName::Lookups => ApiEndpoint::Lookups,
+            EndpointName::Relationships => ApiEndpoint::Relationships,
+        }
+    }
+}
+
+impl ApiKeys {
+    /// The keys `-a/--api-output` sets: `output`, or none.
+    pub(crate) fn output(output: Option<PathBuf>) -> ApiKeys {
+        ApiKeys {
+            output,
+            ..ApiKeys::default()
+        }
+    }
+
+    /// Layers `self` over `lower`, key by key and table by table.
+    fn over(self, lower: ApiKeys) -> ApiKeys {
+        fn merge<V>(
+            upper: BTreeMap<String, V>,
+            mut lower: BTreeMap<String, V>,
+        ) -> BTreeMap<String, V> {
+            lower.extend(upper);
+            lower
+        }
+        ApiKeys {
+            output: self.output.or(lower.output),
+            db_path: self.db_path.or(lower.db_path),
+            prefix: self.prefix.or(lower.prefix),
+            search_endpoint: self.search_endpoint.or(lower.search_endpoint),
+            exclude: self.exclude.or(lower.exclude),
+            skip: merge(self.skip, lower.skip),
+            routes: merge(self.routes, lower.routes),
+            access: merge(self.access, lower.access),
+            owner: merge(self.owner, lower.owner),
+            hidden: merge(self.hidden, lower.hidden),
+            search: merge(self.search, lower.search),
+            sort: merge(self.sort, lower.sort),
+        }
+    }
+
+    /// The API these keys describe: `None` without an `output`, which turns
+    /// every other key off; otherwise the defaults overridden by each key
+    /// set.
+    pub(crate) fn resolve(self) -> Option<ApiConfig> {
+        let mut api = ApiConfig::new(self.output?);
+        if let Some(db_path) = self.db_path {
+            api.db_path = db_path;
+        }
+        if let Some(prefix) = self.prefix {
+            api.prefix = prefix;
+        }
+        api.search_endpoint = self.search_endpoint.unwrap_or_default();
+        api.exclude = self.exclude.unwrap_or_default();
+        api.skip = self
+            .skip
+            .into_iter()
+            .map(|(table, names)| {
+                (
+                    table,
+                    names.into_iter().map(EndpointName::endpoint).collect(),
+                )
+            })
+            .collect();
+        api.routes = self.routes;
+        api.access = self
+            .access
+            .into_iter()
+            .map(|(table, name)| (table, name.access()))
+            .collect();
+        api.owner = self.owner;
+        api.hidden = self.hidden;
+        api.search = self.search;
+        api.sort = self.sort;
+        Some(api)
     }
 }
 

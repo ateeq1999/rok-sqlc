@@ -27,7 +27,7 @@ pub mod with_axum {
     }
 
     /// Runs only for a validated body. Anything else was already answered
-    /// `400`, `413` or `422` in the Rok error envelope.
+    /// `400`, `413` or `422` with the wire standard's error body.
     async fn create_member(
         State(pool): State<PgPool>,
         ValidatedJson(input): ValidatedJson<NewMember>,
@@ -53,7 +53,8 @@ pub mod with_actix_web {
     }
 
     /// Runs only for a validated body. No `JsonConfig` error handler is
-    /// needed: the extractor's rejection answers in the Rok error envelope.
+    /// needed: the extractor's rejection answers with the wire standard's
+    /// error body.
     async fn create_member(
         pool: web::Data<PgPool>,
         ValidatedJson(input): ValidatedJson<NewMember>,

@@ -1,0 +1,25 @@
+[package]
+name = "rok-sqlc-api-app"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+publish = false
+
+# An application built the way `rok-sqlc init` lays one out (ADR 0016).
+# `tests/fixture_compile/` in rok-sqlc scaffolds the skeleton with `init`
+# and generates `migrations/` into `src/db/`, `src/shared/` and
+# `src/features/`, then checks and tests this crate.
+
+[dependencies]
+# What the skeleton and the generated API need (`init`'s hints in
+# `rok-sqlc.toml`, and the generated `src/db/mod.rs`'s).
+actix-web = { version = "4", default-features = false, features = ["macros"] }
+chrono = { version = "0.4", features = ["serde"] }
+jsonwebtoken = { version = "11", features = ["rust_crypto"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "derive", "uuid", "chrono"] }
+thiserror = "2"
+tracing = "0.1"
+uuid = { version = "1", features = ["v7", "serde"] }
+validator = { version = "0.21", features = ["derive"] }

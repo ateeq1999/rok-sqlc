@@ -1,8 +1,9 @@
-//! Keeps README.md honest: its flags and config keys match the code, and its
-//! code samples match the quickstart example in `docs/examples/quickstart`,
-//! which the current binary generates and which compiles.
+//! Keeps README.md and the guide (`docs/guide/`) honest: the README's flags
+//! and config keys match the code, and every code sample matches the example
+//! crates in `docs/examples/`, which the current binary generates and which
+//! compile.
 //!
-//! README conventions these tests read:
+//! Conventions these tests read, in the README and every guide page:
 //!
 //! - A fenced block right after `<!-- source: <path> -->` must appear
 //!   verbatim in that file (repository-relative). Every `rust` block needs
@@ -24,11 +25,38 @@ mod common;
 
 use common::manifest_dir;
 
-/// The example crates the README's samples come from, each generated from
-/// its own SQL by `rok-sqlc g` with its `rok-sqlc.toml`.
-fn example_dirs() -> [PathBuf; 3] {
-    ["quickstart", "conventions", "validated-api"]
+/// The example crates the samples come from, each generated from its own
+/// SQL by `rok-sqlc g` with its `rok-sqlc.toml`. `api` was started with
+/// `rok-sqlc init`.
+fn example_dirs() -> [PathBuf; 4] {
+    ["quickstart", "conventions", "validated-api", "api"]
         .map(|name| manifest_dir().join("docs/examples").join(name))
+}
+
+/// The guide's pages, which must all exist.
+const GUIDE_PAGES: [&str; 3] = ["index.md", "architecture.md", "layout.md"];
+
+/// Every document whose samples are checked, as (repository-relative path,
+/// text): the README, then every Markdown page of `docs/guide/`.
+fn documents() -> Result<Vec<(String, String)>> {
+    let mut documents = vec![("README.md".to_owned(), readme()?)];
+    let guide = manifest_dir().join("docs/guide");
+    for page in GUIDE_PAGES {
+        ensure!(guide.join(page).is_file(), "docs/guide/{page} is missing");
+    }
+    let mut pages: Vec<_> = fs::read_dir(&guide)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<_>>()?;
+    pages.retain(|path| path.extension().is_some_and(|ext| ext == "md"));
+    pages.sort();
+    for path in pages {
+        let name = path
+            .file_name()
+            .context("a guide page has a name")?
+            .to_string_lossy();
+        documents.push((format!("docs/guide/{name}"), read_text(&path)?));
+    }
+    Ok(documents)
 }
 
 /// Reads a text file with line endings normalized to `\n`.
@@ -206,6 +234,42 @@ fn every_config_key_in_the_code_is_documented_and_no_other() -> Result<()> {
         expected_names(r#"{"derive": ["not_a_derive"]}"#)?,
         "derive names"
     );
+
+    let api = reference["api"]
+        .as_table()
+        .context("the reference has an [api] table")?;
+    assert_eq!(
+        keys(api),
+        expected_names(r#"{"api": {"not_a_key": 1}}"#)?,
+        "[api] keys"
+    );
+    // The names a table-keyed `[api.<key>]` section's values use.
+    let names = |key: &str| -> BTreeSet<String> {
+        let values = api[key].as_table().into_iter().flat_map(|t| t.values());
+        let mut names = BTreeSet::new();
+        for value in values {
+            match value {
+                toml::Value::String(name) => {
+                    names.insert(name.clone());
+                }
+                toml::Value::Array(list) => {
+                    names.extend(list.iter().filter_map(|v| v.as_str().map(str::to_owned)));
+                }
+                _ => {}
+            }
+        }
+        names
+    };
+    assert_eq!(
+        names("access"),
+        expected_names(r#"{"api": {"access": {"t": "not_an_access"}}}"#)?,
+        "[api.access] names"
+    );
+    assert_eq!(
+        names("skip"),
+        expected_names(r#"{"api": {"skip": {"t": ["not_an_endpoint"]}}}"#)?,
+        "[api.skip] names"
+    );
     Ok(())
 }
 
@@ -213,10 +277,20 @@ fn every_config_key_in_the_code_is_documented_and_no_other() -> Result<()> {
 /// binary accepts.
 #[test]
 fn every_config_sample_is_accepted() -> Result<()> {
-    let readme = readme()?;
     let dir = TempDir::new()?;
     let mut checked = 0;
-    for block in blocks(&readme) {
+    for (name, text) in documents()? {
+        checked += check_config_samples(&name, &text, dir.path())?;
+    }
+    ensure!(checked >= 2, "expected TOML and JSON samples in the README");
+    Ok(())
+}
+
+/// Checks the unsourced TOML and JSON samples of the document `name` and
+/// returns how many there were.
+fn check_config_samples(name: &str, text: &str, dir: &Path) -> Result<usize> {
+    let mut checked = 0;
+    for block in blocks(text) {
         let sourced = block
             .marker
             .as_deref()
@@ -224,56 +298,83 @@ fn every_config_sample_is_accepted() -> Result<()> {
         if sourced {
             continue;
         }
-        let file = dir.path().join("sample");
+        let file = dir.join("sample");
         fs::write(&file, &block.body)?;
         let (flag, value, rejection) = match block.lang.as_str() {
             "toml" => ("-c", file.display().to_string(), "invalid config file"),
             "json" => ("-j", format!("@{}", file.display()), "invalid JSON payload"),
             _ => continue,
         };
-        let output = rok_sqlc(dir.path(), &["g", "-n", flag, &value])?;
+        let output = rok_sqlc(dir, &["g", "-n", flag, &value])?;
         let stderr = String::from_utf8_lossy(&output.stderr);
         ensure!(
             !stderr.contains(rejection),
-            "README.md:{}: the {} sample is rejected:\n{stderr}",
+            "{name}:{}: the {} sample is rejected:\n{stderr}",
             block.line,
             block.lang
         );
         checked += 1;
     }
-    ensure!(checked >= 2, "expected TOML and JSON samples in the README");
-    Ok(())
+    Ok(checked)
 }
 
 #[test]
 fn every_code_sample_comes_from_its_source() -> Result<()> {
-    let readme = readme()?;
     let mut problems = Vec::new();
-    for block in blocks(&readme) {
-        let source = block
-            .marker
-            .as_deref()
-            .and_then(|marker| marker.strip_prefix("source:"))
-            .map(str::trim);
-        let Some(source) = source else {
-            if block.lang == "rust" {
+    for (name, document) in documents()? {
+        for block in blocks(&document) {
+            let source = block
+                .marker
+                .as_deref()
+                .and_then(|marker| marker.strip_prefix("source:"))
+                .map(str::trim);
+            let Some(source) = source else {
+                if block.lang == "rust" {
+                    problems.push(format!(
+                        "{name}:{}: a rust block without `<!-- source: <path> -->`",
+                        block.line
+                    ));
+                }
+                continue;
+            };
+            let text = read_text(&manifest_dir().join(source))?;
+            if !text.contains(&block.body) {
                 problems.push(format!(
-                    "README.md:{}: a rust block without `<!-- source: <path> -->`",
-                    block.line
+                    "{name}:{}: the block is not in {source}:\n{}",
+                    block.line, block.body
                 ));
             }
-            continue;
-        };
-        let text = read_text(&manifest_dir().join(source))?;
-        if !text.contains(&block.body) {
-            problems.push(format!(
-                "README.md:{}: the block is not in {source}:\n{}",
-                block.line, block.body
-            ));
         }
     }
     ensure!(problems.is_empty(), "{}", problems.join("\n\n"));
     Ok(())
+}
+
+/// The guide's samples come from its example crates: it has Rust samples,
+/// each with a source.
+#[test]
+fn the_guide_has_sourced_rust_samples() -> Result<()> {
+    for (name, document) in documents()? {
+        if name != "docs/guide/architecture.md" {
+            continue;
+        }
+        let sourced = blocks(&document)
+            .into_iter()
+            .filter(|block| block.lang == "rust")
+            .filter(|block| {
+                block
+                    .marker
+                    .as_deref()
+                    .is_some_and(|marker| marker.starts_with("source: docs/examples/api/"))
+            })
+            .count();
+        ensure!(
+            sourced >= 5,
+            "{name} has {sourced} Rust samples from docs/examples/api; expected the feature files, a service, a port and app.rs"
+        );
+        return Ok(());
+    }
+    bail!("docs/guide/architecture.md is missing")
 }
 
 /// Renders `dir` like the README's trees: entries sorted by name,
@@ -303,31 +404,43 @@ fn render_tree(dir: &Path, prefix: &str, out: &mut String) -> Result<()> {
 
 #[test]
 fn every_file_tree_matches_its_directory() -> Result<()> {
-    let readme = readme()?;
     let mut checked = 0;
-    for block in blocks(&readme) {
-        let Some(dir) = block
-            .marker
-            .as_deref()
-            .and_then(|marker| marker.strip_prefix("tree:"))
-            .map(str::trim)
-        else {
-            continue;
-        };
-        let name = Path::new(dir)
-            .file_name()
-            .context("a tree names a directory")?
-            .to_string_lossy();
-        let mut rendered = format!("{name}/\n");
-        render_tree(&manifest_dir().join(dir), "", &mut rendered)?;
-        assert_eq!(
-            block.body, rendered,
-            "README.md:{}: tree of {dir}",
-            block.line
-        );
-        checked += 1;
+    for (name, document) in documents()? {
+        for block in blocks(&document) {
+            let Some(dir) = block
+                .marker
+                .as_deref()
+                .and_then(|marker| marker.strip_prefix("tree:"))
+                .map(str::trim)
+            else {
+                continue;
+            };
+            let base = Path::new(dir)
+                .file_name()
+                .context("a tree names a directory")?
+                .to_string_lossy();
+            let mut rendered = format!("{base}/\n");
+            render_tree(&manifest_dir().join(dir), "", &mut rendered)?;
+            assert_eq!(block.body, rendered, "{name}:{}: tree of {dir}", block.line);
+            checked += 1;
+        }
     }
     ensure!(checked > 0, "expected a file tree in the README");
+    Ok(())
+}
+
+/// The API example, started with `rok-sqlc init` and with a hand-written
+/// service and port, passes `rok-sqlc check-arch`.
+#[test]
+fn the_api_example_passes_check_arch() -> Result<()> {
+    let dir = manifest_dir().join("docs/examples/api");
+    let output = rok_sqlc(&dir, &["check-arch"])?;
+    ensure!(
+        output.status.success(),
+        "check-arch fails on docs/examples/api:\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     Ok(())
 }
 

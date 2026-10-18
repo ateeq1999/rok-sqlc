@@ -1,8 +1,5 @@
-//! Generates the fixture schema into `tests/fixture-app` and checks the
-//! output the way a consuming crate would see it.
-//!
-//! Set `ROK_SQLC_TEST_DATABASE_URL` to a throwaway PostgreSQL database to
-//! also execute the generated code (see `tests/fixture-app/tests/postgres/`).
+//! `tests/fixture-app`: the generated data layer, with every convention,
+//! derive and extractor.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -11,9 +8,7 @@ use std::sync::Mutex;
 use anyhow::{Context, Result, ensure};
 use rok_sqlc::RelationshipChange;
 
-mod common;
-
-use common::{cargo, manifest_dir};
+use crate::common::{self, cargo, manifest_dir};
 
 /// Every test regenerates into the same fixture crate, so they run one at a time.
 static FIXTURE: Mutex<()> = Mutex::new(());
@@ -98,6 +93,16 @@ fn generate_fixture() -> Result<Vec<PathBuf>> {
     validated.extractors = vec![rok_sqlc::Extractor::Axum, rok_sqlc::Extractor::ActixWeb];
     let report = rok_sqlc::generate(&validated)?;
     files.extend(report.written.into_iter().chain(report.unchanged));
+
+    // CUID2 text keys get a fourth `db` module, so `plain_db` keeps making
+    // UUID version 7 keys.
+    let mut cuid = rok_sqlc::Config::default();
+    cuid.schema = vec![app_dir().join("cuid_schema.sql")];
+    cuid.output = app_dir().join("src/cuid_db");
+    cuid.force = true;
+    cuid.conventions.primary_key_ids = Some(rok_sqlc::IdGeneration::Cuid2);
+    let report = rok_sqlc::generate(&cuid)?;
+    files.extend(report.written.into_iter().chain(report.unchanged));
     Ok(files)
 }
 
@@ -126,8 +131,8 @@ fn generated_validation_rules_check_inputs_and_patches() -> Result<()> {
 }
 
 /// The generated axum extractor takes valid bodies and answers every
-/// rejection in the Rok error envelope (`tests/axum.rs` in the fixture
-/// crate). Needs no database.
+/// rejection with the wire standard's error body (`tests/axum.rs` in the
+/// fixture crate). Needs no database.
 #[test]
 fn generated_axum_extractor_validates_bodies() -> Result<()> {
     let _guard = FIXTURE
@@ -150,7 +155,7 @@ fn generated_axum_extractor_validates_bodies() -> Result<()> {
 }
 
 /// The generated actix-web extractor takes valid bodies, answers every
-/// rejection in the Rok error envelope, and answers each input with the
+/// rejection with the wire standard's error body, and answers each input with the
 /// same bytes as the axum one beside it (`tests/actix_web.rs` in the
 /// fixture crate). Needs no database.
 #[test]
@@ -260,9 +265,17 @@ fn generated_code_is_rustfmt_clean() -> Result<()> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let files = generate_fixture()?;
+    // Relative to the fixture crate, so the command line stays short on
+    // Windows.
+    let app = app_dir();
+    let files: Vec<&std::path::Path> = files
+        .iter()
+        .map(|file| file.strip_prefix(&app).unwrap_or(file))
+        .collect();
 
     let output = Command::new("rustfmt")
         .args(["--edition", "2024", "--check"])
+        .current_dir(&app)
         .args(&files)
         .output()
         .context("failed to run rustfmt (install it with `rustup component add rustfmt`)")?;

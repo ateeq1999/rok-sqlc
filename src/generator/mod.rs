@@ -1,3 +1,4 @@
+mod api;
 mod checks;
 pub mod conventions;
 mod db_mod;
@@ -30,6 +31,7 @@ use crate::{Config, Conventions};
 use self::checks::{check_imports, check_serde};
 use self::emit::{CHAIN_WIDTH, FN_CALL_WIDTH, MAX_WIDTH};
 
+pub use self::api::owned_dirs as api_owned_dirs;
 pub use self::db_mod::{DbMod, render_db_mod, render_schema_snapshot};
 pub use self::emit::{
     DeriveOptions, StaticQuery, doc_name, push_and_chain, push_build_and_fetch, push_chain,
@@ -194,14 +196,28 @@ pub fn plan_files_with_queries(
             .any(|kept| kept.module_name == table.module_name)
     };
 
+    let features = match &config.api {
+        Some(api) => api::features(tables, api)?,
+        None => Vec::new(),
+    };
     for table in tables.iter().filter(|table| !is_kept(table)) {
         let dir = output.join(&table.module_name);
         let filter = search::render_filter(table, tables, serde);
         let loaders = relationships::render(table, tables, serde);
-        files.push((
-            dir.join("mod.rs"),
-            render_resource_mod(table, filter.is_some(), loaders.is_some()),
-        ));
+        let listing = features
+            .iter()
+            .find(|feature| feature.module() == table.module_name)
+            .filter(|feature| api::has_listing(feature))
+            .map(api::listing::render);
+        let modules = ResourceModules {
+            filter: filter.is_some(),
+            listing: listing.is_some(),
+            relationships: loaders.is_some(),
+        };
+        files.push((dir.join("mod.rs"), render_resource_mod(table, modules)));
+        if let Some(listing) = listing {
+            files.push((dir.join("listing.rs"), listing));
+        }
         files.push((dir.join("models.rs"), models::render(table, derives)));
         if let Some(filter) = filter {
             files.push((dir.join("filter.rs"), filter));
@@ -232,11 +248,19 @@ pub fn plan_files_with_queries(
         }
         QueriesModule::None | QueriesModule::Keep => {}
     }
-    files.push((output.join("search.rs"), search::render_shared(serde)));
+    let mut search = search::render_shared(serde);
+    if config.api.is_some() {
+        search.push_str(api::listing::CONTAINS_ANY);
+    }
+    files.push((output.join("search.rs"), search));
     if serde {
         files.push((output.join("nullable.rs"), models::render_nullable()));
     }
     files.extend(http::render(output, &config.extractors));
+    if let Some(api) = &config.api {
+        files.extend(api::shared::render(output, api));
+        files.extend(api::render(&features, api));
+    }
     if !enums.is_empty() {
         files.push((output.join("types.rs"), types::render(&enums, serde)));
     }
@@ -244,6 +268,7 @@ pub fn plan_files_with_queries(
     let db_mod = DbMod {
         has_types: !enums.is_empty(),
         has_session: session.is_some(),
+        has_pool: config.api.is_some(),
         queries,
         derives,
         extractors: &config.extractors,
@@ -260,10 +285,24 @@ pub fn plan_files_with_queries(
     Ok(files)
 }
 
-fn render_resource_mod(table: &Table, has_filter: bool, has_relationships: bool) -> String {
+/// The optional modules of a resource's `mod.rs`.
+#[derive(Debug, Clone, Copy)]
+struct ResourceModules {
+    filter: bool,
+    /// `listing.rs`, for an API feature's list endpoint.
+    listing: bool,
+    relationships: bool,
+}
+
+fn render_resource_mod(table: &Table, modules: ResourceModules) -> String {
     let mut output = format!("{HEADER}\n//! The `{}` table.\n\n", table.display_name());
-    if has_filter {
+    if modules.filter {
         output.push_str("/// The `search` filter and sort keys.\npub mod filter;\n");
+    }
+    if modules.listing {
+        output.push_str(
+            "/// The API feature's reads: its list page and sort keys, and owned rows.\npub mod listing;\n",
+        );
     }
     output.push_str(
         "/// The row type, its key, and the inputs `create` and `update` take.\n\
@@ -271,7 +310,7 @@ fn render_resource_mod(table: &Table, has_filter: bool, has_relationships: bool)
          /// Lookups, listing, counting, and search.\n\
          pub mod read;\n",
     );
-    if has_relationships {
+    if modules.relationships {
         output.push_str(
             "/// Loaders fetching each relationship for many rows in one query.\n\
              pub mod relationships;\n",

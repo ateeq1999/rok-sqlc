@@ -102,9 +102,9 @@ fn search_imports(table: &Table, api: SearchApi) -> String {
 }
 
 /// A `get_by_<cols>` lookup over one unique key other than the primary key.
-struct Lookup<'a> {
-    fn_name: String,
-    columns: Vec<&'a Column>,
+pub(crate) struct Lookup<'a> {
+    pub(crate) fn_name: String,
+    pub(crate) columns: Vec<&'a Column>,
 }
 
 /// The table's unique-key lookups, in declaration order. A partial unique
@@ -112,7 +112,7 @@ struct Lookup<'a> {
 /// a tenant table the tenant parameter supplies the tenant column, so it is
 /// left out of each key and of the lookup's name; a key left empty, or named
 /// like an earlier lookup, gets none.
-fn unique_lookups(table: &Table) -> Vec<Lookup<'_>> {
+pub(crate) fn unique_lookups(table: &Table) -> Vec<Lookup<'_>> {
     let skip_primary_key = usize::from(!table.primary_key.is_empty());
     let mut names: Vec<String> = Vec::new();
     table

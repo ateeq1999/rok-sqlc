@@ -39,6 +39,9 @@ fn package_ships_licenses_readme_and_changelog_but_no_fixtures() -> Result<()> {
         "LICENSE-APACHE",
         "src/lib.rs",
         "src/main.rs",
+        // `init` embeds its templates with `include_str!`.
+        "src/init/templates/AGENTS.md",
+        "src/init/templates/rok-sqlc.toml",
     ] {
         ensure!(
             files.iter().any(|file| file == required),
@@ -78,6 +81,10 @@ fn ci_tests_both_declared_minimum_rust_versions() -> Result<()> {
     ensure!(
         rust_version(&root().join("tests/modules-app"))? == generated_floor,
         "tests/modules-app must declare the same rust-version as tests/fixture-app ({generated_floor})"
+    );
+    ensure!(
+        rust_version(&root().join("tests/api-app"))? == generated_floor,
+        "tests/api-app must declare the same rust-version as tests/fixture-app ({generated_floor})"
     );
     ensure!(
         generated_floor == "1.94",

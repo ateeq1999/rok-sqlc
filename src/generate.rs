@@ -7,12 +7,12 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, bail};
 use heck::ToSnakeCase;
 
-use crate::config::{Config, Derive};
+use crate::config::{Config, Derive, Extractor};
 use crate::output::is_generated_file;
 use crate::queries::AnalyzedQuery;
 use crate::report::{Error, QueryFailure, RefusedFile, Report, Result, TableFailure, display_path};
 use crate::schema::{BaseType, EnumType, Shape, Table};
-use crate::{generator, output, parser, queries};
+use crate::{api_config, generator, output, parser, queries};
 
 pub(crate) fn generate(config: &Config) -> Result<Report> {
     let mut report = Report::default();
@@ -143,6 +143,10 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
         &config.relationships,
     )
     .map_err(anyhow::Error::msg)?;
+    // `[api]` likewise.
+    if let Some(api) = &config.api {
+        api_config::check(api, &schema_tables).map_err(anyhow::Error::msg)?;
+    }
 
     let query_inputs = query_inputs(&config.queries)?;
     if !query_inputs.is_empty() && selected.iter().any(|table| table.module_name == "queries") {
@@ -209,6 +213,23 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
         let dir = output_dir.join(&table.module_name);
         stale.retain(|path| !path.starts_with(&dir));
     }
+    // `api.output` and `shared/` hold generated files beside the user's
+    // own: a generated one this run doesn't produce is stale too. Scaffolded
+    // files lack the generated marker, so they never are.
+    let mut stale_roots = vec![(output_dir.clone(), stale)];
+    if let Some(api) = &config.api {
+        for root in generator::api_owned_dirs(api) {
+            let found: Vec<PathBuf> = output::find_stale(&root, &keep)?
+                .into_iter()
+                .filter(|path| !stale_roots.iter().any(|(_, seen)| seen.contains(path)))
+                .collect();
+            stale_roots.push((root, found));
+        }
+    }
+    let stale: Vec<PathBuf> = stale_roots
+        .iter()
+        .flat_map(|(_, paths)| paths.iter().cloned())
+        .collect();
 
     if config.check {
         (report.missing, report.changed) = output::compare_files(&files)?;
@@ -238,15 +259,19 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
         );
     }
     report.written = applied.written;
+    report.scaffolded = applied.scaffolded;
     if !dry_run {
-        output::remove_stale(output_dir, &stale)?;
+        for (root, paths) in &stale_roots {
+            output::remove_stale(root, paths)?;
+        }
     }
     report.stale = stale;
     Ok(())
 }
 
-/// Fails a run whose options need ones it doesn't set (ADR 0015):
-/// `validate` needs `serde`, and extractors need `validate`.
+/// Fails a run whose options need ones it doesn't set (ADRs 0015, 0016):
+/// `validate` needs `serde`, extractors need `validate`, and the API needs
+/// both derives and the actix-web extractor.
 fn check_options(config: &Config) -> anyhow::Result<()> {
     let validate = config.derive.contains(&Derive::Validate);
     if validate && !config.derive.contains(&Derive::Serde) {
@@ -257,6 +282,12 @@ fn check_options(config: &Config) -> anyhow::Result<()> {
     if !config.extractors.is_empty() && !validate {
         bail!(
             "`extractors` needs `validate` in `derive`, since the extractors validate the bodies they take: add `serde` and `validate` to `derive`"
+        );
+    }
+    let api_ready = validate && config.extractors.contains(&Extractor::ActixWeb);
+    if config.api.is_some() && !api_ready {
+        bail!(
+            "`api.output` needs `derive = [\"serde\", \"validate\"]` and `actix_web` in `extractors`, since API features take validated bodies through the actix-web extractor"
         );
     }
     Ok(())

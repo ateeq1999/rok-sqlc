@@ -305,7 +305,7 @@ fn validate_needs_serde_and_extractors_need_validate() -> Result<()> {
     Ok(())
 }
 
-/// `extractors = ["axum"]` adds `db/http/mod.rs` (the shared envelope) and
+/// `extractors = ["axum"]` adds `db/http/mod.rs` (the shared error body) and
 /// `db/http/axum.rs`, declared by `db/mod.rs` with `axum` among the
 /// dependency hints; without `extractors` there is no `db/http`.
 #[test]
@@ -442,5 +442,153 @@ fn the_actix_web_extractor_is_generated_alone_or_beside_axum() -> Result<()> {
     let db_mod = &both[Path::new("mod.rs")];
     assert!(db_mod.contains("//   axum = \"0.8\"\n"), "{db_mod}");
     assert!(db_mod.contains("//   actix-web = \"4\"\n"), "{db_mod}");
+    Ok(())
+}
+
+/// `Config::api` is checked like the config file's `[api]`: it needs the
+/// derives and the actix-web extractor, its entries must fit the schema, and
+/// it adds `db/pool.rs` and list reads to the generated data layer. The table `spans`, skipped
+/// as unsupported, is not generated, so the API can't name it.
+#[test]
+fn the_api_configuration_is_checked_and_adds_the_pool_and_list_reads_to_the_data_layer()
+-> Result<()> {
+    use rok_sqlc::{ApiAccess, ApiConfig, ApiEndpoint, Derive, Extractor};
+    let inputs = Inputs::new()?;
+    let mut plain = inputs.config("plain");
+    plain.derive = vec![Derive::Serde, Derive::Validate];
+    plain.extractors = vec![Extractor::ActixWeb];
+    rok_sqlc::generate(&plain)?;
+
+    let mut api = ApiConfig::new(inputs.path("features"));
+    assert_eq!(api.db_path, "crate::db");
+    assert_eq!(api.prefix, "/api/v1");
+    assert!(!api.search_endpoint);
+    assert_eq!(ApiAccess::default(), ApiAccess::User);
+    api.access.insert("users".into(), ApiAccess::Admin);
+    api.skip.insert("users".into(), vec![ApiEndpoint::GetOne]);
+    api.owner.insert("users".into(), "id".into());
+    api.search.insert("users".into(), vec!["email".into()]);
+    let mut config = inputs.config("gen");
+    config.api = Some(api.clone());
+
+    let error = rok_sqlc::generate(&config).unwrap_err().to_string();
+    assert!(error.contains("`api.output` needs"), "{error}");
+
+    config.derive = plain.derive.clone();
+    config.extractors = plain.extractors.clone();
+    rok_sqlc::generate(&config)?;
+    // The API adds `db/pool.rs` (declared in `db/mod.rs`, which hints
+    // `tracing`), the list reads of `users` (declared in `users/mod.rs`) and
+    // the `q` helper in `search.rs` to the data layer, and nothing else.
+    let mut generated = tree(&inputs.path("gen"))?;
+    assert!(generated.remove(Path::new("pool.rs")).is_some());
+    assert!(
+        generated
+            .remove(&Path::new("users").join("listing.rs"))
+            .is_some()
+    );
+    let search = generated
+        .get_mut(Path::new("search.rs"))
+        .expect("search.rs");
+    let helper = search.find("\n/// Appends ` AND (").expect("the q helper");
+    search.truncate(helper);
+    let mut plain_tree = tree(&inputs.path("plain"))?;
+    for files in [&mut generated, &mut plain_tree] {
+        for text in files.values_mut() {
+            *text = text
+                .replace("pub mod pool;\n", "")
+                .replace("//   tracing = \"0.1\"\n", "")
+                .replace(
+                    "/// The API feature's reads: its list page and sort keys, and owned rows.\npub mod listing;\n",
+                    "",
+                );
+        }
+    }
+    assert_eq!(generated, plain_tree);
+    assert!(inputs.path("features/users/service_api.rs").is_file());
+
+    api.sort.insert("spans".into(), vec!["id".into()]);
+    config.api = Some(api);
+    let error = rok_sqlc::generate(&config).unwrap_err().to_string();
+    assert!(
+        error.contains("`api.sort.spans` in the configuration names no generated table"),
+        "{error}"
+    );
+    assert_eq!(ApiEndpoint::GetOne.name(), "get_one");
+    assert_eq!(ApiAccess::Admin.name(), "admin");
+    Ok(())
+}
+
+/// The shared tools (ADR 0016): with `api.output`, `db/pool.rs` in the data
+/// layer and each regenerated `shared/` tool beside the features directory;
+/// without it, none of them.
+#[test]
+fn the_api_generates_the_pool_and_the_shared_tools() -> Result<()> {
+    use rok_sqlc::{ApiConfig, Derive, Extractor};
+    const SHARED: [&str; 5] = [
+        "health.rs",
+        "pagination.rs",
+        "response.rs",
+        "tenant.rs",
+        "validation.rs",
+    ];
+    let inputs = Inputs::new()?;
+    let src = inputs.path("src");
+    let mut config = inputs.config("src/db");
+    config.derive = vec![Derive::Serde, Derive::Validate];
+    config.extractors = vec![Extractor::ActixWeb];
+
+    rok_sqlc::generate(&config)?;
+    assert!(!src.join("db/pool.rs").exists());
+    assert!(!src.join("shared").exists());
+    let db_mod = fs::read_to_string(src.join("db/mod.rs"))?;
+    assert!(!db_mod.contains("pub mod pool;"), "{db_mod}");
+
+    config.api = Some(ApiConfig::new(src.join("features")));
+    let report = rok_sqlc::generate(&config)?;
+    let pool = fs::read_to_string(src.join("db/pool.rs"))?;
+    assert!(pool.starts_with("// @generated by rok-sqlc"), "{pool}");
+    assert!(pool.contains("pub struct PoolSettings"), "{pool}");
+    assert!(pool.contains("pub async fn init_pool("), "{pool}");
+    assert!(pool.contains("pub async fn check_health("), "{pool}");
+    assert!(!pool.contains("std::env"), "pool.rs reads no environment");
+    let db_mod = fs::read_to_string(src.join("db/mod.rs"))?;
+    assert!(db_mod.contains("pub mod pool;"), "{db_mod}");
+    assert!(db_mod.contains("//   tracing = \"0.1\"\n"), "{db_mod}");
+    for file in SHARED {
+        let path = src.join("shared").join(file);
+        let text = fs::read_to_string(&path)?;
+        assert!(text.starts_with("// @generated by rok-sqlc"), "{file}");
+        assert!(report.written.contains(&path), "{file} is reported");
+    }
+    // `shared/mod.rs` is scaffolded by `init`, never generated.
+    assert!(!src.join("shared/mod.rs").exists());
+    // Paths into the data layer follow `api.db_path`.
+    let validation = fs::read_to_string(src.join("shared/validation.rs"))?;
+    assert!(validation.contains("crate::db::http"), "{validation}");
+
+    let mut moved = ApiConfig::new(src.join("features"));
+    moved.db_path = "crate::data".into();
+    config.api = Some(moved);
+    rok_sqlc::generate(&config)?;
+    for file in ["health.rs", "response.rs", "validation.rs"] {
+        let text = fs::read_to_string(src.join("shared").join(file))?;
+        assert!(text.contains("crate::data::"), "{file}: {text}");
+        assert!(!text.contains("crate::db::"), "{file}: {text}");
+    }
+
+    // `--check` sees the tools like any generated file.
+    config.check = true;
+    rok_sqlc::generate(&config)?;
+    fs::write(src.join("shared/tenant.rs"), "// @generated by rok-sqlc\n")?;
+    let error = rok_sqlc::generate(&config).unwrap_err();
+    assert_eq!(error.report().changed, vec![src.join("shared/tenant.rs")]);
+
+    // Dropping `[api]` leaves the pool stale.
+    config.check = false;
+    config.api = None;
+    let report = rok_sqlc::generate(&config)?;
+    assert!(report.stale.contains(&src.join("db/pool.rs")), "{report:?}");
+    assert!(!src.join("db/pool.rs").exists());
     Ok(())
 }

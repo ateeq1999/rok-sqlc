@@ -1,4 +1,4 @@
--- A later migration, generated after extra_schema.sql by tests/fixture_compile.rs.
+-- A later migration, generated after extra_schema.sql by tests/fixture_compile/.
 -- Its statements change or leave alone tables created earlier.
 
 ALTER TABLE revised_notes ADD COLUMN body TEXT NOT NULL DEFAULT '';

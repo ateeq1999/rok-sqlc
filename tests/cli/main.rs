@@ -9,11 +9,14 @@ use tempfile::TempDir;
 #[path = "../common/mod.rs"]
 mod common;
 
+mod api;
+mod check_arch;
 mod collisions;
 mod config;
 mod derives;
 mod flags;
 mod generate;
+mod init;
 mod json;
 mod keys;
 mod migrations;

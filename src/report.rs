@@ -7,6 +7,10 @@ use std::path::{Path, PathBuf};
 pub struct Report {
     /// Files written (in a dry run: files that would be written).
     pub written: Vec<PathBuf>,
+    /// Scaffolded files written because they were absent (in a dry run:
+    /// that would be written). An existing scaffolded file is the user's
+    /// and is never listed, rewritten or removed.
+    pub scaffolded: Vec<PathBuf>,
     /// Files whose contents were already up to date.
     pub unchanged: Vec<PathBuf>,
     /// Existing files rok-sqlc did not generate and would not overwrite.

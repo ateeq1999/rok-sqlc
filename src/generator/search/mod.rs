@@ -133,7 +133,7 @@ impl SearchApi {
 
 impl FilterKind {
     /// The condition enum in `db/search.rs`.
-    fn type_name(self) -> &'static str {
+    pub(crate) fn type_name(self) -> &'static str {
         match self {
             FilterKind::Ordered => "Ordered",
             FilterKind::Text => "Text",
@@ -141,7 +141,7 @@ impl FilterKind {
         }
     }
 
-    fn condition_type(self, column: &Column) -> String {
+    pub(crate) fn condition_type(self, column: &Column) -> String {
         match self {
             FilterKind::Text => self.type_name().to_owned(),
             _ => format!("{}<{}>", self.type_name(), column.value_type()),
@@ -190,7 +190,7 @@ fn push_block(output: &mut String, head: &str, items: &[String], indent: usize) 
 
 /// Columns the filter may have fields for: every column but the tenant
 /// column, which the tenant parameter already scopes `search` by.
-fn filter_columns(table: &Table) -> impl Iterator<Item = &Column> {
+pub fn filter_columns(table: &Table) -> impl Iterator<Item = &Column> {
     table
         .columns
         .iter()

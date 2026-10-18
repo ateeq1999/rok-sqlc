@@ -25,3 +25,5 @@ Both are answered in the Rok error envelope, `{"success": false, "error": {"mess
 ## Consequences
 
 `VARCHAR(n)` lengths and simple `CHECK`s, which the parser dropped before, are now kept on the model. The consuming crate depends on `validator` (with its `derive` feature), on `serde_json`, and on the framework it lists, and with axum on `serde_path_to_error` (already one of axum's), to reach serde's error. The generated `mod.rs` names them.
+
+> **Superseded in part by ADR 0016 (0.4.0):** the error body becomes `{"error": {"code", "message", "details"?}}` with snake_case codes (`validation_failed`, `payload_too_large`, `bad_request`), the wire standard shared by every generated API.

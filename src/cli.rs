@@ -2,9 +2,9 @@
 //! [`generate`](crate::generate), and prints the [`Report`].
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
 use crate::config_file::{self, FileConfig};
@@ -23,6 +23,10 @@ struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "parsed once per run; boxing the flags buys nothing"
+)]
 enum Command {
     /// Generate Rust database modules from a schema file
     #[command(visible_alias = "g")]
@@ -84,6 +88,37 @@ enum Command {
         /// rok-sqlc.toml]
         #[arg(short, long, value_name = "FRAMEWORK", value_enum)]
         extractor: Vec<ExtractorArg>,
+
+        /// Generate API features for actix-web into this directory (needs
+        /// `-d serde -d validate -e actix_web`) [default: `api.output` from
+        /// rok-sqlc.toml]
+        #[arg(short, long, value_name = "DIR")]
+        api_output: Option<PathBuf>,
+    },
+
+    /// Scaffold the actix-web application skeleton (ADR 0016) into a
+    /// project, each file only if absent; generates nothing
+    #[command(visible_alias = "i")]
+    Init {
+        /// The project directory
+        #[arg(value_name = "DIR", default_value = ".")]
+        dir: PathBuf,
+    },
+
+    /// Check the project against ADR 0016's architecture: the feature
+    /// layout and rules 1, 2, 4, 5 and 6; print each violation as
+    /// `path:line: rule: message` and exit 1 if any
+    #[command(visible_alias = "a")]
+    CheckArch {
+        /// Report layout violations as warnings instead of failing
+        #[arg(short, long)]
+        lenient: bool,
+
+        /// Read `api.output` and `api.db_path` from this config file instead
+        /// of discovering rok-sqlc.toml in the current directory or its
+        /// parents
+        #[arg(short, long, value_name = "FILE")]
+        config: Option<PathBuf>,
     },
 }
 
@@ -111,6 +146,24 @@ where
         Err(err) => return Err(err.into()),
     };
     match cli.command {
+        Command::CheckArch { lenient, config } => check_arch(config, lenient),
+        Command::Init { dir } => {
+            let scaffolded = crate::init::init(&dir)?;
+            if scaffolded.replaced_default_main {
+                println!("replaced cargo's default src/main.rs");
+            }
+            for path in scaffolded.written {
+                println!("scaffolded {}", display_path(&path));
+            }
+            println!(
+                "\nNext steps:\n  \
+                 1. add the dependencies listed at the end of rok-sqlc.toml to Cargo.toml\n  \
+                 2. add migrations to migrations/ (0001_init.sql, ...)\n  \
+                 3. run `rok-sqlc g` to generate src/db/ and src/features/\n  \
+                 4. set DATABASE_URL and JWT_SECRET, then `cargo run`"
+            );
+            Ok(())
+        }
         Command::Generate {
             schema,
             output,
@@ -124,6 +177,7 @@ where
             json,
             derive,
             extractor,
+            api_output,
         } => {
             let payload = match json {
                 Some(arg) => config_file::load_json(&arg)?,
@@ -148,6 +202,7 @@ where
                     .then(|| extractor.into_iter().map(Extractor::from).collect()),
                 relationships: Default::default(),
                 modules: Default::default(),
+                api: config_file::ApiKeys::output(api_output),
             };
             // Flags override the JSON payload, which overrides the file,
             // which overrides the defaults. `--schema` and `--queries` (each
@@ -172,9 +227,49 @@ where
                 extractors: merged.extractors.unwrap_or_default(),
                 relationships: merged.relationships,
                 modules: merged.modules,
+                api: merged.api.resolve(),
             })
         }
     }
+}
+
+/// `check-arch`: checks the project whose config file is `config` (or the
+/// discovered `rok-sqlc.toml`), printing violations on stdout and, with
+/// `lenient`, layout violations as warnings on stderr.
+fn check_arch(config: Option<PathBuf>, lenient: bool) -> Result<()> {
+    let path = match config {
+        Some(path) => path,
+        None => config_file::discover(&std::env::current_dir()?).with_context(|| {
+            format!(
+                "no {} found in the current directory or its parents",
+                config_file::FILE_NAME
+            )
+        })?,
+    };
+    let api = config_file::load(&path)?.api.resolve().with_context(|| {
+        format!(
+            "{} sets no `api.output`: check-arch checks an API project",
+            display_path(&path)
+        )
+    })?;
+    let project = crate::check_arch::Project {
+        root: path.parent().unwrap_or(Path::new("")).to_path_buf(),
+        features: api.output,
+        db_path: api.db_path,
+    };
+    let mut failures = 0;
+    for violation in crate::check_arch::check(&project)? {
+        if lenient && violation.rule.is_layout() {
+            eprintln!("warning: {violation}");
+        } else {
+            failures += 1;
+            println!("{violation}");
+        }
+    }
+    if failures > 0 {
+        bail!("check-arch found {failures} violation(s)");
+    }
+    Ok(())
 }
 
 /// A `--derive` value. It mirrors [`Derive`], which stays free of clap
@@ -282,6 +377,13 @@ fn print_report(config: &Config, report: &Report) {
             println!("would write {}", display_path(path));
         } else {
             println!("generated {}", display_path(path));
+        }
+    }
+    for path in &report.scaffolded {
+        if config.dry_run {
+            println!("would scaffold {}", display_path(path));
+        } else {
+            println!("scaffolded {}", display_path(path));
         }
     }
     for path in &report.unchanged {
