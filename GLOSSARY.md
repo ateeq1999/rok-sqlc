@@ -12,6 +12,30 @@ _Avoid_: entity, resource (when referring to the SQL side)
 The Rust module rok-sqlc generates for one table; the output side of generation.
 _Avoid_: table (when referring to generated output)
 
+**API feature**:
+The HTTP slice for one table: its routes, handlers, and service. Sits on top of the table's resource and is the only part of an API a caller sees.
+_Avoid_: resource (that is the generated database module), controller, endpoint group
+
+**Route base**:
+The URL path under which an API feature's routes are mounted, such as `/users`.
+_Avoid_: resource path, prefix
+
+**Service**:
+The layer of an API feature between its handlers and its resource, where business rules, authorization, and side effects live. Written once by rok-sqlc as a starting point and owned by the user from then on.
+_Avoid_: use case, manager, repository (the resource plays that role)
+
+**Port**:
+A trait a feature declares for something it needs from another feature or an outside system. The feature depends only on its own port; the application wires in what implements it. Writing another feature's data always goes through a port to that feature's service.
+_Avoid_: interface, client, gateway
+
+**Scaffolded file**:
+A file rok-sqlc writes only when it is absent, as a starting point, and never rewrites; from then on the user owns it. A service is one.
+_Avoid_: template, stub, generated file (that is rewritten on every run)
+
+**Template**:
+A complete starter project, for one web framework, that rok-sqlc's `init` copies into a new project: application skeleton, schema, and the API generated from it.
+_Avoid_: starter, boilerplate, scaffold (that is a single scaffolded file)
+
 **Schema snapshot**:
 A verbatim copy of the input schema SQL embedded in generated code as a constant. Never executed; not a migration system.
 _Avoid_: migration
