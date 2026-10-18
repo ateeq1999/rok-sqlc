@@ -41,7 +41,8 @@ pub fn apply(tables: &mut [Table], conventions: &Conventions) {
 }
 
 /// Marks the table's one primary key column as made by `ids` when the
-/// strategy fits its type: `UUID` for every strategy, text for a ULID.
+/// strategy fits its type: `UUID` for every strategy but CUID2, text for a
+/// ULID or a CUID2.
 fn mark_generated_id(table: &mut Table, ids: IdGeneration) {
     let [key] = table.primary_key.as_slice() else {
         return;
@@ -54,8 +55,8 @@ fn mark_generated_id(table: &mut Table, ids: IdGeneration) {
         return;
     };
     let fits = match column.base_type() {
-        BaseType::Uuid => true,
-        BaseType::Text => ids == IdGeneration::Ulid,
+        BaseType::Uuid => ids != IdGeneration::Cuid2,
+        BaseType::Text => matches!(ids, IdGeneration::Ulid | IdGeneration::Cuid2),
         _ => false,
     };
     if fits && column.is_insertable() {

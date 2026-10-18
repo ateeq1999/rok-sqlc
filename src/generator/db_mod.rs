@@ -179,6 +179,10 @@ fn dependency_hints(
         let features: &[&str] = if on_uuid { &["uuid"] } else { &[] };
         hints.push_str(&crate_hint_with("ulid", "1", false, features));
     }
+    // CUID2s are plain `String`s.
+    if uses_ids(IdGeneration::Cuid2) {
+        hints.push_str(&crate_hint_with("cuid", "2", false, &[]));
+    }
     if derives.validate {
         hints.push_str("//   validator = { version = \"0.21\", features = [\"derive\"] }\n");
     }
