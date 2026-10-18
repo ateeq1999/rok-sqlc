@@ -65,6 +65,7 @@ sync.
 - [Conventions and the `rok` preset](#conventions-and-the-rok-preset)
 - [Validated bodies and HTTP extractors](#validated-bodies-and-http-extractors)
 - [Configuration](#configuration)
+- [Generated APIs](#generated-apis)
 - [Starting an API project: `rok-sqlc init`](#starting-an-api-project-rok-sqlc-init)
 - [Checking the architecture: `rok-sqlc check-arch`](#checking-the-architecture-rok-sqlc-check-arch)
 - [Using it from `build.rs`](#using-it-from-buildrs)
@@ -1066,6 +1067,93 @@ only `-c` and `-l`.
 `--dry-run`, `--check`, `--force` and `--lenient` are flags only, because
 they describe a run rather than a project. A run with no schema (no
 `--schema` and no `schema` key) is a usage error. Errors exit with code 1.
+
+## Generated APIs
+
+With `[api] output` set, rok-sqlc generates an actix-web API on top of the
+data layer: one **API feature** per table, with routes, thin handlers,
+request and response bodies, and a service where business rules go. It
+follows one architecture, described in the guide
+([`docs/guide/`](docs/guide/index.md)):
+
+- [Architecture guidelines](docs/guide/architecture.md): the layout, the
+  rules `check-arch` enforces, services, transactions and ports;
+- [Generated and scaffolded files](docs/guide/layout.md): which files are
+  rok-sqlc's, which are yours, and what regeneration does to each.
+
+The workflow is three commands: `rok-sqlc init` scaffolds the application
+skeleton once, `rok-sqlc g` generates `src/db/`, `src/shared/` and
+`src/features/` from your migrations, and `rok-sqlc check-arch` checks the
+rules in CI. The complete project the guide's samples come from is
+[`docs/examples/api`](docs/examples/api). Its configuration is `init`'s plus
+a query file, owners and search columns:
+
+<!-- source: docs/examples/api/rok-sqlc.toml -->
+```toml
+[api]
+output = "src/features"
+
+[api.owner]                  # each caller sees and changes only their own rows
+projects = "owner_id"
+tasks = "owner_id"
+
+[api.search]                 # the columns the list's `q` matches
+projects = ["name"]
+tasks = ["title"]
+```
+
+Each feature serves these routes under `[api] prefix` (`/api/v1`) and its
+route base (`/tasks`), and `[api.skip]` drops any of them:
+
+| Route | Endpoint (`[api.skip]` name) | Answer |
+|---|---|---|
+| `GET /` `?page=&per_page=&q=&sort=&order=` | `list` | `200` `{items, page, per_page, total}` |
+| `POST /` | `create` | `201` with `Location` |
+| `GET /{id}` | `get_one` | `200` |
+| `PATCH /{id}` | `update` | `200`; with `If-Match` on a versioned table |
+| `DELETE /{id}` | `remove` | `204`; `?permanent=true` on a soft-delete table |
+| `POST /search` (`[api] search_endpoint = true`) | `search` | `200`, a page; body `{filter, sort, order, page, per_page}` |
+| `POST /{id}/restore` (soft-delete tables) | `restore` | `200` |
+| `GET /by-<column>/{value}` (single-column unique keys) | `lookups` | `200` |
+| `GET /{id}?include=<name>`, `GET /{id}/<name>`, `PUT`/`DELETE /{id}/<name>/{other}`, `PUT /{id}/<name>` | `relationships` | `200`, `200` `{items}`, `204`, `204` |
+
+`/health/live` and `/health/ready` sit outside the prefix. Errors follow
+one wire standard, `{"error": {"code", "message", "details"?}}`, with the
+snake_case codes `bad_request`, `unauthorized`, `forbidden`, `not_found`,
+`conflict`, `payload_too_large`, `validation_failed`,
+`precondition_required`, `version_conflict` and `internal_error`.
+
+The handlers call a generated service trait with a working default per
+endpoint. A business rule overrides one method in the feature's
+`service.rs`, which is scaffolded once and then yours:
+
+<!-- source: docs/examples/api/src/features/tasks/service.rs -->
+```rust
+impl TasksServiceApi for TasksService {
+    fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
+    /// A task goes only into one of the caller's projects, and counts as
+    /// one of its open tasks. Both writes share `conn`, so `create` commits
+    /// them together.
+    async fn create_in(
+        &self,
+        conn: &mut PgConnection,
+        user: AuthUser,
+        input: CreateTaskDto,
+    ) -> Result<Task, AppError> {
+        self.projects
+            .task_opened(&mut *conn, user, input.project_id)
+            .await?;
+        let row = repo::create(&mut *conn, input.into_new(user.id)).await?;
+        Ok(row)
+    }
+}
+```
+
+`[api]`'s keys are in the [configuration reference](#rok-sqlctoml), and the
+next two sections document `init` and `check-arch`.
 
 ## Starting an API project: `rok-sqlc init`
 

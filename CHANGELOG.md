@@ -30,7 +30,8 @@ the *generated* API count as breaking (see ADR 0012).
   `[api.access]`, `[api.owner]`, `[api.hidden]`, `[api.search]` and
   `[api.sort]`, in the config file and the JSON payload. The library takes
   it as `Config::api` (`ApiConfig`, `ApiAccess`, `ApiEndpoint`), checked
-  against the schema. `access`, `owner` and `hidden` take effect later.
+  against the schema: an owner on a `public` table, or a search or sort
+  column that is hidden, fails the run.
 - With `api.output`, a run generates the infrastructure of ADR 0016:
   `db/pool.rs` (`PoolSettings`, `init_pool`, `check_health`) and, in
   `shared/` beside the features directory, `response.rs`
@@ -52,7 +53,18 @@ the *generated* API count as breaking (see ADR 0012).
   and `search::push_contains_any`; `shared/` gains `response::path_segment`
   and `validation::{path_config, query_config}`. Generated files under
   `api.output` and `shared/` are removed once stale; scaffolded ones never
-  are.
+  are. The scaffolded service has `XsService::new(pool)`, which
+  `register_services` calls.
+- Access, owners and hidden columns in API features: handlers take
+  `AuthUser` (`[api.access]` `user`, the default; `401` without a valid
+  token) or `AdminUser` (`admin`; `403` for a caller who isn't an admin),
+  or no caller (`public`). On an owned table (`[api.owner]`) the service
+  methods take the `AuthUser`, every read is scoped to the caller's id,
+  `update_in` and `remove_in` lock the caller's row before writing (another
+  caller's row is a `404`), and `create` sets the owner, which neither body
+  holds (`CreateXDto::into_new(owner)`). `[api.hidden]` columns stay in
+  both bodies but never appear in `XResponse`. `listing.rs` gains
+  `get_owned` and `lock_owned`.
 - API features serve the rest of ADR 0016's routes, each skippable in
   `[api.skip]`: `GET /by-<column>/{value}` per single-column unique key that
   isn't hidden; `POST /search` (`{filter, sort, order, page, per_page}`)
@@ -89,6 +101,11 @@ the *generated* API count as breaking (see ADR 0012).
   text primary keys with `cuid::cuid2()` (24 characters): the typed id gets
   `generate()`, and `create` fills a key the input leaves out. `UUID` keys
   are left alone. `db/mod.rs` hints `cuid = "2"`.
+- The API guide in `docs/guide/`: the architecture guidelines, with the
+  rules `check-arch` enforces, and which files are generated, scaffolded or
+  yours. The README gains a "Generated APIs" section. Their samples come
+  from `docs/examples/api`, a project started with `init`, which the test
+  suite regenerates, compiles and runs `check-arch` on.
 
 ## [0.3.0] - 2026-10-17
 
