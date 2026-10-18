@@ -83,7 +83,7 @@ impl Default for PoolSettings {
 impl PoolSettings {
     /// The default settings sized for a database server with `cpu_cores`
     /// cores and `spindles` disks: at most `cpu_cores * 2 + spindles`
-    /// connections (PostgreSQL's rule of thumb, and at least one), and no
+    /// connections (`PostgreSQL`'s rule of thumb, and at least one), and no
     /// more kept open than that.
     #[must_use]
     pub fn for_hardware(cpu_cores: u32, spindles: u32) -> Self {
@@ -97,7 +97,7 @@ impl PoolSettings {
     }
 }
 
-/// Opens a pool on the PostgreSQL `url` with `settings`, connecting before
+/// Opens a pool on the `PostgreSQL` `url` with `settings`, connecting before
 /// it returns.
 ///
 /// # Errors

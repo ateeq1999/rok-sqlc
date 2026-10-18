@@ -246,7 +246,10 @@ async fn list_sorts_by_the_configured_columns() {
     let Some(db) = Database::fresh().await else {
         return;
     };
-    for (slug, title, priority) in [("a", "Cherry", 2), ("b", "apple", 9), ("c", "Banana", 5)] {
+    // Titles sort the same under every collation (one case, no ties), since
+    // `sort` follows the database's collation: byte order on a `C` or musl
+    // locale, case-insensitive on glibc's `en_US.utf8`.
+    for (slug, title, priority) in [("a", "cherry", 2), ("b", "date", 9), ("c", "banana", 5)] {
         create(
             &db,
             NOTES,
