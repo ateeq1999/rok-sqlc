@@ -503,3 +503,55 @@ pub(super) async fn generated_uuid_v7_keys(pool: &PgPool) {
     assert_eq!(defaulted.id.0.get_version_num(), 7);
     let _: fn() -> DefaultedEventId = DefaultedEventId::generate;
 }
+
+/// `cuid_db` is generated with `primary_key_ids = "cuid2"`: `create` makes
+/// a CUID2 for a text id the input leaves out, also over a database default,
+/// and keeps an id the input gives. Its `UUID` key is left to the caller.
+pub(super) async fn generated_cuid2_keys(pool: &PgPool) {
+    use cuid_db::badges::models::{BadgeId, NewBadge};
+    use cuid_db::sessions::models::{NewSession, SessionId};
+    use rok_sqlc_fixture_app::cuid_db;
+
+    let made = cuid_db::badges::write::create(
+        pool,
+        NewBadge {
+            id: None,
+            label: "made".to_owned(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(cuid::is_cuid2(&made.id.0), "{}", made.id);
+    assert_eq!(made.id.0.len(), 24);
+    let fetched = cuid_db::badges::read::get_by_id(pool, &made.id)
+        .await
+        .unwrap();
+    assert_eq!(fetched, Some(made.clone()));
+
+    let given = BadgeId("given-badge".to_owned());
+    let kept = cuid_db::badges::write::create(
+        pool,
+        NewBadge {
+            id: Some(given.clone()),
+            label: "given".to_owned(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(kept.id, given);
+    assert_ne!(BadgeId::generate(), BadgeId::generate());
+
+    // A `UUID` key gets no CUID2: the input must give it.
+    let id = SessionId(uuid::Uuid::from_u128(2));
+    let session = cuid_db::sessions::write::create(
+        pool,
+        NewSession {
+            id,
+            badge_id: made.id.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(session.id, id);
+    assert_eq!(session.badge_id, made.id);
+}

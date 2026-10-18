@@ -4,7 +4,11 @@
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Convention tests cover the generated `generate()`, input and bind, the hint, and a UUID key left alone.
-- [ ] The fixture app creates a row with a generated cuid2 key against PostgreSQL.
+- [x] Convention tests cover the generated `generate()`, input and bind, the hint, and a UUID key left alone.
+- [x] The fixture app creates a row with a generated cuid2 key against PostgreSQL.
+
+## Comments
+
+Implemented on branch `rok-sqlc-0-4-02`. The fixture app gets a fourth generated module, `src/cuid_db/` (from `cuid_schema.sql`, with a defaulted text key and a `UUID` key), so `plain_db` keeps its `uuid_v7` keys. `cuid::cuid2()` comes from cuid 2.0.4 (`pub use cuid2::cuid as cuid2`).

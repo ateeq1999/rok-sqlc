@@ -19,6 +19,10 @@ the *generated* API count as breaking (see ADR 0012).
   `[api.sort]`, in the config file and the JSON payload. The library takes
   it as `Config::api` (`ApiConfig`, `ApiAccess`, `ApiEndpoint`). It is
   checked against the schema but generates nothing yet.
+- `primary_key_ids = "cuid2"` (`IdGeneration::Cuid2`, ADR 0016) makes new
+  text primary keys with `cuid::cuid2()` (24 characters): the typed id gets
+  `generate()`, and `create` fills a key the input leaves out. `UUID` keys
+  are left alone. `db/mod.rs` hints `cuid = "2"`.
 
 ## [0.3.0] - 2026-10-17
 

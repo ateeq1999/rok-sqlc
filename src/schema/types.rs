@@ -414,6 +414,9 @@ impl Column {
             (IdGeneration::UuidV7, _) => "uuid::Uuid::now_v7()",
             (IdGeneration::Ulid, false) => "uuid::Uuid::from(ulid::Ulid::new())",
             (IdGeneration::Ulid, true) => "ulid::Ulid::new().to_string()",
+            (IdGeneration::Cuid2, true) => "cuid::cuid2()",
+            // `primary_key_ids` marks only text keys for CUID2s.
+            (IdGeneration::Cuid2, false) => return None,
         })
     }
 

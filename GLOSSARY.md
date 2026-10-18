@@ -109,7 +109,7 @@ A distinct Rust type for one table's key, used wherever that key appears, so key
 _Avoid_: id wrapper, newtype (in user-facing text)
 
 **Generated id**:
-A new primary key value the generated code makes itself (a UUID version 4 or 7, or a ULID) when a create input leaves the key out, under the `primary_key_ids` convention. Distinct from a generated column, whose value the database owns.
+A new primary key value the generated code makes itself (a UUID version 4 or 7, a ULID, or a CUID2) when a create input leaves the key out, under the `primary_key_ids` convention. Distinct from a generated column, whose value the database owns.
 _Avoid_: auto id, client id
 
 **Key struct**:
