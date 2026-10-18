@@ -27,9 +27,3 @@ validator = { version = "0.21", features = ["derive"] }
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
-
-# A binary uses only part of the generated data layer and shared tools, and
-# rustc would warn about the rest.
-[lints.rust]
-dead_code = "allow"
-unused_imports = "allow"

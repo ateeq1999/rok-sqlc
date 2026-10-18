@@ -6,7 +6,7 @@ rust-version = "1.94"
 publish = false
 
 # An application built the way `rok-sqlc init` lays one out (ADR 0016).
-# `tests/fixture_compile.rs` in rok-sqlc scaffolds the skeleton with `init`
+# `tests/fixture_compile/` in rok-sqlc scaffolds the skeleton with `init`
 # and generates `migrations/` into `src/db/`, `src/shared/` and
 # `src/features/`, then checks and tests this crate.
 

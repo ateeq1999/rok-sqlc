@@ -1,5 +1,5 @@
 -- The fixture application's schema: one table per shape of API feature
--- (`tests/fixture_compile.rs` configures their `[api]` entries).
+-- (`tests/fixture_compile/` configures their `[api]` entries).
 
 -- A UUID key made in Rust (`uuid_v7`), a unique column, checks that become
 -- validation rules, and the list's `q` (`title`, `body`) and `sort`.
@@ -46,7 +46,7 @@ CREATE TABLE drafts (
     title TEXT NOT NULL
 );
 
--- Access, ownership and hidden columns (`tests/fixture_compile.rs`
+-- Access, ownership and hidden columns (`tests/fixture_compile/`
 -- configures them): `accounts` is `admin` only and hides `password_hash`;
 -- `tasks` has the default access (`user`) and is owned through `owner_id`,
 -- an account's typed id.

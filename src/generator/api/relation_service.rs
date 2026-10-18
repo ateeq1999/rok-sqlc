@@ -13,7 +13,7 @@ use crate::generator::{keys, param_name, param_type, push_doc, push_fn_head};
 /// The relation methods of the service trait.
 pub fn render_service(output: &mut String, uses: &mut Uses, feature: &Feature<'_>) {
     for relation in &feature.relations {
-        let user = relation.needs_user(feature);
+        let user = relation.caller(feature).user;
         if user {
             uses.add("crate::shared::auth::AuthUser");
         }
@@ -174,6 +174,9 @@ fn render_writes(
     let target_tenant = scope::tenant_arg(relation.target);
     let segment = relation.segment();
     let path = format!("{}{}/{segment}", feature.url, feature.key_path());
+    // The table a missing, unseen or unpaired `other` belongs to, as a
+    // string literal.
+    let related = format!("{:?}", relation.target.display_name());
     let mut methods = Vec::new();
     if relation.syncs() {
         methods.push((
@@ -254,7 +257,9 @@ fn render_writes(
             args.extend(["other".to_owned(), "user.id".to_owned()]);
             let callee = format!("{}::listing::lock_owned", relation.target.module_name);
             push_call(output, 8, "let theirs = ", &callee, &args, ".await?;");
-            push_not_owned(output, "theirs");
+            output.push_str(&format!(
+                "        if !theirs {{\n            return Err(not_found_in({related}));\n        }}\n"
+            ));
         }
         let mut args = vec!["&mut *conn".to_owned()];
         args.extend(join_tenant.strip_suffix(", ").map(str::to_owned));
@@ -274,8 +279,9 @@ fn render_writes(
             _ => {
                 args.push("other".to_owned());
                 push_call(output, 8, "let detached = ", &callee, &args, ".await?;");
-                output
-                    .push_str("        if detached { Ok(()) } else { Err(not_found()) }\n    }\n");
+                output.push_str(&format!(
+                    "        if detached {{\n            Ok(())\n        }} else {{\n            Err(not_found_in({related}))\n        }}\n    }}\n"
+                ));
             }
         }
         output.push('\n');

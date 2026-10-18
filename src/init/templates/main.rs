@@ -1,12 +1,7 @@
-//! Starts the server. Nothing else: wiring lives in `app.rs`, settings in
-//! `config.rs`.
+//! Starts the server. Nothing else: the modules are declared in `lib.rs`,
+//! wiring lives in `app.rs`, settings in `config.rs`.
 
-mod app;
-mod config;
-mod db;
-mod error;
-mod features;
-mod shared;
+use {crate}::{app, config};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {

@@ -224,6 +224,41 @@ fn rule_6_panics_and_prints_outside_tests_are_reported() -> Result<()> {
     Ok(())
 }
 
+/// `unwrap` and `expect` called as paths (`Option::unwrap(x)`) count like
+/// method calls; other functions, and names that are not called, do not.
+#[test]
+fn rule_6_unwrap_and_expect_called_through_a_path_are_reported() -> Result<()> {
+    let dir = project(NOTES)?;
+    fs::write(
+        dir.path().join("src/config.rs"),
+        "use std::option::Option::unwrap as _;\n\
+         pub fn f(x: Option<u8>, r: Result<u8, ()>) -> u8 {\n\
+         \x20   let a = Option::unwrap(x);\n\
+         \x20   let b = Result::expect(r, \"a value\");\n\
+         \x20   let c = std::option::Option::<u8>::unwrap(x);\n\
+         \x20   let d = unwrap(x);\n\
+         \x20   a + b + c + d\n\
+         }\n\
+         pub fn fine(x: Option<u8>) -> u8 {\n\
+         \x20   let unwrap = Option::unwrap_or_default(x);\n\
+         \x20   let expect = unwrap_or(x, 1);\n\
+         \x20   let expectation = expected(unwrap);\n\
+         \x20   expect + expectation\n\
+         }\n",
+    )?;
+    let message = |what: &str| format!("rule-6: `{what}` outside tests: return an error instead");
+    assert_violations(
+        &check_arch(&dir, &[]),
+        &[
+            &format!("src/config.rs:3: {}", message("unwrap()")),
+            &format!("src/config.rs:4: {}", message("expect()")),
+            &format!("src/config.rs:5: {}", message("unwrap()")),
+            &format!("src/config.rs:6: {}", message("unwrap()")),
+        ],
+    );
+    Ok(())
+}
+
 #[test]
 fn writing_another_tables_data_is_reported_and_reading_it_is_not() -> Result<()> {
     let dir = project(NOTES)?;

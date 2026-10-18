@@ -19,7 +19,7 @@ behaves differently when you run `rok-sqlc g` again:
 |---|---|---|
 | `rok-sqlc.toml` | scaffolded | `init` |
 | `AGENTS.md` | scaffolded | `init` |
-| `src/main.rs`, `src/app.rs`, `src/config.rs`, `src/error.rs` | scaffolded | `init` |
+| `src/lib.rs`, `src/main.rs`, `src/app.rs`, `src/config.rs`, `src/error.rs` | scaffolded | `init` |
 | `src/shared/mod.rs`, `src/shared/auth.rs` | scaffolded | `init` |
 | `src/shared/response.rs`, `pagination.rs`, `validation.rs`, `tenant.rs`, `health.rs` | generated | `g` |
 | `src/db/**` (rows, typed ids, SQL, `pool.rs`, `queries.rs`) | generated | `g` |
@@ -88,7 +88,14 @@ contents, so your changes never count as drift.
 
 ## Building a binary
 
-A binary uses only part of the generated data layer and shared tools, so
-rustc warns about the rest (`dead_code`, `unused_imports`). Either allow
-those two lints in `Cargo.toml`, as the example does, or declare the modules
-in a `lib.rs` and use the library from `main.rs`.
+The application is a library crate: `src/lib.rs` declares every module
+`pub`, and `src/main.rs` only starts the server through it. A binary uses
+only part of the generated data layer and shared tools, and in a library the
+public rest is not dead code, so `cargo clippy --all-targets -- -D warnings`
+passes on a fresh project with no lint allowed. Tests build the same
+application from the library (`app::configure`).
+
+`main.rs` names the library: `init` takes the name from the project's
+`Cargo.toml` (`[lib] name`, else `[package] name`, with `-` as `_`), or from
+the directory's name when there is none. Rename the package later and you
+change that `use` line too.

@@ -13,7 +13,6 @@ use super::service::ProjectsService;
 use super::service_api::ProjectsServiceApi;
 use crate::error::AppError;
 use crate::shared::auth::AuthUser;
-use crate::shared::response::ItemsResponse;
 use crate::shared::validation::ValidatedJson;
 
 /// `GET /api/v1/projects`: one page of rows, `200`.
@@ -76,13 +75,13 @@ pub async fn remove(
     Ok(HttpResponse::NoContent().finish())
 }
 
-/// `GET /api/v1/projects/{id}/tasks`: the row's `tasks`, `200` with `{"items": [...]}`.
+/// `GET /api/v1/projects/{id}/tasks`: the row's `tasks`, `200` with a JSON array.
 pub async fn list_tasks(
     service: web::Data<ProjectsService>,
     user: AuthUser,
     path: web::Path<ProjectId>,
 ) -> Result<HttpResponse, AppError> {
     let rows = service.list_tasks(user, path.into_inner()).await?;
-    let response = ItemsResponse::<TaskResponse>::from_rows(rows);
+    let response: Vec<TaskResponse> = rows.into_iter().map(Into::into).collect();
     Ok(HttpResponse::Ok().json(response))
 }

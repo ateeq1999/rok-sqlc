@@ -108,13 +108,7 @@ fn needs_encoding(column: &Column) -> bool {
 /// The handler's own scope: the feature's tenant and caller, passing the
 /// caller on when rows are owned.
 pub fn own_scope(feature: &Feature<'_>, uses: &mut Uses) -> scope::HandlerScope {
-    scope::handler(
-        feature,
-        uses,
-        feature.tenant,
-        feature.access,
-        feature.owner.is_some(),
-    )
+    scope::handler(feature, uses, feature.tenant, feature.caller())
 }
 
 fn render_handler(output: &mut String, uses: &mut Uses, feature: &Feature<'_>, endpoint: Endpoint) {

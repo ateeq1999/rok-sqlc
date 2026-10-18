@@ -36,7 +36,9 @@ small project started with `rok-sqlc init`, generated from two tables
 
 ```text
 src/
-├─ main.rs          starts the server. Nothing else.
+├─ lib.rs           declares every module `pub`: the application is a library,
+│                   so generated code it does not use yet never warns
+├─ main.rs          starts the server through the library. Nothing else.
 ├─ app.rs           builds state, registers services, mounts every feature,
 │                   implements ports (the ONLY wiring file)
 ├─ config.rs        reads env vars into one Config (the ONLY env reader)
@@ -93,39 +95,52 @@ or it belongs in a feature. Decide which.
 ## 4. The six rules
 
 1. In a feature, only `routes.rs` and `handlers.rs` use `actix_web`. Outside
-   the features, so may `app.rs`, `main.rs`, `error.rs`,
-   `features/generated.rs`, `shared/` and the data layer.
+   the features, so may `app.rs`, `main.rs`, `error.rs`, the features'
+   `generated.rs`, `shared/` and the data layer.
 2. In a feature, only `repo.rs` and `model.rs` use `sqlx`, and `service.rs`
    and `service_api.rs` may name `sqlx::PgPool` and `sqlx::PgConnection` and
-   nothing else. Outside the features, so may `app.rs`, `error.rs`,
-   `features/generated.rs`, `shared/` and the data layer. `main.rs` may not.
+   nothing else. Outside the features, so may `app.rs`, `error.rs`, the
+   features' `generated.rs`, `shared/` and the data layer.
 3. `service.rs` never writes SQL. It calls the data layer's functions and
    traits from `shared/`.
 4. A feature never refers to another feature's modules. It may read another
-   table through `crate::db`. It never calls another table's
-   `crate::db::<table>::write`: it writes another feature's data only through
-   a port it declares itself, inside the caller's transaction (section 7).
-5. `shared/` never refers to the features module.
-6. No `unwrap()`, `expect()`, `panic!`, `todo!`, `println!` or `dbg!`
-   outside tests. Every fallible function returns `Result<_, AppError>`.
+   table through the data layer, but never calls another table's
+   `<db_path>::<table>::write`: it writes another feature's data only
+   through a port it declares itself, inside the caller's transaction. The
+   data layer is exempt: the schema crosses features.
+5. `shared/` never refers to the features.
+6. No `unwrap()`, `expect()`, `panic!`, `todo!`, `println!` or `dbg!`. Every
+   fallible function returns `Result<_, AppError>`.
 
-`rok-sqlc check-arch` enforces rules 1, 2, 4, 5 and 6, the cross-feature
-write part of rule 4 (reported as `cross-feature-write`), and the layout of
-section 2 (reported as `layout`). It reads `src/` with a Rust parser, so
-comments and strings never count, and neither does test code: files under
-`#![cfg(test)]`, items under `#[cfg(test)]`, and `#[test]` or `#[*::test]`
-functions. `tests/` is not read. A path counts wherever it appears: a `use`,
-an expression, a type, a pattern, a `#[derive(...)]` list or an attribute
-like `#[actix_web::main]`. A path reached through a `use` binding that
-already breaks a rule is reported once, at the `use`. Rule 3 is yours to
-keep.
+`lib.rs` only declares the modules, so it needs neither crate. Ports and the
+transaction they share are in section 7.
 
-Each violation is a line `path:line: rule: message`, and any violation exits
-with code 1. `-l`/`--lenient` turns layout violations into warnings while you
-move a project over.
+The features are the directories under `api.output` (`src/features/` by
+default), and the data layer is the module `api.db_path` names (`crate::db`,
+in `src/db/`, by default). `rok-sqlc check-arch` checks rules 1, 2, 4, 5 and
+6 and the layout: a feature directory holds only `mod.rs`, `routes.rs`,
+`handlers.rs`, `dto.rs`, `model.rs`, `repo.rs`, `service_api.rs` and
+`service.rs`; no file or directory is named `utils`, `helpers` or `common`;
+and `src/` has no top-level directory but the data layer's, `shared/`, the
+features' and `bin/`. Test code is exempt from every rule: files under
+`#![cfg(test)]`, items under `#[cfg(test)]`, `#[test]` and `#[<path>::test]`
+functions, and `tests/`, which is not read. Each violation prints as
+`path:line: rule: message`. Rule 3 is yours to keep.
+
+The cross-feature write part of rule 4 is reported as `cross-feature-write`
+and the layout as `layout`. `check-arch` reads `src/` with a Rust parser, so
+comments and strings never count. A path counts wherever it appears: a
+`use`, an expression, a type, a pattern, a `#[derive(...)]` list or an
+attribute like `#[actix_web::main]`. A path reached through a `use` binding
+that already breaks a rule is reported once, at the `use`. Rule 6 counts
+`unwrap` and `expect` called as methods (`x.unwrap()`) or through a path
+(`Option::unwrap(x)`).
+
+Any violation exits with code 1. `-l`/`--lenient` turns layout violations
+into warnings while you move a project over.
 
 **Conventions.** Handlers are thin: parse, call one service method, answer,
-with no business `if`. One service method is one use case, named as a verb.
+with no business `if`. One service method does one thing; name it as a verb.
 DTOs are separate from rows, and a response never carries a secret: list
 such columns in `[api.hidden]`. Money is integer minor units, time is UTC,
 and ids are UUIDs (`primary_key_ids = "uuid_v7"`, which `init` sets).
@@ -402,7 +417,8 @@ A success answer is the bare object: `200`, or `201` with `Location` for a
 create, and `204` with no body for a delete. A list answers `{items, page,
 per_page, total}` from offset pages (`?page=&per_page=`, 20 a page by
 default, at most 100), not keyset cursors; keyset pagination stays available
-in the data layer. A malformed path, query or body is `400 bad_request`, and
+in the data layer. A relationship's rows (`GET /{key}/<name>`) answer a
+bare JSON array. A malformed path, query or body is `400 bad_request`, and
 a well-formed body that breaks its rules `422 validation_failed` with the
 details by field. The README's [Generated APIs](../../README.md#generated-apis)
 section lists every route.

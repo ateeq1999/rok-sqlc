@@ -2,11 +2,13 @@
 //! project, each file only when absent. It generates nothing; `rok-sqlc g`
 //! does that once migrations exist.
 //!
-//! The skeleton refers to paths that generation fills in (ticket 04 fixed
-//! them): `crate::features::{register_services, configure_all}` from the
-//! generated `features/generated.rs`, `crate::shared::{health, pagination,
-//! response, tenant, validation}`, and `crate::db::pool::{PoolSettings,
-//! init_pool}`.
+//! The application is a library crate (`src/lib.rs` declares every module
+//! `pub`) with a thin `src/main.rs` that starts it, so generated code the
+//! application does not use yet never warns. The skeleton refers to paths
+//! that generation fills in: `crate::features::{register_services,
+//! configure_all}` from the generated `features/generated.rs`,
+//! `crate::shared::{health, pagination, response, tenant, validation}`, and
+//! `crate::db::pool::{PoolSettings, init_pool}`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -29,6 +31,7 @@ const TEMPLATES: &[(&str, &str)] = &[
         "src/features/mod.rs",
         include_str!("templates/features/mod.rs"),
     ),
+    ("src/lib.rs", include_str!("templates/lib.rs")),
     ("src/main.rs", include_str!("templates/main.rs")),
     (
         "src/shared/auth.rs",
@@ -40,13 +43,23 @@ const TEMPLATES: &[(&str, &str)] = &[
 /// The directory the migrations go in, created empty.
 const MIGRATIONS: &str = "migrations";
 
-/// The skeleton's files under `dir`, with their contents. Line endings are
-/// `\n` whichever way the templates were checked out.
-pub(crate) fn plan(dir: &Path) -> Vec<(PathBuf, String)> {
+/// Where `main.rs` names the library crate.
+const CRATE_PLACEHOLDER: &str = "{crate}";
+
+/// Where `AGENTS.md` lists the rules `check-arch` enforces.
+const RULES_PLACEHOLDER: &str = "{rules}";
+
+/// The skeleton's files under `dir`, with their contents, for the library
+/// crate `krate`. Line endings are `\n` whichever way the templates were
+/// checked out.
+pub(crate) fn plan(dir: &Path, krate: &str) -> Vec<(PathBuf, String)> {
     TEMPLATES
         .iter()
         .map(|(path, text)| {
-            let text = text.replace("\r\n", "\n");
+            let text = text
+                .replace("\r\n", "\n")
+                .replace(CRATE_PLACEHOLDER, krate)
+                .replace(RULES_PLACEHOLDER, &crate::check_arch::rules_markdown());
             let contents = if path.ends_with(".rs") {
                 format!("{SCAFFOLD_HEADER}\n\n{text}")
             } else {
@@ -57,13 +70,52 @@ pub(crate) fn plan(dir: &Path) -> Vec<(PathBuf, String)> {
         .collect()
 }
 
+/// The library crate's name in `dir`: `Cargo.toml`'s `[lib] name`, else its
+/// `[package] name` with `-` as `_`, else the directory's name made an
+/// identifier (`app` when it cannot be).
+fn crate_name(dir: &Path) -> String {
+    let manifest = fs::read_to_string(dir.join("Cargo.toml"))
+        .ok()
+        .and_then(|text| text.parse::<toml::Table>().ok());
+    let declared = manifest.as_ref().and_then(|manifest| {
+        ["lib", "package"].iter().find_map(|section| {
+            manifest
+                .get(*section)?
+                .get("name")?
+                .as_str()
+                .map(|name| name.replace('-', "_"))
+        })
+    });
+    if let Some(name) = declared {
+        return name;
+    }
+    let name: String = fs::canonicalize(dir)
+        .ok()
+        .and_then(|dir| dir.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_default()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if name.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        name
+    } else {
+        "app".to_owned()
+    }
+}
+
 /// Scaffolds the skeleton into `dir`, keeping every file that exists, and
 /// creates `migrations/`. Returns the files written.
 pub fn init(dir: &Path) -> Result<Vec<PathBuf>> {
     let migrations = dir.join(MIGRATIONS);
     fs::create_dir_all(&migrations)
         .with_context(|| format!("failed to create directory `{}`", display_path(&migrations)))?;
-    write_absent(&plan(dir))
+    write_absent(&plan(dir, &crate_name(dir)))
 }
 
 #[cfg(test)]

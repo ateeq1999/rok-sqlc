@@ -1,13 +1,14 @@
 //! An application laid out the way `rok-sqlc init` scaffolds one (ADR 0016),
 //! compiled with the generated data layer, shared tools and API features.
 //!
-//! `tests/fixture_compile.rs` in rok-sqlc writes everything but this file,
-//! `main.rs` and `features/drafts/service.rs` (a scaffolded service the
-//! fixture changed): the skeleton comes from `rok-sqlc init`, the rest from
-//! `rok-sqlc g`, and none of it is checked in. The skeleton's modules are declared here, not in `main.rs`,
-//! so the integration tests can build the application. The lints below are
-//! the generated-code quality bar (ADR 0013), with the ones the generated
-//! actix-web code passes too.
+//! `tests/fixture_compile/` in rok-sqlc writes everything but this file and
+//! `features/drafts/service.rs` (a scaffolded service the fixture changed):
+//! the skeleton comes from `rok-sqlc init`, the rest from `rok-sqlc g`, and
+//! none of it is checked in. This file stands in for the scaffolded
+//! `lib.rs`: it declares the same modules, so the scaffolded `main.rs` and
+//! the integration tests build the application, under the lints below. They
+//! are the generated-code quality bar (ADR 0013), with the ones the
+//! generated actix-web code passes too.
 
 #![deny(missing_docs, warnings)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

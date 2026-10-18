@@ -1,4 +1,4 @@
--- Ticket 08's routes. `tests/fixture_compile.rs` sets the conventions
+-- Ticket 08's routes. `tests/fixture_compile/` sets the conventions
 -- (`tenant_id`, `revision`, `deleted_at`) and turns `POST /search` on for
 -- every feature.
 --

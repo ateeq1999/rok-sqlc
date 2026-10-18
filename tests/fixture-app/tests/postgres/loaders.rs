@@ -302,7 +302,7 @@ pub(super) async fn self_reference_loads_parent_and_children(pool: &PgPool) {
     assert_eq!(children[&leaf.id], Vec::new());
 }
 
-/// `tests/fixture_compile.rs` renames `expense_claims.created_by_user` to
+/// `tests/fixture_compile/` renames `expense_claims.created_by_user` to
 /// `author` and its inverse on `users` to `authored_expense_claims`, and opts
 /// out `expense_claims.approved_by_user`, which removes both of its sides:
 /// the renamed loaders work like inferred ones, and no `load_approved_by_user`

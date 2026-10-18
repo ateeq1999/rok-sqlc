@@ -16,7 +16,8 @@ yours: rok-sqlc writes them once and never touches them again.
 
 ```
 src/
-├─ main.rs        starts the server. Nothing else.
+├─ lib.rs         declares every module `pub`: the application is a library
+├─ main.rs        starts the server through the library. Nothing else.
 ├─ app.rs         builds state, registers services, mounts every feature (the ONLY wiring file)
 ├─ config.rs      reads env vars into one Config (the ONLY env reader)
 ├─ error.rs       AppError and its HTTP mapping, shared by all features
@@ -37,9 +38,14 @@ src/
       └─ service.rs      yours: the service struct and your overrides (business rules)
 ```
 
-No other file may be added to a feature. No `utils.rs`, `helpers.rs` or
-`common.rs`. Something that doesn't fit is either a `shared/` tool (no
-business meaning) or belongs in a feature.
+No other file may be added to a feature, and no file or directory anywhere
+under `src/` may be named `utils`, `helpers` or `common`. Something that
+doesn't fit is either a `shared/` tool (no business meaning) or belongs in
+a feature.
+
+The tree shows the default paths: `api.output` in `rok-sqlc.toml` moves the
+features directory and `api.db_path` names the data layer's module, and the
+rules below follow them.
 
 ## Where does each piece of code go?
 
@@ -59,35 +65,12 @@ business meaning) or belongs in a feature.
 
 ## The six rules
 
-1. In a feature, only `routes.rs` and `handlers.rs` use `actix_web`.
-   Outside the features, so may `app.rs`, `main.rs`, `error.rs`,
-   `features/generated.rs`, `shared/` and `src/db/`.
-2. In a feature, only `repo.rs` and `model.rs` use `sqlx`, and
-   `service.rs` and `service_api.rs` may name `sqlx::PgPool` and
-   `sqlx::PgConnection` and nothing else. Outside the features, so may
-   `app.rs`, `error.rs`, `features/generated.rs`, `shared/` and `src/db/`.
-3. `service.rs` never writes SQL. It calls `crate::db` functions and
-   traits from `shared/`.
-4. A feature never refers to another feature's modules. It may read
-   another table through `crate::db`, but never calls another table's
-   `crate::db::<table>::write`: it writes another feature's data only
-   through a port it declares itself, inside the caller's transaction.
-   `src/db/` is exempt: the schema crosses features.
-5. `shared/` never refers to `features/`.
-6. No `unwrap()`, `expect()`, `panic!`, `todo!`, `println!` or `dbg!`
-   outside tests (`#[cfg(test)]`, `#[test]` and `tests/`). Every fallible
-   function returns `Result<_, AppError>`.
-
-`rok-sqlc check-arch` checks rules 1, 2, 4, 5 and 6 and the layout above
-(eight files per feature, no `utils`/`helpers`/`common`, no top-level
-directory under `src/` but `db/`, `shared/`, `features/` and `bin/`), and
-prints each violation as `path:line: rule: message`. Rule 3 is yours to
-keep.
+{rules}
 
 Handlers are thin: parse, call one service method, return. One service
-method is one use case. DTOs are separate from rows, and a response never
-carries a secret (`[api.hidden]`). Money is integer minor units, time is
-UTC, and ids are UUIDs.
+method does one thing; name it as a verb. DTOs are separate from rows, and
+a response never carries a secret (`[api.hidden]`). Money is integer minor
+units, time is UTC, and ids are UUIDs.
 
 ## Checks
 

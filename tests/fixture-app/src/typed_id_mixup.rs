@@ -1,4 +1,4 @@
-//! Must NOT compile: tests/fixture_compile.rs enables the `typed-id-mixup`
+//! Must NOT compile: tests/fixture_compile/ enables the `typed-id-mixup`
 //! feature and expects `cargo check` to reject this file, proving that one
 //! table's typed id cannot stand in for another's.
 

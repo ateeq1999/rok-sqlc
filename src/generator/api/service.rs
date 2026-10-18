@@ -73,6 +73,15 @@ pub fn render_api(feature: &Feature<'_>) -> String {
             feature.table.display_name(),
         ));
     }
+    if feature
+        .relations
+        .iter()
+        .any(|relation| relation.writes().is_some())
+    {
+        output.push_str(
+            "\n/// The `404` naming a related `table`: no row of it the caller may see has\n/// this key, or none is paired with the row.\nfn not_found_in(table: &str) -> AppError {\n    AppError::NotFound(format!(\"no `{table}` row has this key\"))\n}\n",
+        );
+    }
     if feature.version.is_some() && feature.serves(Endpoint::Update) {
         output.push_str(&format!(
             "\n/// The `412` of an `If-Match` that isn't the `{}` row's version.\nfn stale() -> AppError {{\n    AppError::VersionConflict(\"the row has changed since this version\".to_owned())\n}}\n",

@@ -8,9 +8,8 @@ use super::feature::Feature;
 use super::handlers::{own_scope, push_answer};
 use super::layout::{Uses, push_call, push_signature};
 use super::relations::{Kind, Relation};
-use super::scope;
-use crate::ApiAccess;
-use crate::generator::push_doc;
+use super::scope::{self, Extraction};
+use crate::generator::{MAX_WIDTH, push_doc};
 
 /// The relation routes: `(path, method, handler)`.
 pub fn routes(feature: &Feature<'_>) -> Vec<(String, &'static str, String)> {
@@ -81,32 +80,26 @@ fn relation_args(
             scope::import_type(feature, uses, tenant);
         }
     }
-    let access = relation.access(feature);
-    let user = relation.needs_user(feature);
-    if access == feature.access && (!user || feature.owner.is_some()) {
-        if user {
-            args.push(if access == ApiAccess::Admin {
-                "admin.0".to_owned()
+    let caller = relation.caller(feature);
+    if let Some(Extraction {
+        extractor,
+        binding,
+        arg,
+    }) = caller.extraction()
+    {
+        // The handler's own extractor already hands over this caller.
+        if caller != feature.caller() {
+            uses.add("actix_web::FromRequest");
+            uses.add(&format!("crate::shared::auth::{extractor}"));
+            if arg.is_some() {
+                extract.push_str(&format!(
+                    "    let {binding} = {extractor}::extract(&req).await?;\n"
+                ));
             } else {
-                "user".to_owned()
-            });
+                extract.push_str(&format!("    {extractor}::extract(&req).await?;\n"));
+            }
         }
-    } else {
-        uses.add("actix_web::FromRequest");
-        let (extractor, binding, arg) = if access == ApiAccess::Admin {
-            ("AdminUser", "admin", "admin.0")
-        } else {
-            ("AuthUser", "user", "user")
-        };
-        uses.add(&format!("crate::shared::auth::{extractor}"));
-        if user {
-            extract.push_str(&format!(
-                "    let {binding} = {extractor}::extract(&req).await?;\n"
-            ));
-            args.push(arg.to_owned());
-        } else {
-            extract.push_str(&format!("    {extractor}::extract(&req).await?;\n"));
-        }
+        args.extend(arg.map(str::to_owned));
     }
     if let Some(tenant) = relation.tenant.filter(|_| feature.tenant.is_none()) {
         extract.push_str(&format!(
@@ -236,13 +229,7 @@ pub fn render_handlers(output: &mut String, uses: &mut Uses, feature: &Feature<'
             continue;
         };
         uses.add(&format!("super::model::{key}"));
-        let scope = scope::handler(
-            feature,
-            uses,
-            relation.tenant,
-            relation.access(feature),
-            relation.needs_user(feature),
-        );
+        let scope = scope::handler(feature, uses, relation.tenant, relation.caller(feature));
         let response = relation.response();
         if relation.target.module_name != feature.module() {
             uses.add(&format!("super::super::{response}"));
@@ -264,7 +251,7 @@ pub fn render_handlers(output: &mut String, uses: &mut Uses, feature: &Feature<'
             output,
             0,
             &[&format!(
-                "`GET {path}`: the row's `{}`, `200` with `{{\"items\": [...]}}`.",
+                "`GET {path}`: the row's `{}`, `200` with a JSON array.",
                 relation.name
             )],
         );
@@ -275,10 +262,15 @@ pub fn render_handlers(output: &mut String, uses: &mut Uses, feature: &Feature<'
         args.push("path.into_inner()".to_owned());
         let callee = format!("service.list_{}", relation.name);
         push_call(output, 4, "let rows = ", &callee, &args, ".await?;");
-        uses.add("crate::shared::response::ItemsResponse");
-        output.push_str(&format!(
-            "    let response = ItemsResponse::<{response}>::from_rows(rows);\n"
-        ));
+        // A bare JSON array; the right-hand side moves to its own line when
+        // the type makes the line too long, as rustfmt does.
+        let head = format!("    let response: Vec<{response}> =");
+        let rows = "rows.into_iter().map(Into::into).collect();";
+        if head.len() + 1 + rows.len() <= MAX_WIDTH {
+            output.push_str(&format!("{head} {rows}\n"));
+        } else {
+            output.push_str(&format!("{head}\n        {rows}\n"));
+        }
         output.push_str("    Ok(HttpResponse::Ok().json(response))\n}\n");
 
         let Some(writes) = relation.writes() else {

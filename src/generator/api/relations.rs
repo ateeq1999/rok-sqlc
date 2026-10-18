@@ -8,6 +8,7 @@
 use heck::{ToKebabCase, ToUpperCamelCase};
 
 use super::feature::{Endpoint, Feature};
+use super::scope::Caller;
 use crate::generator::joins::joins;
 use crate::generator::relationships::{join_pair, resolve};
 use crate::schema::{Column, Table};
@@ -74,9 +75,9 @@ pub struct Writes<'a> {
 }
 
 impl<'a> Relation<'a> {
-    /// The routes' access: the stricter of the feature's and the related
-    /// table's.
-    pub fn access(&self, feature: &Feature<'_>) -> ApiAccess {
+    /// Who the routes act for: the stricter of the feature's and the related
+    /// table's access, and the caller's id when either table is owned.
+    pub fn caller(&self, feature: &Feature<'_>) -> Caller {
         fn rank(access: ApiAccess) -> u8 {
             match access {
                 ApiAccess::Public => 0,
@@ -84,17 +85,15 @@ impl<'a> Relation<'a> {
                 ApiAccess::Admin => 2,
             }
         }
-        if rank(self.target_access) > rank(feature.access) {
+        let access = if rank(self.target_access) > rank(feature.access) {
             self.target_access
         } else {
             feature.access
+        };
+        Caller {
+            access,
+            user: feature.owner.is_some() || self.target_owner.is_some(),
         }
-    }
-
-    /// Whether the routes need the caller's id: the feature or the related
-    /// table is owned.
-    pub fn needs_user(&self, feature: &Feature<'_>) -> bool {
-        feature.owner.is_some() || self.target_owner.is_some()
     }
 
     /// The related feature's response, such as `AccountResponse`.

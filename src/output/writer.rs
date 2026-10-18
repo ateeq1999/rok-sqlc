@@ -377,9 +377,7 @@ mod tests {
     }
 
     fn scaffolded(contents: &str) -> String {
-        format!(
-            "// Scaffolded once by rok-sqlc; this file is yours. It is never regenerated. See docs/guide/architecture.md.\n{contents}"
-        )
+        format!("{SCAFFOLD_HEADER}\n{contents}")
     }
 
     #[test]

@@ -1,24 +1,11 @@
 //! `rok-sqlc check-arch`: checks a project against ADR 0016's architecture.
 //!
-//! The layout: a feature directory holds only its eight files, no
-//! `utils`/`helpers`/`common` module, and no top-level directory under
-//! `src/` besides the data layer, `shared/`, the features directory and
-//! `bin/`. The rules, read from the Rust source with `syn` (test code is
-//! exempt):
-//!
-//! 1. `actix_web` only in a feature's `routes.rs` and `handlers.rs`, `app.rs`,
-//!    `main.rs`, `error.rs`, the features' `generated.rs`, `shared/` and the
-//!    data layer.
-//! 2. `sqlx` only in a feature's `repo.rs` and `model.rs`, `app.rs`,
-//!    `error.rs`, the features' `generated.rs`, `shared/` and the data
-//!    layer; a feature's `service.rs` and `service_api.rs` may name
-//!    `sqlx::PgPool` and `sqlx::PgConnection` and nothing else.
-//! 4. A feature never refers to another feature's modules.
-//! 5. `shared/` never refers to the features module.
-//! 6. No `unwrap()`, `expect()`, `panic!`, `todo!`, `println!` or `dbg!`.
-//!
-//! And a feature never refers to another table's `<db>::<table>::write`.
+//! The rules and the layout it checks are stated once, in [`rules`]: the
+//! lists of files each rule allows, and the texts the scaffolded `AGENTS.md`
+//! and the architecture guide carry. The Rust source is read with `syn`, and
+//! test code is exempt from every rule.
 
+mod rules;
 mod source;
 
 use std::fmt;
@@ -27,6 +14,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
+pub(crate) use rules::rules_markdown;
+use rules::{
+    ACTIX_WEB_FEATURE, ACTIX_WEB_ROOT, SQLX_FEATURE, SQLX_PORT_FILES, SQLX_PORT_TYPES, SQLX_ROOT,
+};
 use source::Reference;
 
 /// The files a feature directory may hold.
@@ -418,21 +409,21 @@ impl Layout {
             Target::Other(path) => match path.first().map(String::as_str) {
                 Some("actix_web") => {
                     let allowed = infrastructure
-                        || Self::is_root(rel, &["app.rs", "main.rs", "error.rs"])
-                        || (feature.is_some() && matches!(file, "routes.rs" | "handlers.rs"));
+                        || Self::is_root(rel, ACTIX_WEB_ROOT)
+                        || (feature.is_some() && ACTIX_WEB_FEATURE.contains(&file));
                     if !allowed {
                         rules.push(Rule::ActixWeb);
                     }
                 }
                 Some("sqlx") => {
                     let ports = feature.is_some()
-                        && matches!(file, "service.rs" | "service_api.rs")
+                        && SQLX_PORT_FILES.contains(&file)
                         && path.len() == 2
-                        && matches!(path[1].as_str(), "PgPool" | "PgConnection");
+                        && SQLX_PORT_TYPES.contains(&path[1].as_str());
                     let allowed = infrastructure
                         || ports
-                        || Self::is_root(rel, &["app.rs", "error.rs"])
-                        || (feature.is_some() && matches!(file, "repo.rs" | "model.rs"));
+                        || Self::is_root(rel, SQLX_ROOT)
+                        || (feature.is_some() && SQLX_FEATURE.contains(&file));
                     if !allowed {
                         rules.push(Rule::Sqlx);
                     }
@@ -467,13 +458,15 @@ impl Layout {
     fn message(&self, rel: &[String], rule: Rule, target: &Target) -> String {
         match rule {
             Rule::ActixWeb => format!(
-                "`{target}`: only routes.rs, handlers.rs, app.rs, main.rs, error.rs, \
-                 features/generated.rs, shared/ and db/ may use actix_web"
+                "`{target}`: only {}, features/generated.rs, shared/ and db/ may use actix_web",
+                [ACTIX_WEB_FEATURE, ACTIX_WEB_ROOT].concat().join(", ")
             ),
             Rule::Sqlx => format!(
-                "`{target}`: only repo.rs, model.rs, app.rs, error.rs, features/generated.rs, \
-                 shared/ and db/ may use sqlx (service.rs and service_api.rs: PgPool and \
-                 PgConnection only)"
+                "`{target}`: only {}, features/generated.rs, shared/ and db/ may use sqlx \
+                 ({}: {} only)",
+                [SQLX_FEATURE, SQLX_ROOT].concat().join(", "),
+                SQLX_PORT_FILES.join(" and "),
+                SQLX_PORT_TYPES.join(" and ")
             ),
             Rule::CrossFeature => format!(
                 "`{target}`: feature `{}` refers to another feature; declare a port in its \

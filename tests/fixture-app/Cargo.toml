@@ -34,5 +34,5 @@ tower = { version = "0.5", features = ["util"] }
 
 [features]
 # Compiles src/typed_id_mixup.rs, which must fail to compile (see
-# tests/fixture_compile.rs in rok-sqlc).
+# tests/fixture_compile/ in rok-sqlc).
 typed-id-mixup = []

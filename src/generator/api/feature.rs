@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use heck::{ToKebabCase, ToUpperCamelCase};
 
 use super::relations::Relation;
+use super::scope::Caller;
 use crate::generator::relationships::join_pair;
 use crate::generator::search::{SearchApi, filter_relationships};
 use crate::generator::write::{has_versioned_update, version_column};
@@ -308,9 +309,18 @@ impl<'a> Feature<'a> {
     }
 
     /// Whether an endpoint's service method takes the caller (an owned
-    /// feature's); a relation's may too ([`Relation::needs_user`]).
+    /// feature's); a relation's may too ([`Relation::caller`]).
     pub fn takes_user(&self) -> bool {
         self.owner.is_some() && !(self.endpoints.is_empty() && self.lookups.is_empty())
+    }
+
+    /// Who the feature's own handlers act for: its access, and the caller's
+    /// id when rows are owned.
+    pub fn caller(&self) -> Caller {
+        Caller {
+            access: self.access,
+            user: self.owner.is_some(),
+        }
     }
 
     /// Whether the feature serves `endpoint`.

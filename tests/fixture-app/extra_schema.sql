@@ -1,4 +1,4 @@
--- Fixture tables appended to modules/inventory/schema.sql by tests/fixture_compile.rs.
+-- Fixture tables appended to modules/inventory/schema.sql by tests/fixture_compile/.
 -- Each one targets a generator rule; tests/fixture-app/tests/postgres.rs exercises them.
 
 -- Composite primary key, arrays, TIME, NUMERIC; no defaults, so `create` is static SQL.
@@ -152,7 +152,7 @@ CREATE TABLE app.branches (
 CREATE UNIQUE INDEX branches_lower_name ON app.branches (lower(name));
 CREATE UNIQUE INDEX branches_open_name ON app.branches (name) WHERE code <> 'CLOSED';
 
--- Managed columns: tests/fixture_compile.rs generates the fixture with
+-- Managed columns: tests/fixture_compile/ generates the fixture with
 -- `managed_columns = ["updated_at", "row_version"]`, and a trigger shaped like
 -- the Rok ERP's `core.touch_row` maintains both on update.
 CREATE TABLE touched_notes (
@@ -188,7 +188,7 @@ CREATE TABLE currency_rates (
     PRIMARY KEY (currency_code, day)
 );
 
--- Version column: tests/fixture_compile.rs generates the fixture with
+-- Version column: tests/fixture_compile/ generates the fixture with
 -- `version_column = "revision"`, so `update` takes the expected revision and
 -- returns an `UpdateOutcome`. A `touch_row`-style trigger advances it.
 -- With `deleted_at` as the soft-delete column, a deleted row counts as missing.
@@ -211,7 +211,7 @@ $$;
 CREATE TRIGGER bump_revision BEFORE UPDATE ON versioned_documents
     FOR EACH ROW EXECUTE FUNCTION bump_revision();
 
--- Soft delete: tests/fixture_compile.rs generates the fixture with
+-- Soft delete: tests/fixture_compile/ generates the fixture with
 -- `soft_delete_column = "deleted_at"`. The code index is unique among live
 -- rows only, so it is a unique key and gets `get_by_code`.
 CREATE TABLE soft_notes (
@@ -222,7 +222,7 @@ CREATE TABLE soft_notes (
 );
 CREATE UNIQUE INDEX soft_notes_code_unique_index ON soft_notes (code) WHERE deleted_at IS NULL;
 
--- Tenant scoping: tests/fixture_compile.rs generates the fixture with
+-- Tenant scoping: tests/fixture_compile/ generates the fixture with
 -- `tenant_column = "tenant_id"`. `tenant_notes` also has the soft-delete and
 -- version columns, so every write path is scoped to the tenant.
 CREATE TABLE tenant_notes (
@@ -312,7 +312,7 @@ CREATE TABLE org_units (
     name TEXT NOT NULL
 );
 
--- Relationship configuration (ticket 24): tests/fixture_compile.rs renames
+-- Relationship configuration (ticket 24): tests/fixture_compile/ renames
 -- `expense_claims.created_by_user` to `author` (and its inverse on `users` to
 -- `authored_expense_claims`) and opts out `approved_by_user`, so neither side
 -- of that foreign key gets a loader.

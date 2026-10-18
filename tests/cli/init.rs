@@ -11,6 +11,7 @@ const SKELETON: &[&str] = &[
     "src/config.rs",
     "src/error.rs",
     "src/features/mod.rs",
+    "src/lib.rs",
     "src/main.rs",
     "src/shared/auth.rs",
     "src/shared/mod.rs",
@@ -101,5 +102,25 @@ fn init_keeps_existing_project_files() -> Result<()> {
         "schema = \"schema.sql\"\n"
     );
     assert!(dir.path().join("src/app.rs").is_file());
+    Ok(())
+}
+
+/// `main.rs` starts the application through its library, named after the
+/// package, or after the directory when there is no `Cargo.toml`.
+#[test]
+fn init_names_the_library_main_calls_into() -> Result<()> {
+    let dir = TempDir::new()?;
+    fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"my-api\"\nversion = \"0.1.0\"\n",
+    )?;
+    assert_success(&run_binary_in(dir.path(), &["init"]));
+    let main = fs::read_to_string(dir.path().join("src/main.rs"))?;
+    assert!(main.contains("\nuse my_api::{app, config};\n"), "{main}");
+
+    let bare = dir.path().join("Shop-Api");
+    assert_success(&run_binary(&["init", bare.to_str().unwrap_or_default()]));
+    let main = fs::read_to_string(bare.join("src/main.rs"))?;
+    assert!(main.contains("\nuse shop_api::{app, config};\n"), "{main}");
     Ok(())
 }

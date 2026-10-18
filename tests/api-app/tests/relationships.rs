@@ -47,10 +47,10 @@ async fn task(db: &Database, token: &str, title: &str) -> String {
     answer.body["id"].as_str().expect("an id").to_owned()
 }
 
-/// The values of `field` in a `{"items": [...]}` answer, in order.
+/// The values of `field` in a relationship's answer, a bare JSON array, in
+/// order.
 fn items(body: &Value, field: &str) -> Vec<Value> {
-    body["items"]
-        .as_array()
+    body.as_array()
         .expect("items")
         .iter()
         .map(|item| item[field].clone())
@@ -151,7 +151,7 @@ async fn has_many_shows_only_the_callers_own_rows() {
     let theirs = format!("/api/v1/accounts/{user_id}/tasks");
     let answer = call_as(&db, Some(&admin), Method::GET, &theirs, None).await;
     assert_eq!(answer.status, StatusCode::OK, "{answer:?}");
-    assert_eq!(answer.body, json!({"items": []}));
+    assert_eq!(answer.body, json!([]));
     let mine = format!("/api/v1/accounts/{admin_id}/tasks");
     let answer = call_as(&db, Some(&admin), Method::GET, &mine, None).await;
     assert_eq!(items(&answer.body, "title"), [json!("mine")]);
@@ -227,11 +227,14 @@ async fn many_to_many_keeps_other_owners_rows_out_of_reach() {
     }
     let seen = call_as(&db, Some(&alice), Method::GET, &tasks, None).await;
     assert_eq!(items(&seen.body, "title"), [json!("hers")]);
-    // Bob's task is a 404 to Alice, attached or not.
+    // Bob's task is a 404 to Alice, attached or not, naming the table of
+    // the row she cannot see.
     let uri = format!("{tasks}/{his}");
     for method in [Method::PUT, Method::DELETE] {
         let answer = call_as(&db, Some(&alice), method, &uri, None).await;
         assert_error(&answer, StatusCode::NOT_FOUND, "not_found");
+        let message = answer.body["error"]["message"].as_str().unwrap_or_default();
+        assert!(message.contains("`tasks`"), "{message}");
     }
     // From the task's side: only its owner reads or syncs its labels.
     let labels = format!("{TASKS}/{his}/labels");
@@ -245,6 +248,6 @@ async fn many_to_many_keeps_other_owners_rows_out_of_reach() {
     let answer = call_as(&db, Some(&bob), Method::PUT, &labels, body).await;
     assert_eq!(answer.status, StatusCode::NO_CONTENT, "{answer:?}");
     let answer = call_as(&db, Some(&bob), Method::GET, &labels, None).await;
-    assert_eq!(answer.body, json!({"items": []}));
+    assert_eq!(answer.body, json!([]));
     db.drop().await;
 }

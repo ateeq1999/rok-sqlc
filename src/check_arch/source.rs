@@ -232,6 +232,24 @@ impl<'ast> Visit<'ast> for Collector {
         }
     }
 
+    /// `Option::unwrap(x)`, `Result::expect(r, "...")` or an imported
+    /// `unwrap(x)`: a call through a path whose last segment is a forbidden
+    /// method. A path that is not called (`map(Option::unwrap)`) is not.
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let Expr::Path(callee) = &*call.func
+            && let Some(last) = callee.path.segments.last()
+        {
+            let name = last.ident.to_string();
+            if FORBIDDEN_METHODS.contains(&name.as_str()) {
+                self.source.forbidden.push(Forbidden {
+                    what: format!("{name}()"),
+                    line: line(last.ident.span()),
+                });
+            }
+        }
+        visit::visit_expr_call(self, call);
+    }
+
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
         let name = call.method.to_string();
         if FORBIDDEN_METHODS.contains(&name.as_str()) {

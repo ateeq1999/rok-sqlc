@@ -1115,7 +1115,7 @@ route base (`/tasks`), and `[api.skip]` drops any of them:
 | `POST /search` (`[api] search_endpoint = true`) | `search` | `200`, a page; body `{filter, sort, order, page, per_page}` |
 | `POST /{id}/restore` (soft-delete tables) | `restore` | `200` |
 | `GET /by-<column>/{value}` (single-column unique keys) | `lookups` | `200` |
-| `GET /{id}?include=<name>`, `GET /{id}/<name>`, `PUT`/`DELETE /{id}/<name>/{other}`, `PUT /{id}/<name>` | `relationships` | `200`, `200` `{items}`, `204`, `204` |
+| `GET /{id}?include=<name>`, `GET /{id}/<name>`, `PUT`/`DELETE /{id}/<name>/{other}`, `PUT /{id}/<name>` | `relationships` | `200`, `200` with a JSON array, `204`, `204` |
 
 `/health/live` and `/health/ready` sit outside the prefix. Errors follow
 one wire standard, `{"error": {"code", "message", "details"?}}`, with the
@@ -1165,7 +1165,8 @@ nothing; `rok-sqlc g` does that once there are migrations.
 |---|---|
 | `rok-sqlc.toml` | `schema = "migrations/"`, `derive = ["serde", "validate"]`, `extractors = ["actix_web"]`, `primary_key_ids = "uuid_v7"` and `api.output = "src/features"`, followed by the dependencies to add to `Cargo.toml`, as comments |
 | `migrations/` | empty: your migrations go here |
-| `src/main.rs` | starts the server, nothing else |
+| `src/lib.rs` | declares every module `pub`: the application is a library, so generated code it does not use yet never warns |
+| `src/main.rs` | starts the server through the library (named after `Cargo.toml`'s package), nothing else |
 | `src/app.rs` | the only wiring file: the pool, the generated `register_services` and `configure_all`, and health |
 | `src/config.rs` | `Config::from_env` (`DATABASE_URL`, `BIND_ADDR`, `JWT_SECRET`, pool settings), the only environment reader |
 | `src/error.rs` | `AppError`, answered with the wire standard's error body, and the `sqlx` error mapping |
@@ -1210,7 +1211,7 @@ test code, `#[cfg(test)]` or `#[test]`, never count):
 | `rule-2` | `sqlx` only in a feature's `repo.rs` and `model.rs`, `app.rs`, `error.rs`, the features' `generated.rs`, `shared/` and the data layer; a feature's `service.rs` and `service_api.rs` may name `sqlx::PgPool` and `sqlx::PgConnection` and nothing else |
 | `rule-4` | a feature never refers to another feature's modules |
 | `rule-5` | `shared/` never refers to the features module |
-| `rule-6` | no `unwrap()`, `expect()`, `panic!`, `todo!`, `println!` or `dbg!` |
+| `rule-6` | no `unwrap()`, `expect()` (as methods or called through a path, `Option::unwrap(x)`), `panic!`, `todo!`, `println!` or `dbg!` |
 | `cross-feature-write` | a feature never refers to another table's `<db_path>::<table>::write`; reads are fine |
 
 `-l`/`--lenient` prints layout violations as warnings on stderr instead of
@@ -1461,7 +1462,7 @@ cargo fmt --all -- --check
 
 - **Two toolchains.** The tool builds on Rust 1.88 (so no `if let` guards in
   `match`, for example). The suites that compile generated code
-  (`tests/fixture_compile.rs`, `tests/module_fixtures/`, and
+  (`tests/fixture_compile/`, `tests/module_fixtures/`, and
   `the_examples_compile` in `tests/readme.rs`) need Rust 1.94. Below that,
   they print a skip notice and pass. CI runs 1.88, 1.94 and stable.
 - **PostgreSQL suite.** Set `ROK_SQLC_TEST_DATABASE_URL` to a throwaway

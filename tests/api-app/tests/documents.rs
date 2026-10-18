@@ -316,10 +316,10 @@ async fn relationships_reach_documents_only_in_the_tenant_and_for_their_owner() 
     // Has-many, from the public label: only the owning admin, in the tenant.
     let documents = format!("/api/v1/labels/{}/documents", label["id"]);
     let mine = get(&db, &alice, &documents).await;
-    assert_eq!(mine.body["items"][0]["code"], "a", "{mine:?}");
-    assert_eq!(get(&db, &elsewhere, &documents).await.body, json!({"items": []}));
+    assert_eq!(mine.body[0]["code"], "a", "{mine:?}");
+    assert_eq!(get(&db, &elsewhere, &documents).await.body, json!([]));
     let bob = admin(tenant);
-    assert_eq!(get(&db, &bob, &documents).await.body, json!({"items": []}));
+    assert_eq!(get(&db, &bob, &documents).await.body, json!([]));
     let anonymous = common::get(&db, &documents).await;
     assert_error(&anonymous, StatusCode::UNAUTHORIZED, "unauthorized");
     db.drop().await;

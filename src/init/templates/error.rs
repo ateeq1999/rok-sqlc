@@ -15,10 +15,6 @@ const INTERNAL_MESSAGE: &str = "something went wrong";
 /// An error answered with the wire standard's body. The message of each
 /// variant but `Internal` is sent to the caller.
 #[derive(Debug, thiserror::Error)]
-#[allow(
-    dead_code,
-    reason = "generated features construct the variants their tables need"
-)]
 pub enum AppError {
     /// `400 bad_request`: a malformed body, path or query.
     #[error("{0}")]

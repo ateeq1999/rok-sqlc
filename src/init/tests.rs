@@ -1,6 +1,5 @@
-//! The skeleton's text. A compile check of `init` plus generation needs the
-//! generated `features/generated.rs`, `shared/` tools and `db/pool.rs`
-//! (tickets 05 and 06), so until then each template is checked here.
+//! The skeleton's text, template by template. `tests/fixture_compile/`
+//! compiles it with the generated code and checks it end to end.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -12,10 +11,15 @@ use super::*;
 use crate::config::{Derive, Extractor, IdGeneration};
 use crate::config_file;
 
-const HEADER: &str = "// Scaffolded once by rok-sqlc; this file is yours. It is never regenerated. See docs/guide/architecture.md.";
+/// The library crate the tests scaffold for.
+const CRATE: &str = "my_app";
+
+fn skeleton() -> Vec<(PathBuf, String)> {
+    plan(Path::new(""), CRATE)
+}
 
 fn template(path: &str) -> String {
-    plan(Path::new(""))
+    skeleton()
         .into_iter()
         .find(|(planned, _)| planned == Path::new(path))
         .map(|(_, text)| text)
@@ -23,7 +27,7 @@ fn template(path: &str) -> String {
 }
 
 fn rust_templates() -> Vec<(PathBuf, String)> {
-    plan(Path::new(""))
+    skeleton()
         .into_iter()
         .filter(|(path, _)| path.extension().is_some_and(|ext| ext == "rs"))
         .collect()
@@ -31,20 +35,23 @@ fn rust_templates() -> Vec<(PathBuf, String)> {
 
 #[test]
 fn every_template_starts_with_the_scaffold_header() {
-    for (path, text) in plan(Path::new("")) {
+    for (path, text) in skeleton() {
         let first = text.lines().next().unwrap_or_default();
-        let words = HEADER.trim_start_matches("// ");
+        let words = SCAFFOLD_HEADER.trim_start_matches("// ");
         assert!(first.contains(words), "{}: {first}", path.display());
     }
     for (path, text) in rust_templates() {
-        assert!(text.starts_with(HEADER), "{}", path.display());
+        assert!(text.starts_with(SCAFFOLD_HEADER), "{}", path.display());
     }
 }
 
 #[test]
-fn templates_have_no_carriage_returns() {
-    for (path, text) in plan(Path::new("")) {
+fn templates_have_no_carriage_returns_or_placeholders() {
+    for (path, text) in skeleton() {
         assert!(!text.contains('\r'), "{}", path.display());
+        for placeholder in [CRATE_PLACEHOLDER, RULES_PLACEHOLDER] {
+            assert!(!text.contains(placeholder), "{}", path.display());
+        }
     }
 }
 
@@ -80,6 +87,8 @@ fn rust_templates_use_only_the_allowed_crates() {
         // The generated data layer needs it for `derive = ["validate"]`,
         // and `AppError::Validation` carries its errors.
         "validator",
+        // `main.rs` starts the application through its library.
+        CRATE,
     ]);
     for (path, text) in rust_templates() {
         for line in text.lines() {
@@ -130,11 +139,21 @@ fn the_config_file_hints_the_cargo_dependencies() {
 }
 
 #[test]
-fn main_declares_the_modules_and_starts_the_server() {
-    let text = template("src/main.rs");
+fn the_library_declares_the_modules_and_main_starts_the_server() {
+    let lib = template("src/lib.rs");
+    let main = template("src/main.rs");
     for module in ["app", "config", "db", "error", "features", "shared"] {
-        assert!(text.contains(&format!("\nmod {module};\n")), "mod {module}");
+        assert!(
+            lib.contains(&format!("\npub mod {module};\n")),
+            "mod {module}"
+        );
+        assert!(
+            !main.contains(&format!("mod {module};")),
+            "main: mod {module}"
+        );
     }
+    let text = main;
+    assert!(text.contains("\nuse my_app::{app, config};\n"));
     assert!(text.contains("#[actix_web::main]"));
     assert!(text.contains("config::Config::from_env()"));
     assert!(text.contains("app::run(config).await"));
@@ -290,48 +309,49 @@ fn shared_and_features_declare_the_generated_modules() {
 
 #[test]
 fn agents_md_holds_the_rules_and_where_code_goes() {
-    let text = template("AGENTS.md");
+    let text = template("AGENTS.md")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     for section in [
         "## Where does each piece of code go?",
         "## The six rules",
         "service_api.rs",
         "service.rs",
         "port",
-        "`src/db/` is exempt",
+        "The data layer is exempt",
+        "One service method does one thing; name it as a verb.",
     ] {
         assert!(text.contains(section), "missing {section}");
     }
 }
 
-/// `AGENTS.md` states exactly the rules `check-arch` enforces, with the
-/// same allowed files (the rule texts of ticket 09).
+/// `AGENTS.md` states exactly what `check-arch` enforces: its rules section
+/// is rendered from `check-arch`'s own rule texts.
 #[test]
 fn agents_md_states_the_rules_check_arch_enforces() {
-    let text = template("AGENTS.md")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let raw = template("AGENTS.md");
+    assert!(
+        raw.contains(&format!(
+            "## The six rules\n\n{}\n\n",
+            crate::check_arch::rules_markdown()
+        )),
+        "AGENTS.md's rules section is not check-arch's"
+    );
+    let text = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     for rule in [
-        "1. In a feature, only `routes.rs` and `handlers.rs` use `actix_web`. \
-         Outside the features, so may `app.rs`, `main.rs`, `error.rs`, \
-         `features/generated.rs`, `shared/` and `src/db/`.",
-        "2. In a feature, only `repo.rs` and `model.rs` use `sqlx`, and \
-         `service.rs` and `service_api.rs` may name `sqlx::PgPool` and \
-         `sqlx::PgConnection` and nothing else. Outside the features, so may \
-         `app.rs`, `error.rs`, `features/generated.rs`, `shared/` and `src/db/`.",
-        "never calls another table's `crate::db::<table>::write`",
-        "5. `shared/` never refers to `features/`.",
-        "6. No `unwrap()`, `expect()`, `panic!`, `todo!`, `println!` or `dbg!` \
-         outside tests (`#[cfg(test)]`, `#[test]` and `tests/`).",
-        "no top-level directory under `src/` but `db/`, `shared/`, `features/` and `bin/`",
-        "No `utils.rs`, `helpers.rs` or `common.rs`.",
+        "1. In a feature, only `routes.rs` and `handlers.rs` use `actix_web`.",
+        "6. No `unwrap()`, `expect()`, `panic!`, `todo!`, `println!` or `dbg!`.",
+        "no file or directory is named `utils`, `helpers` or `common`",
+        "Test code is exempt from every rule",
+        "the directories under `api.output` (`src/features/` by default)",
+        "the module `api.db_path` names (`crate::db`, in `src/db/`, by default)",
     ] {
-        let rule = rule.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(text.contains(&rule), "AGENTS.md does not say: {rule}");
+        assert!(text.contains(rule), "AGENTS.md does not say: {rule}");
     }
     for file in crate::check_arch::FEATURE_FILES {
         assert!(
-            text.contains(&format!("─ {file} ")),
+            raw.contains(&format!("─ {file} ")),
             "the layout lacks {file}"
         );
     }
