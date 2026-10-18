@@ -444,3 +444,49 @@ fn the_actix_web_extractor_is_generated_alone_or_beside_axum() -> Result<()> {
     assert!(db_mod.contains("//   actix-web = \"4\"\n"), "{db_mod}");
     Ok(())
 }
+
+/// `Config::api` is checked like the config file's `[api]`: it needs the
+/// derives and the actix-web extractor, its entries must fit the schema, and
+/// it leaves the generated data layer as it is. The table `spans`, skipped
+/// as unsupported, is not generated, so the API can't name it.
+#[test]
+fn the_api_configuration_is_checked_and_changes_no_output() -> Result<()> {
+    use rok_sqlc::{ApiAccess, ApiConfig, ApiEndpoint, Derive, Extractor};
+    let inputs = Inputs::new()?;
+    let mut plain = inputs.config("plain");
+    plain.derive = vec![Derive::Serde, Derive::Validate];
+    plain.extractors = vec![Extractor::ActixWeb];
+    rok_sqlc::generate(&plain)?;
+
+    let mut api = ApiConfig::new(inputs.path("features"));
+    assert_eq!(api.db_path, "crate::db");
+    assert_eq!(api.prefix, "/api/v1");
+    assert!(!api.search_endpoint);
+    assert_eq!(ApiAccess::default(), ApiAccess::User);
+    api.access.insert("users".into(), ApiAccess::Admin);
+    api.skip.insert("users".into(), vec![ApiEndpoint::GetOne]);
+    api.owner.insert("users".into(), "id".into());
+    api.search.insert("users".into(), vec!["email".into()]);
+    let mut config = inputs.config("gen");
+    config.api = Some(api.clone());
+
+    let error = rok_sqlc::generate(&config).unwrap_err().to_string();
+    assert!(error.contains("`api.output` needs"), "{error}");
+
+    config.derive = plain.derive.clone();
+    config.extractors = plain.extractors.clone();
+    rok_sqlc::generate(&config)?;
+    assert_eq!(tree(&inputs.path("gen"))?, tree(&inputs.path("plain"))?);
+    assert!(!inputs.path("features").exists());
+
+    api.sort.insert("spans".into(), vec!["id".into()]);
+    config.api = Some(api);
+    let error = rok_sqlc::generate(&config).unwrap_err().to_string();
+    assert!(
+        error.contains("`api.sort.spans` in the configuration names no generated table"),
+        "{error}"
+    );
+    assert_eq!(ApiEndpoint::GetOne.name(), "get_one");
+    assert_eq!(ApiAccess::Admin.name(), "admin");
+    Ok(())
+}

@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use crate::ApiConfig;
+
 /// What to generate and how: the one configuration model behind the CLI and
 /// [`generate`](crate::generate).
 ///
@@ -82,6 +84,10 @@ pub struct Config {
     /// config.modules.insert("audit.users".into(), "audit_users".into());
     /// ```
     pub modules: BTreeMap<String, String>,
+    /// Generated API features (ADR 0016), the config file's `[api]` section:
+    /// `None` (the default) generates no API. Needs [`Derive::Serde`],
+    /// [`Derive::Validate`] and [`Extractor::ActixWeb`].
+    pub api: Option<ApiConfig>,
 }
 
 /// What configuration does to one inferred relationship (the
@@ -163,6 +169,7 @@ impl Default for Config {
             extractors: Vec::new(),
             relationships: BTreeMap::new(),
             modules: BTreeMap::new(),
+            api: None,
         }
     }
 }

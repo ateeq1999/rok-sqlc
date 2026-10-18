@@ -34,7 +34,23 @@ Checks run after the schema is parsed. Each fails the run with a message naming 
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Config-file, JSON, flag, layering and every check covered by CLI or library tests.
-- [ ] Output without `[api]` is unchanged, and the README drift tests pass.
+- [x] Config-file, JSON, flag, layering and every check covered by CLI or library tests.
+- [x] Output without `[api]` is unchanged, and the README drift tests pass.
+
+## Comments
+
+Resolved on branch `rok-sqlc-0-4-03`.
+
+Public API added (exported from the crate root, all `#[non_exhaustive]`):
+- `Config::api: Option<ApiConfig>` (default `None`).
+- `ApiConfig { output: PathBuf, db_path: String, prefix: String, search_endpoint: bool, exclude: Vec<String>, skip: BTreeMap<String, Vec<ApiEndpoint>>, routes: BTreeMap<String, String>, access: BTreeMap<String, ApiAccess>, owner: BTreeMap<String, String>, hidden: BTreeMap<String, Vec<String>>, search: BTreeMap<String, Vec<String>>, sort: BTreeMap<String, Vec<String>> }`, built with `ApiConfig::new(output)`; consts `DEFAULT_DB_PATH` (`crate::db`) and `DEFAULT_PREFIX` (`/api/v1`).
+- `ApiAccess { Public, User (default), Admin }` with `name()`.
+- `ApiEndpoint { List, GetOne, Create, Update, Remove, Search, Restore, Lookups, Relationships }` with `name()`.
+
+Notes for later tickets:
+- Table keys match a table's SQL, schema-qualified or module name, as `[relationships]` does. Checks run against the whole generated schema (kept tables included), so `--resource` runs accept the same config. Code lives in `src/api_config.rs` (`check`).
+- Route-base uniqueness also covers default route bases (`/` + kebab-case module name) of every non-excluded table. Join tables aren't excluded from that yet (ticket 06 decides which tables get features).
+- Unknown `skip`/`access` names fail at deserialization, listing the valid names.
+- Without `api.output`, every other `[api]` key is ignored (and not checked).

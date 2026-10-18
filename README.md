@@ -908,8 +908,8 @@ and `actix-web` dependencies to add. The complete crate is in
 Options come from four layers. The most specific wins:
 **flags > JSON payload (`-j`) > `rok-sqlc.toml` > defaults**. A list (such as
 `schema`, `queries`, `derive` or `extractors`) replaces the lower layer's list whole and is
-never appended to. `[conventions]` keys, `[relationships]` entries and
-`[modules]` entries merge one by one.
+never appended to. `[conventions]` keys, `[relationships]` entries,
+`[modules]` entries and `[api]` keys and table entries merge one by one.
 
 ### `rok-sqlc.toml`
 
@@ -943,7 +943,45 @@ approved_by_user = false     # opt out, together with the other side
 
 [modules]                    # by table: generate it as another module
 "audit.users" = "audit_users"  # db::audit_users, with AuditUser and AuditUserId
+
+[api]                        # generated actix-web API features (ADR 0016); off without `output`
+output          = "src/features"  # needs derive = ["serde", "validate"] and extractors with "actix_web"
+db_path         = "crate::db"     # the default: where the generated data layer is
+prefix          = "/api/v1"       # the default URL prefix
+search_endpoint = true            # POST /search with per-field filters; off by default
+exclude         = ["audit_log"]   # tables with no API feature
+
+[api.skip]                   # by table: endpoints to leave out
+invoices = ["list", "get_one", "create", "update", "remove"]
+users    = ["search", "restore", "lookups", "relationships"]
+
+[api.routes]                 # by table: route base, starting with `/` and unique
+users = "/members"           # default: `/` and the kebab-case module name
+
+[api.access]                 # by table: who may call; "user" (AuthUser) is the default
+products = "public"
+invoices = "user"
+users    = "admin"           # AdminUser
+
+[api.owner]                  # by table: a UUID NOT NULL column scoping rows to the caller
+invoices = "created_by"
+
+[api.hidden]                 # by table: columns left out of responses; not key columns
+users = ["password_hash"]
+
+[api.search]                 # by table: text columns the list's `q` matches
+products = ["name", "sku"]
+
+[api.sort]                   # by table: number, date, time or text columns `sort` takes
+products = ["name", "price", "created_at"]
 ```
+
+`[api]` configures the generated API features (ADR 0016). Without `output`
+(or `-a`), every other `[api]` key is ignored. Its single keys and
+`exclude` layer like the top-level keys; its table-keyed sections merge by
+table. A table key is the table's SQL, schema-qualified or module name. Each
+table it names must be generated and each column must exist, or the run
+fails naming the key, the table and the column (`api.owner.invoices`).
 
 `[modules]` renames a table's module, and its row struct, typed id and key
 struct follow the new name. That's how same-named tables of two schemas
@@ -988,6 +1026,7 @@ command prints the help (`rok-sqlc help generate`).
 | `-j`, `--json <PAYLOAD>` | The JSON payload: inline, `@FILE`, or `-` for stdin. |
 | `-d`, `--derive <NAME>` | Add a derive to generated types (`serde`, or `validate`, which needs `serde`). Repeatable. |
 | `-e`, `--extractor <FRAMEWORK>` | Generate a validated-body extractor for `axum` or `actix_web` (needs `validate`). Repeatable. |
+| `-a`, `--api-output <DIR>` | Generate actix-web API features into this directory (`api.output`; needs `-d serde -d validate -e actix_web`). |
 | `-n`, `--dry-run` | Print what would be written, removed or refused, and touch nothing. |
 | `-k`, `--check` | Write nothing. List missing, changed and stale files, and exit 1 if there are any. |
 | `-f`, `--force` | Overwrite existing files that rok-sqlc did not generate. |
@@ -1037,14 +1076,16 @@ exactly the `Config` it built. Set `config.conventions`
 (`rok_sqlc::Conventions::rok()`), `config.derive`
 (`rok_sqlc::Derive::Serde`), `config.extractors` (`rok_sqlc::Extractor`),
 `config.relationships`
-(`rok_sqlc::RelationshipChange`) and `config.modules` to match the config
+(`rok_sqlc::RelationshipChange`), `config.modules` and `config.api`
+(`rok_sqlc::ApiConfig::new`, with `ApiAccess` and `ApiEndpoint`) to match the config
 file's sections.
 `Config` is `#[non_exhaustive]`, so start from `Config::default()` and set
 fields. The `Report` lists written, unchanged, refused and stale files and
 any skipped tables or queries.
 
 The stable library API is `generate`, `Config`, `Conventions`, `Derive`,
-`Extractor`, `IdGeneration`, `RelationshipChange`, `Report` (with `RefusedFile`, `TableFailure` and
+`Extractor`, `IdGeneration`, `RelationshipChange`, `ApiConfig`, `ApiAccess`,
+`ApiEndpoint`, `Report` (with `RefusedFile`, `TableFailure` and
 `QueryFailure`), and `Error`. Changing the *generated* API counts as a
 breaking change too (see [ADR 0012](docs/adr/0012-library-api-and-stability.md)).
 

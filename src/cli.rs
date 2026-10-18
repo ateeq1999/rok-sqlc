@@ -84,6 +84,12 @@ enum Command {
         /// rok-sqlc.toml]
         #[arg(short, long, value_name = "FRAMEWORK", value_enum)]
         extractor: Vec<ExtractorArg>,
+
+        /// Generate API features for actix-web into this directory (needs
+        /// `-d serde -d validate -e actix_web`) [default: `api.output` from
+        /// rok-sqlc.toml]
+        #[arg(short, long, value_name = "DIR")]
+        api_output: Option<PathBuf>,
     },
 }
 
@@ -124,6 +130,7 @@ where
             json,
             derive,
             extractor,
+            api_output,
         } => {
             let payload = match json {
                 Some(arg) => config_file::load_json(&arg)?,
@@ -148,6 +155,7 @@ where
                     .then(|| extractor.into_iter().map(Extractor::from).collect()),
                 relationships: Default::default(),
                 modules: Default::default(),
+                api: config_file::ApiKeys::output(api_output),
             };
             // Flags override the JSON payload, which overrides the file,
             // which overrides the defaults. `--schema` and `--queries` (each
@@ -172,6 +180,7 @@ where
                 extractors: merged.extractors.unwrap_or_default(),
                 relationships: merged.relationships,
                 modules: merged.modules,
+                api: merged.api.resolve(),
             })
         }
     }
