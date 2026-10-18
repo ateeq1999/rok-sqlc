@@ -1181,6 +1181,11 @@ other one as it is. Generation scaffolds files the same way (a feature's
 `service.rs`): `--check` reports a missing one, never its contents, and a
 scaffolded file is never stale.
 
+One exception: run after `cargo new`, `init` replaces `src/main.rs` when it
+is still cargo's untouched hello-world default (line endings and a trailing
+newline aside), and prints `replaced cargo's default src/main.rs`. Any other
+`src/main.rs` is kept.
+
 ## Checking the architecture: `rok-sqlc check-arch`
 
 `rok-sqlc check-arch` (`a`) checks an API project against ADR 0016's

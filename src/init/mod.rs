@@ -109,13 +109,42 @@ fn crate_name(dir: &Path) -> String {
     }
 }
 
-/// Scaffolds the skeleton into `dir`, keeping every file that exists, and
-/// creates `migrations/`. Returns the files written.
-pub fn init(dir: &Path) -> Result<Vec<PathBuf>> {
+/// What `init` did.
+#[derive(Debug, Default)]
+pub struct Scaffolded {
+    /// The files written.
+    pub written: Vec<PathBuf>,
+    /// Whether `src/main.rs` was cargo's untouched default and was replaced.
+    pub replaced_default_main: bool,
+}
+
+/// The `src/main.rs` `cargo new` writes. It is not the user's code, so the
+/// scaffolded `main.rs` replaces it.
+const CARGO_DEFAULT_MAIN: &str = "fn main() {\n    println!(\"Hello, world!\");\n}";
+
+/// Whether `text` is [`CARGO_DEFAULT_MAIN`], whatever its line endings and
+/// trailing newline.
+fn is_cargo_default_main(text: &str) -> bool {
+    text.replace("\r\n", "\n").trim_end_matches('\n') == CARGO_DEFAULT_MAIN
+}
+
+/// Scaffolds the skeleton into `dir`, keeping every file that exists but
+/// cargo's untouched default `src/main.rs`, and creates `migrations/`.
+pub fn init(dir: &Path) -> Result<Scaffolded> {
     let migrations = dir.join(MIGRATIONS);
     fs::create_dir_all(&migrations)
         .with_context(|| format!("failed to create directory `{}`", display_path(&migrations)))?;
-    write_absent(&plan(dir, &crate_name(dir)))
+    let main = dir.join("src/main.rs");
+    let replaced_default_main =
+        fs::read_to_string(&main).is_ok_and(|text| is_cargo_default_main(&text));
+    if replaced_default_main {
+        fs::remove_file(&main)
+            .with_context(|| format!("failed to replace `{}`", display_path(&main)))?;
+    }
+    Ok(Scaffolded {
+        written: write_absent(&plan(dir, &crate_name(dir)))?,
+        replaced_default_main,
+    })
 }
 
 #[cfg(test)]

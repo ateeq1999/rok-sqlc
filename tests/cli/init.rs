@@ -124,3 +124,43 @@ fn init_names_the_library_main_calls_into() -> Result<()> {
     assert!(main.contains("\nuse shop_api::{app, config};\n"), "{main}");
     Ok(())
 }
+
+/// Cargo's untouched default `main.rs` (`cargo new`) is not the user's
+/// code: `init` replaces it with the scaffolded one and says so. Any other
+/// `main.rs` is kept.
+#[test]
+fn init_replaces_cargos_default_main_and_keeps_any_other() -> Result<()> {
+    for default in [
+        "fn main() {\n    println!(\"Hello, world!\");\n}\n",
+        "fn main() {\r\n    println!(\"Hello, world!\");\r\n}\r\n",
+        "fn main() {\n    println!(\"Hello, world!\");\n}",
+    ] {
+        let dir = TempDir::new()?;
+        fs::create_dir_all(dir.path().join("src"))?;
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"shop\"\nversion = \"0.1.0\"\n",
+        )?;
+        fs::write(dir.path().join("src/main.rs"), default)?;
+        let output = run_binary_in(dir.path(), &["init"]);
+        assert_success(&output);
+        let main = fs::read_to_string(dir.path().join("src/main.rs"))?;
+        assert!(main.contains("\nuse shop::{app, config};\n"), "{main}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("replaced cargo's default src/main.rs"),
+            "{stdout}"
+        );
+    }
+
+    let dir = TempDir::new()?;
+    fs::create_dir_all(dir.path().join("src"))?;
+    let mine = "fn main() {\n    println!(\"Hello, shop!\");\n}\n";
+    fs::write(dir.path().join("src/main.rs"), mine)?;
+    let output = run_binary_in(dir.path(), &["init"]);
+    assert_success(&output);
+    assert_eq!(fs::read_to_string(dir.path().join("src/main.rs"))?, mine);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("replaced"), "{stdout}");
+    Ok(())
+}

@@ -148,7 +148,11 @@ where
     match cli.command {
         Command::CheckArch { lenient, config } => check_arch(config, lenient),
         Command::Init { dir } => {
-            for path in crate::init::init(&dir)? {
+            let scaffolded = crate::init::init(&dir)?;
+            if scaffolded.replaced_default_main {
+                println!("replaced cargo's default src/main.rs");
+            }
+            for path in scaffolded.written {
                 println!("scaffolded {}", display_path(&path));
             }
             println!(

@@ -88,6 +88,9 @@ the *generated* API count as breaking (see ADR 0012).
   file only when absent. It generates nothing. The application is a library
   crate (`lib.rs` declares the modules `pub`, `main.rs` starts it), so a
   fresh project passes `cargo clippy --all-targets -- -D warnings`.
+- `rok-sqlc init` after `cargo new` replaces cargo's untouched default
+  `src/main.rs` (hello world) with the scaffolded one and says so; any other
+  `src/main.rs` is kept.
 - `rok-sqlc check-arch` (`a`) checks a project against ADR 0016's
   architecture, reading `api.output` and `api.db_path` from
   `rok-sqlc.toml` (`-c/--config`): the feature layout (eight files, no
