@@ -296,10 +296,43 @@ fn agents_md_holds_the_rules_and_where_code_goes() {
         "## The six rules",
         "service_api.rs",
         "service.rs",
-        "No `unwrap`, `expect`, `panic!`",
         "port",
-        "`src/db/` is\n   exempt",
+        "`src/db/` is exempt",
     ] {
         assert!(text.contains(section), "missing {section}");
+    }
+}
+
+/// `AGENTS.md` states exactly the rules `check-arch` enforces, with the
+/// same allowed files (the rule texts of ticket 09).
+#[test]
+fn agents_md_states_the_rules_check_arch_enforces() {
+    let text = template("AGENTS.md")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for rule in [
+        "1. In a feature, only `routes.rs` and `handlers.rs` use `actix_web`. \
+         Outside the features, so may `app.rs`, `main.rs`, `error.rs`, \
+         `features/generated.rs`, `shared/` and `src/db/`.",
+        "2. In a feature, only `repo.rs` and `model.rs` use `sqlx`, and \
+         `service.rs` and `service_api.rs` may name `sqlx::PgPool` and \
+         `sqlx::PgConnection` and nothing else. Outside the features, so may \
+         `app.rs`, `error.rs`, `features/generated.rs`, `shared/` and `src/db/`.",
+        "never calls another table's `crate::db::<table>::write`",
+        "5. `shared/` never refers to `features/`.",
+        "6. No `unwrap()`, `expect()`, `panic!`, `todo!`, `println!` or `dbg!` \
+         outside tests (`#[cfg(test)]`, `#[test]` and `tests/`).",
+        "no top-level directory under `src/` but `db/`, `shared/`, `features/` and `bin/`",
+        "No `utils.rs`, `helpers.rs` or `common.rs`.",
+    ] {
+        let rule = rule.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(text.contains(&rule), "AGENTS.md does not say: {rule}");
+    }
+    for file in crate::check_arch::FEATURE_FILES {
+        assert!(
+            text.contains(&format!("─ {file} ")),
+            "the layout lacks {file}"
+        );
     }
 }

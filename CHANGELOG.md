@@ -57,6 +57,14 @@ the *generated* API count as breaking (see ADR 0012).
   ADR 0016 (`rok-sqlc.toml`, `migrations/`, `src/{main,app,config,error}.rs`,
   `src/shared/{mod,auth}.rs`, `src/features/mod.rs` and `AGENTS.md`), each
   file only when absent. It generates nothing.
+- `rok-sqlc check-arch` (`a`) checks a project against ADR 0016's
+  architecture, reading `api.output` and `api.db_path` from
+  `rok-sqlc.toml` (`-c/--config`): the feature layout (eight files, no
+  `utils`/`helpers`/`common`, no unknown top-level directory under `src/`;
+  warnings under `-l/--lenient`) and, parsing the source with `syn`, rules
+  1, 2, 4, 5 and 6 and the cross-feature write rule. It prints each
+  violation as `path:line: rule: message` and exits 1 if there are any.
+  `init`'s `AGENTS.md` states exactly the rules it enforces.
 - Scaffolded files: a planned file starting with the scaffold header is
   written only when absent, never rewritten, never reported as changed and
   never stale; `--check` reports a missing one. `Report::scaffolded` lists

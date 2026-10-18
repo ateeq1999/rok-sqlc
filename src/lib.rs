@@ -21,6 +21,7 @@
 //! no stability promise (see ADR 0012).
 
 mod api_config;
+mod check_arch;
 mod config;
 mod config_file;
 mod generate;

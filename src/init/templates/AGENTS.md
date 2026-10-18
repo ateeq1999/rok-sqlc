@@ -59,19 +59,30 @@ business meaning) or belongs in a feature.
 
 ## The six rules
 
-1. Only `routes.rs` and `handlers.rs` import `actix_web` (and the
-   infrastructure: `app.rs`, `error.rs`, `shared/`).
-2. Only `repo.rs` and `src/db/` import `sqlx` (and `service.rs` for its
-   `PgPool` and `PgConnection`, `error.rs` for the error mapping, `app.rs`).
+1. In a feature, only `routes.rs` and `handlers.rs` use `actix_web`.
+   Outside the features, so may `app.rs`, `main.rs`, `error.rs`,
+   `features/generated.rs`, `shared/` and `src/db/`.
+2. In a feature, only `repo.rs` and `model.rs` use `sqlx`, and
+   `service.rs` and `service_api.rs` may name `sqlx::PgPool` and
+   `sqlx::PgConnection` and nothing else. Outside the features, so may
+   `app.rs`, `error.rs`, `features/generated.rs`, `shared/` and `src/db/`.
 3. `service.rs` never writes SQL. It calls `crate::db` functions and
    traits from `shared/`.
-4. A feature never imports another feature's files. It may read another
-   table through `crate::db`, and writes another feature's data only through
-   a port it declares itself, inside the caller's transaction. `src/db/` is
-   exempt: the schema crosses features.
-5. `shared/` never imports `features/`.
-6. No `unwrap`, `expect`, `panic!`, `todo!`, `println!` or `dbg!` outside
-   tests. Every fallible function returns `Result<_, AppError>`.
+4. A feature never refers to another feature's modules. It may read
+   another table through `crate::db`, but never calls another table's
+   `crate::db::<table>::write`: it writes another feature's data only
+   through a port it declares itself, inside the caller's transaction.
+   `src/db/` is exempt: the schema crosses features.
+5. `shared/` never refers to `features/`.
+6. No `unwrap()`, `expect()`, `panic!`, `todo!`, `println!` or `dbg!`
+   outside tests (`#[cfg(test)]`, `#[test]` and `tests/`). Every fallible
+   function returns `Result<_, AppError>`.
+
+`rok-sqlc check-arch` checks rules 1, 2, 4, 5 and 6 and the layout above
+(eight files per feature, no `utils`/`helpers`/`common`, no top-level
+directory under `src/` but `db/`, `shared/`, `features/` and `bin/`), and
+prints each violation as `path:line: rule: message`. Rule 3 is yours to
+keep.
 
 Handlers are thin: parse, call one service method, return. One service
 method is one use case. DTOs are separate from rows, and a response never
