@@ -140,7 +140,10 @@ fn each_table_but_join_tables_and_excluded_ones_gets_a_feature() -> Result<()> {
             "{generated}"
         );
     }
-    assert!(!generated.contains("tags"), "{generated}");
+    // No `tags` or `post_tags` module (`tags(...)` is the document's).
+    for absent in ["mod tags;", "mod post_tags;", "tags::"] {
+        assert!(!generated.contains(absent), "{absent}\n{generated}");
+    }
     assert!(
         generated.contains("pub fn register_services(cfg: &mut web::ServiceConfig, pool: &PgPool)")
     );

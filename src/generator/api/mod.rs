@@ -7,12 +7,14 @@
 //! [`Feature`] is the model the renderers share: its endpoints, lookups and
 //! relations decide the routes, handlers, and service methods.
 
+mod api_doc;
 mod dto;
 mod feature;
 mod files;
 mod handlers;
 mod layout;
 pub mod listing;
+mod paths;
 mod relation_routes;
 mod relation_service;
 mod relations;
@@ -76,7 +78,10 @@ pub fn render(features: &[Feature<'_>], api: &ApiConfig) -> Vec<(PathBuf, String
             (dir.join("service.rs"), service::render_scaffold(feature)),
         ]);
     }
-    files.push((root.join("generated.rs"), root::render_generated(features)));
+    files.push((
+        root.join("generated.rs"),
+        root::render_generated(features, api.openapi),
+    ));
     files.push((root.join("README.md"), root::render_readme(features)));
     files
 }

@@ -13,6 +13,7 @@ const SKELETON: &[&str] = &[
     "src/features/mod.rs",
     "src/lib.rs",
     "src/main.rs",
+    "src/openapi.rs",
     "src/shared/auth.rs",
     "src/shared/mod.rs",
 ];

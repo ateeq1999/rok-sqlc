@@ -9,6 +9,7 @@ tests/api-app/src/app.rs
 tests/api-app/src/main.rs
 tests/api-app/src/config.rs
 tests/api-app/src/error.rs
+tests/api-app/src/openapi.rs
 tests/api-app/src/db/
 tests/api-app/src/shared/
 tests/api-app/src/features/mod.rs

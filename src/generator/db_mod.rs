@@ -65,6 +65,7 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
             "//   {}\n",
             super::openapi::dependency_hint(tables)
         ));
+        output.push_str(super::openapi::SWAGGER_UI_HINT);
     }
     output.push('\n');
     // Sorted the way rustfmt sorts `mod` declarations.

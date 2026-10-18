@@ -143,6 +143,8 @@ pub struct Feature<'a> {
     pub db_path: &'a str,
     /// The feature's URL: the prefix and the route base, `/api/v1/notes`.
     pub url: String,
+    /// The OpenAPI tag: the route base without its leading slash, `notes`.
+    pub tag: String,
     pub key: Option<Key<'a>>,
     /// The endpoints served, in [`Endpoint::ALL`] order.
     pub endpoints: Vec<Endpoint>,
@@ -253,6 +255,7 @@ impl<'a> Feature<'a> {
             table,
             db_path: &api.db_path,
             url: format!("{}{base}", api.prefix.trim_end_matches('/')),
+            tag: base.trim_start_matches('/').to_owned(),
             key,
             endpoints,
             search,

@@ -26,12 +26,29 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
 }
 
 /// `200 {"status": "ok"}` while the server answers at all.
+#[utoipa::path(
+    get,
+    path = "/health/live",
+    tag = "health",
+    operation_id = "live",
+    responses((status = 200, description = "The server answers.")),
+)]
 pub async fn live() -> HttpResponse {
     HttpResponse::Ok().json(Status { status: "ok" })
 }
 
 /// `200 {"status": "ready"}` when the database answers, otherwise `503`
 /// with [`SERVICE_UNAVAILABLE`].
+#[utoipa::path(
+    get,
+    path = "/health/ready",
+    tag = "health",
+    operation_id = "ready",
+    responses(
+        (status = 200, description = "The database answers."),
+        (status = 503, description = "The database is not reachable.", body = ErrorBody),
+    ),
+)]
 pub async fn ready(pool: web::Data<PgPool>) -> HttpResponse {
     match check_health(&pool).await {
         Ok(()) => HttpResponse::Ok().json(Status { status: "ready" }),

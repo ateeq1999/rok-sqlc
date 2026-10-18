@@ -167,12 +167,36 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
 }
 ```
 
-A handler extracts the caller, the path, the query and a validated body,
-calls one service method, and maps the row to its response:
+A handler carries `#[utoipa::path]`, documenting exactly the statuses it
+can answer, then extracts the caller, the path, the query and a validated
+body, calls one service method, and maps the row to its response:
 
 <!-- source: docs/examples/api/src/features/tasks/handlers.rs -->
 ```rust
 /// `POST /api/v1/tasks`: creates a row, `201` with its `Location`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/tasks",
+    tag = "tasks",
+    operation_id = "create",
+    request_body = CreateTaskDto,
+    responses(
+        (
+            status = 201,
+            description = "The row, created.",
+            body = TaskResponse,
+            headers(
+                ("Location" = String, description = "The created row's URL."),
+            ),
+        ),
+        (status = 400, description = "A malformed path, query or body.", body = ErrorBody),
+        (status = 401, description = "No valid bearer token.", body = ErrorBody),
+        (status = 409, description = "A unique or foreign-key violation.", body = ErrorBody),
+        (status = 413, description = "The body is over the limit.", body = ErrorBody),
+        (status = 422, description = "The body breaks a rule or a check.", body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+)]
 pub async fn create(
     service: web::Data<TasksService>,
     user: AuthUser,

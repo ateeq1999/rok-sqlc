@@ -103,6 +103,9 @@ CREATE TABLE posts (
     std::fs::write(dir.join("Cargo.toml"), &manifest)?;
     // Resolve against the API fixture's lock file, not the newest releases.
     std::fs::copy(api_app_dir().join("Cargo.lock"), dir.join("Cargo.lock"))?;
+    // A test of the scaffolded `app.rs` serving the document and Swagger UI.
+    std::fs::create_dir_all(dir.join("tests"))?;
+    std::fs::write(dir.join("tests/docs.rs"), DOCS_TEST)?;
 
     let output = cargo(
         dir,
@@ -115,5 +118,42 @@ CREATE TABLE posts (
         output.status.success() && !stderr.contains("warning"),
         "the project `init` and `g` made fails `cargo clippy --all-targets -- -D warnings`:\n{manifest}\n{stderr}"
     );
+    let output = cargo(dir, &["test", "--quiet", "--test", "docs"])
+        .output()
+        .context("failed to run cargo test")?;
+    ensure!(
+        output.status.success(),
+        "the project `init` and `g` made doesn't serve its docs:\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     Ok(())
 }
+
+/// `tests/docs.rs` of the project: `/api-docs/openapi.json` answers the
+/// document, with the generated paths, and `/docs/` Swagger UI. The pool
+/// never connects: neither needs the database.
+const DOCS_TEST: &str = r#"//! The document and Swagger UI the scaffolded `app.rs` serves.
+
+use actix_web::{App, test, web};
+use init_e2e::app::configure;
+use init_e2e::shared::auth::JwtKeys;
+
+#[actix_web::test]
+async fn serves_the_document_and_swagger_ui() -> Result<(), Box<dyn std::error::Error>> {
+    let pool = sqlx::PgPool::connect_lazy("postgres://localhost/unused")?;
+    let keys = web::Data::new(JwtKeys::new("unused"));
+    let app = test::init_service(App::new().configure(|cfg| configure(cfg, &pool, &keys))).await;
+    let request = test::TestRequest::get().uri("/api-docs/openapi.json");
+    let response = test::call_service(&app, request.to_request()).await;
+    assert!(response.status().is_success());
+    let body = test::read_body(response).await;
+    let text = std::str::from_utf8(&body)?;
+    assert!(text.contains("\"/api/v1/posts/{id}\""), "{text}");
+    assert!(text.contains("\"bearer_auth\""), "{text}");
+    let request = test::TestRequest::get().uri("/docs/");
+    let response = test::call_service(&app, request.to_request()).await;
+    assert!(response.status().is_success());
+    Ok(())
+}
+"#;

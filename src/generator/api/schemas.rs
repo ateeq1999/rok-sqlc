@@ -7,9 +7,21 @@ use crate::generator::openapi::{IN_QUERY, INTO_PARAMS, TO_SCHEMA};
 use crate::generator::push_derives;
 
 /// `template`, the shared tool `name`, with its exposed types deriving
-/// `ToSchema` or `IntoParams`.
+/// `ToSchema` or `IntoParams`, and its handlers (health's) carrying
+/// `#[utoipa::path]`.
 pub fn describe(name: &str, template: &str) -> String {
     match name {
+        "health.rs" => template
+            .replacen(
+                "pub async fn live()",
+                &format!("{LIVE}pub async fn live()"),
+                1,
+            )
+            .replacen(
+                "pub async fn ready(",
+                &format!("{READY}pub async fn ready("),
+                1,
+            ),
         "pagination.rs" => describe_pagination(template),
         "response.rs" => derive(template, "pub struct PaginatedResponse<T> {", TO_SCHEMA),
         "validation.rs" => derive(template, "pub struct IdList<T> {", TO_SCHEMA),
@@ -68,6 +80,29 @@ fn describe_pagination(template: &str) -> String {
         1,
     )
 }
+
+/// The path of `GET /health/live`.
+const LIVE: &str = r#"#[utoipa::path(
+    get,
+    path = "/health/live",
+    tag = "health",
+    operation_id = "live",
+    responses((status = 200, description = "The server answers.")),
+)]
+"#;
+
+/// The path of `GET /health/ready`.
+const READY: &str = r#"#[utoipa::path(
+    get,
+    path = "/health/ready",
+    tag = "health",
+    operation_id = "ready",
+    responses(
+        (status = 200, description = "The database answers."),
+        (status = 503, description = "The database is not reachable.", body = ErrorBody),
+    ),
+)]
+"#;
 
 /// The schema of a list query's `sort`.
 const SORT_SCHEMA: &str = "/// The schema of a list query's `sort`: a reference to the sort key's

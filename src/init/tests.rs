@@ -83,6 +83,9 @@ fn rust_templates_use_only_the_allowed_crates() {
         "std",
         "thiserror",
         "tracing",
+        // The OpenAPI document and Swagger UI.
+        "utoipa",
+        "utoipa_swagger_ui",
         "uuid",
         // The generated data layer needs it for `derive = ["validate"]`,
         // and `AppError::Validation` carries its errors.
@@ -355,4 +358,38 @@ fn agents_md_states_the_rules_check_arch_enforces() {
             "the layout lacks {file}"
         );
     }
+}
+
+#[test]
+fn openapi_merges_the_generated_document_into_yours() {
+    let text = template("src/openapi.rs");
+    for expected in [
+        "use crate::features::GeneratedApiDoc;",
+        "#[derive(OpenApi)]",
+        "pub struct ApiDoc;",
+        "pub fn document() -> utoipa::openapi::OpenApi {",
+        "doc.merge(GeneratedApiDoc::openapi());",
+        "env!(\"CARGO_PKG_NAME\")",
+        "env!(\"CARGO_PKG_VERSION\")",
+    ] {
+        assert!(text.contains(expected), "missing {expected}\n{text}");
+    }
+    assert!(template("src/lib.rs").contains("\npub mod openapi;\n"));
+}
+
+#[test]
+fn app_serves_the_document_and_swagger_ui() {
+    let text = template("src/app.rs");
+    for wiring in [
+        "use utoipa_swagger_ui::SwaggerUi;",
+        "use crate::openapi::document;",
+        "SwaggerUi::new(\"/docs/{_:.*}\").url(\"/api-docs/openapi.json\", document())",
+        "web::redirect(\"/docs\", \"/docs/\")",
+    ] {
+        assert!(text.contains(wiring), "missing {wiring}\n{text}");
+    }
+    assert!(
+        template("rok-sqlc.toml")
+            .contains("# utoipa-swagger-ui = { version = \"9\", features = [\"actix-web\"] }\n")
+    );
 }

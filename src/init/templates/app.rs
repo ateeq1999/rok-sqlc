@@ -1,13 +1,15 @@
 //! Builds the application: its state, the generated features' services and
-//! routes, and health. This is the only wiring file; the ports features
-//! declare for each other are implemented here too.
+//! routes, health, and the `OpenAPI` document. This is the only wiring file;
+//! the ports features declare for each other are implemented here too.
 
 use actix_web::{App, HttpServer, web};
 use sqlx::PgPool;
+use utoipa_swagger_ui::SwaggerUi;
 
 use crate::config::Config;
 use crate::db::pool::init_pool;
 use crate::features::{configure_all, register_services};
+use crate::openapi::document;
 use crate::shared::auth::JwtKeys;
 use crate::shared::health;
 
@@ -26,13 +28,16 @@ pub async fn run(config: Config) -> std::io::Result<()> {
 }
 
 /// Mounts the whole application on `cfg`: the pool and the JWT keys as app
-/// data, every feature's service, `/health/live` and `/health/ready`, and
-/// every feature's routes. Tests build the same application with
+/// data, every feature's service, `/health/live` and `/health/ready`, the
+/// `OpenAPI` document at `/api-docs/openapi.json` with Swagger UI at `/docs/`,
+/// and every feature's routes. Tests build the same application with
 /// `actix_web::test::init_service(App::new().configure(...))`.
 pub fn configure(cfg: &mut web::ServiceConfig, pool: &PgPool, keys: &web::Data<JwtKeys>) {
     cfg.app_data(web::Data::new(pool.clone()))
         .app_data(keys.clone());
     register_services(cfg, pool);
     health::routes(cfg);
+    cfg.service(web::redirect("/docs", "/docs/").see_other())
+        .service(SwaggerUi::new("/docs/{_:.*}").url("/api-docs/openapi.json", document()));
     configure_all(cfg);
 }

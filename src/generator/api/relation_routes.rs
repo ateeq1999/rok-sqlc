@@ -7,6 +7,7 @@ use heck::ToSnakeCase;
 use super::feature::Feature;
 use super::handlers::{own_scope, push_answer};
 use super::layout::{Uses, push_call, push_signature};
+use super::paths;
 use super::relations::{Kind, Relation};
 use super::scope::{self, Extraction};
 use crate::generator::openapi::{push_into_params, push_to_schema};
@@ -256,6 +257,13 @@ pub fn render_handlers(output: &mut String, uses: &mut Uses, feature: &Feature<'
                 relation.name
             )],
         );
+        paths::push_relation(
+            output,
+            uses,
+            feature,
+            relation,
+            &format!("{}_{}", "list", relation.name),
+        );
         let (head, mut params) = base("list");
         params.push(format!("path: web::Path<{key}>"));
         push_signature(output, 0, &head, &params, "Result<HttpResponse, AppError>");
@@ -301,6 +309,13 @@ pub fn render_handlers(output: &mut String, uses: &mut Uses, feature: &Feature<'
                     "rows `{\"ids\": [...]}` names, `204`.",
                 ],
             );
+            paths::push_relation(
+                output,
+                uses,
+                feature,
+                relation,
+                &format!("{}_{}", "sync", relation.name),
+            );
             let (head, mut params) = base("sync");
             uses.add("crate::shared::validation::IdList");
             uses.add("crate::shared::validation::ValidatedJson");
@@ -333,6 +348,13 @@ pub fn render_handlers(output: &mut String, uses: &mut Uses, feature: &Feature<'
                     "`{method} {path}/{{other}}`: {what} `{}` row, `204`.",
                     relation.target.display_name()
                 )],
+            );
+            paths::push_relation(
+                output,
+                uses,
+                feature,
+                relation,
+                &format!("{}_{}", name, relation.name),
             );
             let (head, mut params) = base(name);
             params.push(pair_path(&key, &other));

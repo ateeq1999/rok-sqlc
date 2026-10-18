@@ -91,7 +91,12 @@ fn as_text(rust_type: &str) -> String {
         })
 }
 
-/// The data layer's `mod.rs` hint for utoipa: with the features describing
+/// The data layer's `mod.rs` hint for Swagger UI, which `app.rs` serves the
+/// document with.
+pub const SWAGGER_UI_HINT: &str =
+    "//   utoipa-swagger-ui = { version = \"9\", features = [\"actix-web\"] }\n";
+
+/// The data layer's `mod.rs` hint for utoipa:with the features describing
 /// the UUID, date and time, and decimal columns of `tables`.
 pub fn dependency_hint(tables: &[Table]) -> String {
     let mut features = Vec::new();
