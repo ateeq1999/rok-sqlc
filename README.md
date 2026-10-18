@@ -954,6 +954,7 @@ output          = "src/features"  # needs derive = ["serde", "validate"] and ext
 db_path         = "crate::db"     # the default: where the generated data layer is
 prefix          = "/api/v1"       # the default URL prefix
 search_endpoint = true            # POST /search with per-field filters; off by default
+openapi         = true            # the default: utoipa schemas for the OpenAPI document
 exclude         = ["audit_log"]   # tables with no API feature
 
 [api.skip]                   # by table: endpoints to leave out
@@ -996,7 +997,10 @@ With `output`, a run also generates `db/pool.rs` in the data layer
 go in the data layer's `<table>/listing.rs`; `output/generated.rs` declares
 the features and `output/README.md` maps which files are generated and
 which (`service.rs`) are yours. Generated files there and in `shared/` are
-removed once stale.
+removed once stale. With `openapi` on (the default), every type a feature
+exposes derives utoipa's `ToSchema` (or `IntoParams` for a query string),
+as do the data layer's typed ids, enums, sort keys and search conditions
+inside them; the data layer's `mod.rs` names the `utoipa` dependency.
 
 A feature's handlers take the caller as `AuthUser` (`user`) or `AdminUser`
 (`admin`), from the scaffolded `shared/auth.rs`, so no valid token is a

@@ -17,6 +17,7 @@ mod relation_routes;
 mod relation_service;
 mod relations;
 mod root;
+mod schemas;
 mod scope;
 mod search;
 mod service;

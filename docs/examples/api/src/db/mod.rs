@@ -12,6 +12,7 @@
 //   validator = { version = "0.21", features = ["derive"] }
 //   actix-web = "4"
 //   tracing = "0.1"
+//   utoipa = { version = "5", features = ["chrono", "uuid"] }
 
 pub mod http;
 pub mod nullable;

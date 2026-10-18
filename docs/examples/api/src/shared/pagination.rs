@@ -9,7 +9,7 @@ use crate::db::search::{Direction, Page};
 
 /// The direction of a list's sort: `order=asc` or `order=desc`, the
 /// default.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SortOrder {
     /// Smallest first.
@@ -30,8 +30,9 @@ impl From<SortOrder> for Direction {
 
 /// A list endpoint's query string. `S` is what `sort` takes: a table's
 /// generated sort key, or any text by default.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct ListQuery<S = String> {
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ListQuery<S: utoipa::ToSchema = String> {
     /// The page, from 1. Defaults to 1.
     pub page: Option<u32>,
     /// The rows a page holds, 1 to 100. Defaults to 20.
@@ -39,12 +40,13 @@ pub struct ListQuery<S = String> {
     /// The text to search for.
     pub q: Option<String>,
     /// What to sort by.
+    #[param(schema_with = sort_schema::<S>)]
     pub sort: Option<S>,
     /// The sort's direction. Defaults to `desc`.
     pub order: Option<SortOrder>,
 }
 
-impl<S> Default for ListQuery<S> {
+impl<S: utoipa::ToSchema> Default for ListQuery<S> {
     fn default() -> Self {
         ListQuery {
             page: None,
@@ -56,7 +58,7 @@ impl<S> Default for ListQuery<S> {
     }
 }
 
-impl<S> ListQuery<S> {
+impl<S: utoipa::ToSchema> ListQuery<S> {
     /// The page asked for, with the defaults and limits applied.
     #[must_use]
     pub fn pagination(&self) -> Pagination {
@@ -67,6 +69,16 @@ impl<S> ListQuery<S> {
     #[must_use]
     pub fn sort_order(&self) -> SortOrder {
         self.order.unwrap_or_default()
+    }
+}
+
+/// The schema of a list query's `sort`: a reference to the sort key's
+/// schema, or text for the default, `String`.
+fn sort_schema<S: utoipa::ToSchema>() -> utoipa::openapi::RefOr<utoipa::openapi::Schema> {
+    if S::name() == <String as utoipa::ToSchema>::name() {
+        S::schema()
+    } else {
+        utoipa::openapi::Ref::from_schema_name(S::name()).into()
     }
 }
 

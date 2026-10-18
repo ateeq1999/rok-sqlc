@@ -316,7 +316,9 @@ pub fn id_imports<'a>(
 
 /// Renders the table's typed id or key struct (before the row struct).
 pub fn render_key_type(output: &mut String, table: &Table, derives: DeriveOptions) {
-    let DeriveOptions { serde, validate } = derives;
+    let DeriveOptions {
+        serde, validate, ..
+    } = derives;
     let keys = table.key_columns();
     match keys.as_slice() {
         [] => {}
@@ -326,7 +328,7 @@ pub fn render_key_type(output: &mut String, table: &Table, derives: DeriveOption
                 .as_ref()
                 .filter(|id| id.module == table.module_name)
             {
-                render_typed_id(output, table, key, &id.name, serde);
+                render_typed_id(output, table, key, &id.name, derives);
                 if validate {
                     match key.base_type() {
                         BaseType::Text => super::validate::push_measured_id(output, &id.name),
@@ -344,7 +346,14 @@ pub fn render_key_type(output: &mut String, table: &Table, derives: DeriveOption
 
 /// With `serde`, a typed id serializes as its inner value. An enum's id is
 /// `Copy` but neither `Ord` nor `Display`, like the enum.
-fn render_typed_id(output: &mut String, table: &Table, key: &Column, name: &str, serde: bool) {
+fn render_typed_id(
+    output: &mut String,
+    table: &Table,
+    key: &Column,
+    name: &str,
+    derives: DeriveOptions,
+) {
+    let serde = derives.serde;
     let inner = &key.sqlx_type;
     let is_enum = key.base_type() == BaseType::Enum;
     push_doc(
@@ -367,7 +376,7 @@ fn render_typed_id(output: &mut String, table: &Table, key: &Column, name: &str,
     output.push_str(&format!(
         "#[derive(Debug, Clone, {copy}PartialEq, Eq, {ord}Hash, sqlx::Type)]\n"
     ));
-    push_derives(output, serde_derives(serde));
+    push_derives(output, &derives.value_derives());
     output.push_str("#[sqlx(transparent)]\n");
     if serde {
         output.push_str("#[serde(transparent)]\n");

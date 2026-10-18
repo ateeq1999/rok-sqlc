@@ -30,6 +30,7 @@ output = \"src/features\"
 db_path = \"crate::db\"
 prefix = \"/api/v2\"
 search_endpoint = true
+openapi = false
 exclude = [\"audit_log\"]
 
 [api.skip]
@@ -81,7 +82,8 @@ fn an_api_section_adds_the_features_the_pool_and_the_shared_tools() -> Result<()
 
     // The data layer gains `pool.rs`, declared in `mod.rs`, the list reads
     // of each table with a feature (`audit_log` is excluded), declared in
-    // its `mod.rs`, and the `q` helper in `search.rs`. Nothing else changes.
+    // its `mod.rs`, and the `q` helper in `search.rs`. With `openapi = false`,
+    // nothing else changes.
     let mut with_pool = read_tree(&with_api.path().join("out"))?;
     assert!(with_pool.remove(Path::new("pool.rs")).is_some());
     for table in ["users", "posts"] {

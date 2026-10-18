@@ -23,7 +23,8 @@ pub fn shared_dir(api: &ApiConfig) -> PathBuf {
         .join("shared")
 }
 
-/// `db/pool.rs` under the data layer's `output`, then each shared tool.
+/// `db/pool.rs` under the data layer's `output`, then each shared tool,
+/// described for the OpenAPI document with `api.openapi`.
 pub fn render(output: &Path, api: &ApiConfig) -> Vec<(PathBuf, String)> {
     let db_path = format!("{}::", api.db_path);
     let file =
@@ -37,7 +38,13 @@ pub fn render(output: &Path, api: &ApiConfig) -> Vec<(PathBuf, String)> {
         ("tenant.rs", TENANT),
         ("validation.rs", VALIDATION),
     ] {
-        files.push((shared.join(name), file(template)));
+        let text = file(template);
+        let text = if api.openapi {
+            super::schemas::describe(name, &text)
+        } else {
+            text
+        };
+        files.push((shared.join(name), text));
     }
     files
 }

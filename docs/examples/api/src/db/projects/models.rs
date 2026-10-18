@@ -14,6 +14,7 @@
     sqlx::Type,
     serde::Serialize,
     serde::Deserialize,
+    utoipa::ToSchema,
 )]
 #[sqlx(transparent)]
 #[serde(transparent)]

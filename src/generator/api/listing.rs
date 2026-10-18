@@ -15,8 +15,8 @@ use crate::generator::sql::{
     raw_block, scoped_key_predicate, str_literal, table_ref,
 };
 use crate::generator::{
-    HEADER, StaticQuery, doc_name, keys, param_name, param_type, push_doc, push_fn_head,
-    push_let_call, types_import, use_paths,
+    HEADER, StaticQuery, doc_name, keys, openapi, param_name, param_type, push_derives, push_doc,
+    push_fn_head, push_let_call, types_import, use_paths,
 };
 
 /// The `search.rs` helper the listing matches `q` with, appended to
@@ -396,8 +396,10 @@ fn render_sort_enum(output: &mut String, feature: &Feature<'_>) {
         )],
     );
     output.push_str(
-        "#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]\n#[serde(rename_all = \"snake_case\")]\n",
+        "#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]\n",
     );
+    push_derives(output, openapi::to_schema(feature.openapi));
+    output.push_str("#[serde(rename_all = \"snake_case\")]\n");
     output.push_str(&format!("pub enum {sort} {{\n"));
     for column in &feature.sort {
         push_doc(
