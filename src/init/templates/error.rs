@@ -62,6 +62,7 @@ pub enum AppError {
 
 impl AppError {
     /// The wire standard's `snake_case` code.
+    #[must_use]
     pub fn code(&self) -> &'static str {
         match self {
             AppError::BadRequest(_) => "bad_request",

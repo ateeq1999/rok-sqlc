@@ -1,6 +1,7 @@
 //! The `[api]` configuration (ADR 0016): read from the config file, the JSON
 //! payload and `-a/--api-output`, layered like the other options, and
-//! checked against the schema. It doesn't change the generated data layer.
+//! checked against the schema. It adds `db/pool.rs` to the data layer and
+//! the shared tools beside the features directory.
 
 use super::*;
 
@@ -70,17 +71,28 @@ fn stderr(output: &Output) -> String {
 }
 
 #[test]
-fn an_api_section_is_accepted_and_leaves_the_output_unchanged() -> Result<()> {
+fn an_api_section_adds_only_the_pool_and_the_shared_tools() -> Result<()> {
     let with_api = api_project(FULL_API)?;
     let without = api_project("")?;
 
     assert_success(&run_binary_in(with_api.path(), &["g"]));
     assert_success(&run_binary_in(without.path(), &["g"]));
 
-    assert_eq!(
-        read_tree(&with_api.path().join("out"))?,
-        read_tree(&without.path().join("out"))?
-    );
+    // The data layer gains `pool.rs`, declared in `mod.rs`, and nothing else.
+    let mut with_pool = read_tree(&with_api.path().join("out"))?;
+    assert!(with_pool.remove(Path::new("pool.rs")).is_some());
+    let mut plain = read_tree(&without.path().join("out"))?;
+    for files in [&mut with_pool, &mut plain] {
+        if let Some(text) = files.get_mut(Path::new("mod.rs")) {
+            *text = text
+                .replace("pub mod pool;\n", "")
+                .replace("//   tracing = \"0.1\"\n", "");
+        }
+    }
+    assert_eq!(with_pool, plain);
+    let shared = read_tree(&with_api.path().join("src/shared"))?;
+    assert_eq!(shared.len(), 5, "{:?}", shared.keys());
+    assert!(!without.path().join("src").exists());
     assert!(!with_api.path().join("src/features").exists());
     Ok(())
 }

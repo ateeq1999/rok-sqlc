@@ -83,6 +83,10 @@ fn ci_tests_both_declared_minimum_rust_versions() -> Result<()> {
         "tests/modules-app must declare the same rust-version as tests/fixture-app ({generated_floor})"
     );
     ensure!(
+        rust_version(&root().join("tests/api-app"))? == generated_floor,
+        "tests/api-app must declare the same rust-version as tests/fixture-app ({generated_floor})"
+    );
+    ensure!(
         generated_floor == "1.94",
         "generated code targets SQLx 0.9, whose MSRV is 1.94; the fixture crates declare {generated_floor}"
     );

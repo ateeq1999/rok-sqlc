@@ -12,6 +12,9 @@ pub struct DbMod<'a> {
     pub has_types: bool,
     /// Whether `session.rs` is generated.
     pub has_session: bool,
+    /// Whether `pool.rs` is generated (`api.output`), which logs with
+    /// `tracing`.
+    pub has_pool: bool,
     pub queries: QueriesModule<'a>,
     /// What `derive` asks for: `serde` adds `nullable.rs`, and `validate`
     /// needs `validator`.
@@ -27,6 +30,7 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
     let DbMod {
         has_types,
         has_session,
+        has_pool,
         queries,
         derives,
         extractors,
@@ -50,6 +54,12 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
         .filter_map(|column| Some((column.id_generation?, column.base_type())))
         .collect();
     output.push_str(&dependency_hints(&types, &ids, derives, extractors));
+    if has_pool {
+        output.push_str(
+            "//   tracing = \"0.1\"
+",
+        );
+    }
     output.push('\n');
     // Sorted the way rustfmt sorts `mod` declarations.
     let mut modules: Vec<&str> = tables
@@ -69,6 +79,9 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
     }
     if has_session {
         modules.push("session");
+    }
+    if has_pool {
+        modules.push("pool");
     }
     if queries.is_declared() {
         modules.push("queries");
@@ -233,6 +246,7 @@ mod tests {
             &DbMod {
                 has_types: false,
                 has_session: false,
+                has_pool: false,
                 queries,
                 derives: DeriveOptions {
                     serde,
@@ -289,6 +303,7 @@ mod tests {
                 &DbMod {
                     has_types: false,
                     has_session: false,
+                    has_pool: false,
                     queries: QueriesModule::None,
                     derives: DeriveOptions {
                         serde: true,

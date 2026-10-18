@@ -1,3 +1,4 @@
+mod api_shared;
 mod checks;
 pub mod conventions;
 mod db_mod;
@@ -237,6 +238,9 @@ pub fn plan_files_with_queries(
         files.push((output.join("nullable.rs"), models::render_nullable()));
     }
     files.extend(http::render(output, &config.extractors));
+    if let Some(api) = &config.api {
+        files.extend(api_shared::render(output, api));
+    }
     if !enums.is_empty() {
         files.push((output.join("types.rs"), types::render(&enums, serde)));
     }
@@ -244,6 +248,7 @@ pub fn plan_files_with_queries(
     let db_mod = DbMod {
         has_types: !enums.is_empty(),
         has_session: session.is_some(),
+        has_pool: config.api.is_some(),
         queries,
         derives,
         extractors: &config.extractors,

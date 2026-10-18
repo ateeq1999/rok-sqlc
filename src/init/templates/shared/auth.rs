@@ -57,6 +57,7 @@ pub struct JwtKeys {
 
 impl JwtKeys {
     /// The keys for the HS256 `secret`.
+    #[must_use]
     pub fn new(secret: &str) -> Self {
         JwtKeys {
             decoding: DecodingKey::from_secret(secret.as_bytes()),

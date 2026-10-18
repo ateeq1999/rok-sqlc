@@ -31,6 +31,13 @@ the *generated* API count as breaking (see ADR 0012).
   `[api.sort]`, in the config file and the JSON payload. The library takes
   it as `Config::api` (`ApiConfig`, `ApiAccess`, `ApiEndpoint`). It is
   checked against the schema but generates nothing yet.
+- With `api.output`, a run generates the infrastructure of ADR 0016:
+  `db/pool.rs` (`PoolSettings`, `init_pool`, `check_health`) and, in
+  `shared/` beside the features directory, `response.rs`
+  (`PaginatedResponse` and the error body), `pagination.rs` (`ListQuery`,
+  `Pagination`, `SortOrder`), `validation.rs`, `tenant.rs` (`Tenant<T>`) and
+  `health.rs` (`/health/live`, `/health/ready`). Paths into the data
+  layer follow `api.db_path`.
 - `rok-sqlc init [DIR]` scaffolds the actix-web application skeleton of
   ADR 0016 (`rok-sqlc.toml`, `migrations/`, `src/{main,app,config,error}.rs`,
   `src/shared/{mod,auth}.rs`, `src/features/mod.rs` and `AGENTS.md`), each

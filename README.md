@@ -985,6 +985,11 @@ products = ["name", "price", "created_at"]
 table. A table key is the table's SQL, schema-qualified or module name. Each
 table it names must be generated and each column must exist, or the run
 fails naming the key, the table and the column (`api.owner.invoices`).
+With `output`, a run also generates `db/pool.rs` in the data layer
+(`PoolSettings`, `init_pool`, `check_health`) and the shared tools in
+`shared/`, the directory beside `output`: `response.rs`, `pagination.rs`,
+`validation.rs`, `tenant.rs` and `health.rs`. `rok-sqlc init` scaffolds
+`shared/mod.rs`, which declares them.
 
 `[modules]` renames a table's module, and its row struct, typed id and key
 struct follow the new name. That's how same-named tables of two schemas
