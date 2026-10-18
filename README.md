@@ -66,6 +66,7 @@ sync.
 - [Validated bodies and HTTP extractors](#validated-bodies-and-http-extractors)
 - [Configuration](#configuration)
 - [Starting an API project: `rok-sqlc init`](#starting-an-api-project-rok-sqlc-init)
+- [Checking the architecture: `rok-sqlc check-arch`](#checking-the-architecture-rok-sqlc-check-arch)
 - [Using it from `build.rs`](#using-it-from-buildrs)
 - [CI with `--check`](#ci-with---check)
 - [Supported SQL and type mapping](#supported-sql-and-type-mapping)
@@ -1029,7 +1030,10 @@ layers over `rok-sqlc.toml` and doesn't turn discovery off.
 The command is `generate`, or `g` for short (`rok-sqlc g`). The `help`
 command prints the help (`rok-sqlc help generate`). `init` (`i`) starts an API
 project (see [Starting an API project](#starting-an-api-project-rok-sqlc-init))
-and takes only the project directory.
+and takes only the project directory. `check-arch` (`a`) checks an API
+project's architecture (see [Checking the
+architecture](#checking-the-architecture-rok-sqlc-check-arch)) and takes
+only `-c` and `-l`.
 
 | Flag | Meaning |
 |---|---|
@@ -1077,6 +1081,42 @@ rewritten. Running `init` again restores a deleted file and keeps every
 other one as it is. Generation scaffolds files the same way (a feature's
 `service.rs`): `--check` reports a missing one, never its contents, and a
 scaffolded file is never stale.
+
+## Checking the architecture: `rok-sqlc check-arch`
+
+`rok-sqlc check-arch` (`a`) checks an API project against ADR 0016's
+architecture, the rules its `AGENTS.md` states. It reads `api.output` (the
+features directory) and `api.db_path` (the data layer, default `crate::db`)
+from `rok-sqlc.toml`, discovered like `generate` does or named with
+`-c`/`--config`, and checks the project's `src/`. Each violation is printed
+as `path:line: rule: message`, and any violation exits with code 1, for CI:
+
+```text
+src/features/notes/service.rs:3: rule-1: `actix_web::HttpResponse`: only routes.rs, handlers.rs, app.rs, main.rs, error.rs, features/generated.rs, shared/ and db/ may use actix_web
+```
+
+The layout checks (`layout`):
+
+- a feature directory holds only `mod.rs`, `routes.rs`, `handlers.rs`,
+  `dto.rs`, `model.rs`, `repo.rs`, `service_api.rs` and `service.rs`;
+- no file or directory is named `utils`, `helpers` or `common`;
+- `src/` has no top-level directory but the data layer's, `shared/`, the
+  features directory's and `bin/`.
+
+The rules, read from the Rust source with `syn` (comments, strings and
+test code, `#[cfg(test)]` or `#[test]`, never count):
+
+| Rule | What it allows |
+|---|---|
+| `rule-1` | `actix_web` only in a feature's `routes.rs` and `handlers.rs`, `app.rs`, `main.rs`, `error.rs`, the features' `generated.rs`, `shared/` and the data layer |
+| `rule-2` | `sqlx` only in a feature's `repo.rs` and `model.rs`, `app.rs`, `error.rs`, the features' `generated.rs`, `shared/` and the data layer; a feature's `service.rs` and `service_api.rs` may name `sqlx::PgPool` and `sqlx::PgConnection` and nothing else |
+| `rule-4` | a feature never refers to another feature's modules |
+| `rule-5` | `shared/` never refers to the features module |
+| `rule-6` | no `unwrap()`, `expect()`, `panic!`, `todo!`, `println!` or `dbg!` |
+| `cross-feature-write` | a feature never refers to another table's `<db_path>::<table>::write`; reads are fine |
+
+`-l`/`--lenient` prints layout violations as warnings on stderr instead of
+failing; rule violations still fail. Generated code passes every check.
 
 ## Using it from `build.rs`
 

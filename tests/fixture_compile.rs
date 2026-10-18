@@ -447,6 +447,30 @@ fn api_app_passes_its_tests() -> Result<()> {
     Ok(())
 }
 
+/// Generated code obeys the architecture it generates: the API fixture,
+/// skeleton included, passes `rok-sqlc check-arch` (ADR 0016) with no
+/// warning, reading the fixture's `rok-sqlc.toml`.
+#[test]
+fn api_app_passes_check_arch() -> Result<()> {
+    let _guard = API_APP
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    generate_api_app()?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rok-sqlc"))
+        .arg("check-arch")
+        .current_dir(api_app_dir())
+        .output()
+        .context("failed to run rok-sqlc check-arch")?;
+    ensure!(
+        output.status.success() && output.stdout.is_empty() && output.stderr.is_empty(),
+        "the API fixture fails check-arch:\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
 #[test]
 fn api_app_generated_code_is_rustfmt_clean() -> Result<()> {
     let _guard = API_APP
@@ -488,7 +512,8 @@ fn init_then_generate_builds_end_to_end() -> Result<()> {
             .context("failed to run rok-sqlc")?;
         ensure!(
             output.status.success(),
-            "rok-sqlc {args:?} failed:\n{}",
+            "rok-sqlc {args:?} failed:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
         Ok(())
@@ -509,6 +534,8 @@ CREATE TABLE posts (
 ",
     )?;
     rok_sqlc(&["g"])?;
+    // What `init` and `g` made obeys the architecture.
+    rok_sqlc(&["check-arch"])?;
 
     // The dependency lines of `rok-sqlc.toml`'s `# [dependencies]` block,
     // then the data layer's `//   name = ...` lines, which win a tie.
