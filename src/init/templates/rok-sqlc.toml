@@ -1,0 +1,35 @@
+# Scaffolded once by rok-sqlc; this file is yours. It is never regenerated. See docs/guide/architecture.md.
+#
+# `rok-sqlc g` reads this file: the migrations become the data layer in
+# `src/db/`, and every table an API feature in `src/features/`.
+
+schema = "migrations/"
+output = "src/db"
+derive = ["serde", "validate"]
+extractors = ["actix_web"]
+
+[conventions]
+primary_key_ids = "uuid_v7"
+
+[api]
+output = "src/features"
+
+# Cargo.toml: the skeleton `rok-sqlc init` wrote needs these dependencies,
+# plus the ones the generated `src/db/mod.rs` lists after `rok-sqlc g`:
+#
+# [dependencies]
+# actix-web = "4"
+# jsonwebtoken = { version = "11", features = ["rust_crypto"] }
+# serde = { version = "1", features = ["derive"] }
+# sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "uuid"] }
+# thiserror = "2"
+# tracing = "0.1"
+# uuid = { version = "1", features = ["v7", "serde"] }
+# validator = { version = "0.21", features = ["derive"] }
+#
+# The rules in AGENTS.md forbid unwrap, expect and panic outside tests:
+#
+# [lints.clippy]
+# unwrap_used = "deny"
+# expect_used = "deny"
+# panic = "deny"

@@ -31,6 +31,14 @@ the *generated* API count as breaking (see ADR 0012).
   `[api.sort]`, in the config file and the JSON payload. The library takes
   it as `Config::api` (`ApiConfig`, `ApiAccess`, `ApiEndpoint`). It is
   checked against the schema but generates nothing yet.
+- `rok-sqlc init [DIR]` scaffolds the actix-web application skeleton of
+  ADR 0016 (`rok-sqlc.toml`, `migrations/`, `src/{main,app,config,error}.rs`,
+  `src/shared/{mod,auth}.rs`, `src/features/mod.rs` and `AGENTS.md`), each
+  file only when absent. It generates nothing.
+- Scaffolded files: a planned file starting with the scaffold header is
+  written only when absent, never rewritten, never reported as changed and
+  never stale; `--check` reports a missing one. `Report::scaffolded` lists
+  the ones written.
 - `primary_key_ids = "cuid2"` (`IdGeneration::Cuid2`, ADR 0016) makes new
   text primary keys with `cuid::cuid2()` (24 characters): the typed id gets
   `generate()`, and `create` fills a key the input leaves out. `UUID` keys

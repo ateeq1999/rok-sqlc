@@ -65,6 +65,7 @@ sync.
 - [Conventions and the `rok` preset](#conventions-and-the-rok-preset)
 - [Validated bodies and HTTP extractors](#validated-bodies-and-http-extractors)
 - [Configuration](#configuration)
+- [Starting an API project: `rok-sqlc init`](#starting-an-api-project-rok-sqlc-init)
 - [Using it from `build.rs`](#using-it-from-buildrs)
 - [CI with `--check`](#ci-with---check)
 - [Supported SQL and type mapping](#supported-sql-and-type-mapping)
@@ -1016,7 +1017,9 @@ layers over `rok-sqlc.toml` and doesn't turn discovery off.
 ### Flags
 
 The command is `generate`, or `g` for short (`rok-sqlc g`). The `help`
-command prints the help (`rok-sqlc help generate`).
+command prints the help (`rok-sqlc help generate`). `init` (`i`) starts an API
+project (see [Starting an API project](#starting-an-api-project-rok-sqlc-init))
+and takes only the project directory.
 
 | Flag | Meaning |
 |---|---|
@@ -1039,6 +1042,31 @@ command prints the help (`rok-sqlc help generate`).
 `--dry-run`, `--check`, `--force` and `--lenient` are flags only, because
 they describe a run rather than a project. A run with no schema (no
 `--schema` and no `schema` key) is a usage error. Errors exit with code 1.
+
+## Starting an API project: `rok-sqlc init`
+
+`rok-sqlc init [DIR]` (default: the current directory) scaffolds the
+actix-web application skeleton of ADR 0016 into a project. It generates
+nothing; `rok-sqlc g` does that once there are migrations.
+
+| File | What it is |
+|---|---|
+| `rok-sqlc.toml` | `schema = "migrations/"`, `derive = ["serde", "validate"]`, `extractors = ["actix_web"]`, `primary_key_ids = "uuid_v7"` and `api.output = "src/features"`, followed by the dependencies to add to `Cargo.toml`, as comments |
+| `migrations/` | empty: your migrations go here |
+| `src/main.rs` | starts the server, nothing else |
+| `src/app.rs` | the only wiring file: the pool, the generated `register_services` and `configure_all`, and health |
+| `src/config.rs` | `Config::from_env` (`DATABASE_URL`, `BIND_ADDR`, `JWT_SECRET`, pool settings), the only environment reader |
+| `src/error.rs` | `AppError`, answered with the wire standard's error body, and the `sqlx` error mapping |
+| `src/shared/mod.rs`, `src/shared/auth.rs` | the shared tools, and the `AuthUser` and `AdminUser` extractors (HS256 JWT bearer tokens) |
+| `src/features/mod.rs` | `mod generated; pub use generated::*;` |
+| `AGENTS.md` | the architecture rules, and where each piece of code goes |
+
+Every file is a scaffolded file: it is written only when absent, starts
+with `// Scaffolded once by rok-sqlc; this file is yours.`, and is never
+rewritten. Running `init` again restores a deleted file and keeps every
+other one as it is. Generation scaffolds files the same way (a feature's
+`service.rs`): `--check` reports a missing one, never its contents, and a
+scaffolded file is never stale.
 
 ## Using it from `build.rs`
 

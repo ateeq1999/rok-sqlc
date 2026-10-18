@@ -242,6 +242,7 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
         );
     }
     report.written = applied.written;
+    report.scaffolded = applied.scaffolded;
     if !dry_run {
         output::remove_stale(output_dir, &stale)?;
     }

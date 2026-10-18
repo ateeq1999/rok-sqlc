@@ -13,6 +13,7 @@ categories = ["database", "development-tools", "command-line-utilities"]
 # the module corpus and the fixture crates, which stay in the repository.
 include = [
     "/src/**/*.rs",
+    "/src/init/templates/*",
     "/Cargo.toml",
     "/Cargo.lock",
     "/README.md",

@@ -23,6 +23,10 @@ struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "parsed once per run; boxing the flags buys nothing"
+)]
 enum Command {
     /// Generate Rust database modules from a schema file
     #[command(visible_alias = "g")]
@@ -91,6 +95,15 @@ enum Command {
         #[arg(short, long, value_name = "DIR")]
         api_output: Option<PathBuf>,
     },
+
+    /// Scaffold the actix-web application skeleton (ADR 0016) into a
+    /// project, each file only if absent; generates nothing
+    #[command(visible_alias = "i")]
+    Init {
+        /// The project directory
+        #[arg(value_name = "DIR", default_value = ".")]
+        dir: PathBuf,
+    },
 }
 
 /// The clap definition of the `rok-sqlc` command line.
@@ -117,6 +130,19 @@ where
         Err(err) => return Err(err.into()),
     };
     match cli.command {
+        Command::Init { dir } => {
+            for path in crate::init::init(&dir)? {
+                println!("scaffolded {}", display_path(&path));
+            }
+            println!(
+                "\nNext steps:\n  \
+                 1. add the dependencies listed at the end of rok-sqlc.toml to Cargo.toml\n  \
+                 2. add migrations to migrations/ (0001_init.sql, ...)\n  \
+                 3. run `rok-sqlc g` to generate src/db/ and src/features/\n  \
+                 4. set DATABASE_URL and JWT_SECRET, then `cargo run`"
+            );
+            Ok(())
+        }
         Command::Generate {
             schema,
             output,
@@ -291,6 +317,13 @@ fn print_report(config: &Config, report: &Report) {
             println!("would write {}", display_path(path));
         } else {
             println!("generated {}", display_path(path));
+        }
+    }
+    for path in &report.scaffolded {
+        if config.dry_run {
+            println!("would scaffold {}", display_path(path));
+        } else {
+            println!("scaffolded {}", display_path(path));
         }
     }
     for path in &report.unchanged {

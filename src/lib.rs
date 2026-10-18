@@ -25,6 +25,7 @@ mod config;
 mod config_file;
 mod generate;
 mod generator;
+mod init;
 mod output;
 mod report;
 mod schema;

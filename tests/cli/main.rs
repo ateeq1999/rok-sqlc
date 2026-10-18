@@ -15,6 +15,7 @@ mod config;
 mod derives;
 mod flags;
 mod generate;
+mod init;
 mod json;
 mod keys;
 mod migrations;

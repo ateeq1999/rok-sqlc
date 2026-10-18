@@ -39,6 +39,9 @@ fn package_ships_licenses_readme_and_changelog_but_no_fixtures() -> Result<()> {
         "LICENSE-APACHE",
         "src/lib.rs",
         "src/main.rs",
+        // `init` embeds its templates with `include_str!`.
+        "src/init/templates/AGENTS.md",
+        "src/init/templates/rok-sqlc.toml",
     ] {
         ensure!(
             files.iter().any(|file| file == required),
