@@ -7,6 +7,18 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+### Breaking changes to the generated API
+
+- `extractors`: `db/http/` answers a rejected body with the wire standard
+  of ADR 0016, `{"error": {"code", "message", "details"?}}`, on both axum
+  and actix-web. The `success` field is gone and the codes are snake_case:
+  `400` `bad_request` (was `MALFORMED_BODY`), `413` `payload_too_large`
+  (was `PAYLOAD_TOO_LARGE`) and `422` `validation_failed` (was
+  `VALIDATION_FAILED`). In `db::http`, `ErrorBody` loses `success`,
+  `ErrorPayload` serializes `code` before `message`, the constant
+  `MALFORMED_BODY` is now `BAD_REQUEST`, and `ErrorBody::new(code, message)`
+  builds a body for any other error answer.
+
 ### Added
 
 - The Release workflow publishes the crate to crates.io once every binary

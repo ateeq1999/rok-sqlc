@@ -461,7 +461,7 @@ same name fail generation, and the error names both.
 | `types.rs` | A Rust enum for each enum type and each value-list column, keeping its exact database labels. |
 | `session.rs` | `set_tenant` and `set_user`, when the conventions name a setting. |
 | `queries.rs` or `queries/` | One function per annotated query. |
-| `http/` | With `extractors`: `BodyRejection`, the error envelope, and a `ValidatedJson<T>` per framework (`axum.rs`, `actix_web.rs`). |
+| `http/` | With `extractors`: `BodyRejection`, the error body (`ErrorBody`), and a `ValidatedJson<T>` per framework (`axum.rs`, `actix_web.rs`). |
 
 <!-- source: docs/examples/quickstart/src/db/types.rs -->
 ```rust
@@ -808,7 +808,7 @@ value lists are not rules: the database or deserialization already enforces
 them. A typed id over `NUMERIC` gets no range rule.
 
 `extractors` (which needs `validate`) generates `db/http/`: `mod.rs` holds
-the shared `BodyRejection` and the error envelope, and `axum.rs` and
+the shared `BodyRejection` and the error body, and `axum.rs` and
 `actix_web.rs` each hold a `ValidatedJson<T>` extractor for any
 `T: DeserializeOwned + Validate`, a generated input or patch or a
 hand-written request type. The handler runs only for a validated body:
@@ -842,25 +842,25 @@ and needs no `JsonConfig` error handler:
     }
 ```
 
-Any other body is answered in the Rok error envelope, the same on both
+Any other body is answered with the wire standard's error body
+(`{"error": {"code", "message", "details"?}}`, ADR 0016), the same on both
 frameworks:
 
 | The body | Status | `code` | `details` |
 |---|---|---|---|
-| no JSON `Content-Type`, bad JSON syntax, or unreadable | `400` | `MALFORMED_BODY` | none |
-| over the framework's size limit | `413` | `PAYLOAD_TOO_LARGE` | none |
-| JSON that doesn't fit the type (a missing field, a wrong type, an unknown label) | `422` | `VALIDATION_FAILED`, with serde's message | none |
-| breaks a validation rule | `422` | `VALIDATION_FAILED` | validator's errors by field |
+| no JSON `Content-Type`, bad JSON syntax, or unreadable | `400` | `bad_request` | none |
+| over the framework's size limit | `413` | `payload_too_large` | none |
+| JSON that doesn't fit the type (a missing field, a wrong type, an unknown label) | `422` | `validation_failed`, with serde's message | none |
+| breaks a validation rule | `422` | `validation_failed` | validator's errors by field |
 
 `{"name": "", "handle": "ada", "age": 7}` is answered `422` with:
 
-<!-- source: docs/examples/validated-api/tests/envelope.rs -->
+<!-- source: docs/examples/validated-api/tests/error_body.rs -->
 ```json
 {
-  "success": false,
   "error": {
+    "code": "validation_failed",
     "message": "the request body failed validation",
-    "code": "VALIDATION_FAILED",
     "details": {
       "name": [
         {

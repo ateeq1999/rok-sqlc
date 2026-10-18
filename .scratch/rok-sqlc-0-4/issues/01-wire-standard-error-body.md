@@ -14,7 +14,19 @@ This is a breaking change for 0.3 users of `extractors`. Add it under `[Unreleas
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Fixture tests (axum and actix-web) assert the new body, status and code for every rejection, and that both frameworks match.
-- [ ] README drift tests and the example pass.
+- [x] Fixture tests (axum and actix-web) assert the new body, status and code for every rejection, and that both frameworks match.
+- [x] README drift tests and the example pass.
+
+## Comments
+
+Resolved on branch `rok-sqlc-0-4-01`.
+
+The shared error-body types stay in `db::http` (`db/http/mod.rs`), with no name clash against ticket 04's `AppError` or ticket 05's `shared/response.rs`:
+
+- `ErrorBody { error: ErrorPayload }`, plus `ErrorBody::new(code, message)` for any other error answer (no `details`).
+- `ErrorPayload { code: String, message: String, details: Option<validator::ValidationErrors> }`, serialized in that order; `details` is skipped when `None`.
+- Code constants: `BAD_REQUEST = "bad_request"` (renamed from `MALFORMED_BODY`), `PAYLOAD_TOO_LARGE = "payload_too_large"`, `VALIDATION_FAILED = "validation_failed"`.
+
+`BodyRejection` keeps its variants (`Malformed`, `TooLarge`, `ValidationFailure`). The example test `docs/examples/validated-api/tests/envelope.rs` is renamed `error_body.rs`.

@@ -126,8 +126,8 @@ fn generated_validation_rules_check_inputs_and_patches() -> Result<()> {
 }
 
 /// The generated axum extractor takes valid bodies and answers every
-/// rejection in the Rok error envelope (`tests/axum.rs` in the fixture
-/// crate). Needs no database.
+/// rejection with the wire standard's error body (`tests/axum.rs` in the
+/// fixture crate). Needs no database.
 #[test]
 fn generated_axum_extractor_validates_bodies() -> Result<()> {
     let _guard = FIXTURE
@@ -150,7 +150,7 @@ fn generated_axum_extractor_validates_bodies() -> Result<()> {
 }
 
 /// The generated actix-web extractor takes valid bodies, answers every
-/// rejection in the Rok error envelope, and answers each input with the
+/// rejection with the wire standard's error body, and answers each input with the
 /// same bytes as the axum one beside it (`tests/actix_web.rs` in the
 /// fixture crate). Needs no database.
 #[test]

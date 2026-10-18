@@ -1,6 +1,6 @@
-//! `db/http/`, generated with `extractors` (ADR 0015): `mod.rs`, the error
-//! envelope and the rules every framework's extractor shares, and a module
-//! per framework.
+//! `db/http/`, generated with `extractors` (ADR 0015): `mod.rs`, the wire
+//! standard's error body (ADR 0016) and the rules every framework's extractor
+//! shares, and a module per framework.
 
 use std::path::Path;
 
@@ -42,13 +42,13 @@ fn render_mod(extractors: &[Extractor]) -> String {
     output
 }
 
-const MOD_DOC: &str = "//! Validated bodies for HTTP handlers: the Rok error envelope, and the
-//! rules that turn a framework's JSON body, or its rejection, into a
+const MOD_DOC: &str = "//! Validated bodies for HTTP handlers: the wire standard's error body, and
+//! the rules that turn a framework's JSON body, or its rejection, into a
 //! validated body or a [`BodyRejection`], shared by each framework's
 //! extractor.
 ";
 
-/// What every framework's extractor shares: the envelope, the codes, the
+/// What every framework's extractor shares: the error body, the codes, the
 /// rejection and its status and body, and the checking of a body.
 const SHARED: &str = r#"use std::borrow::Cow;
 use std::fmt;
@@ -59,14 +59,14 @@ use validator::{Validate, ValidationError, ValidationErrors, ValidationErrorsKin
 
 /// The `code` of a body that is not JSON: bad syntax, a missing or wrong
 /// `Content-Type`, or a body that could not be read.
-pub const MALFORMED_BODY: &str = "MALFORMED_BODY";
+pub const BAD_REQUEST: &str = "bad_request";
 
 /// The `code` of a body over the framework's size limit.
-pub const PAYLOAD_TOO_LARGE: &str = "PAYLOAD_TOO_LARGE";
+pub const PAYLOAD_TOO_LARGE: &str = "payload_too_large";
 
 /// The `code` of a JSON body that does not fit the type or breaks a
 /// validation rule.
-pub const VALIDATION_FAILED: &str = "VALIDATION_FAILED";
+pub const VALIDATION_FAILED: &str = "validation_failed";
 
 /// The message of a body breaking validation rules, which `details` lists.
 const FAILED_RULES: &str = "the request body failed validation";
@@ -81,23 +81,37 @@ const WHOLE_BODY: &str = "__all__";
 /// The code of the error [`BodyRejection::unfit`] records.
 const UNFIT: &str = "deserialize";
 
-/// The Rok error envelope: `{"success": false, "error": {...}}`.
+/// The wire standard's error body: `{"error": {"code", "message",
+/// "details"?}}`. Any error answer can use it, not only a rejected body.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ErrorBody {
-    /// Always `false`.
-    pub success: bool,
     /// What went wrong.
     pub error: ErrorPayload,
+}
+
+impl ErrorBody {
+    /// The body answering a `snake_case` `code`, such as [`BAD_REQUEST`], with
+    /// `message` and no `details`.
+    #[must_use]
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        ErrorBody {
+            error: ErrorPayload {
+                code: code.into(),
+                message: message.into(),
+                details: None,
+            },
+        }
+    }
 }
 
 /// The `error` of an [`ErrorBody`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ErrorPayload {
+    /// A `snake_case` code for programs, such as [`BAD_REQUEST`],
+    /// [`PAYLOAD_TOO_LARGE`] or [`VALIDATION_FAILED`].
+    pub code: String,
     /// A message for people.
     pub message: String,
-    /// A code for programs: [`MALFORMED_BODY`], [`PAYLOAD_TOO_LARGE`] or
-    /// [`VALIDATION_FAILED`].
-    pub code: String,
     /// The broken validation rules by field, as validator serializes them,
     /// when there are any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -110,7 +124,7 @@ pub struct ErrorPayload {
 pub enum BodyRejection {
     /// The body is not JSON: bad syntax, a missing or wrong `Content-Type`,
     /// or a body that could not be read. Answered `400` with
-    /// [`MALFORMED_BODY`].
+    /// [`BAD_REQUEST`].
     Malformed {
         /// What is wrong with the body.
         message: String,
@@ -188,7 +202,7 @@ impl BodyRejection {
     #[must_use]
     pub fn body(&self) -> ErrorBody {
         let (message, code, details) = match self {
-            BodyRejection::Malformed { message } => (message.clone(), MALFORMED_BODY, None),
+            BodyRejection::Malformed { message } => (message.clone(), BAD_REQUEST, None),
             BodyRejection::TooLarge => (OVER_LIMIT.to_owned(), PAYLOAD_TOO_LARGE, None),
             BodyRejection::ValidationFailure(errors) => match unfit_message(errors) {
                 Some(message) => (message.to_owned(), VALIDATION_FAILED, None),
@@ -200,10 +214,9 @@ impl BodyRejection {
             },
         };
         ErrorBody {
-            success: false,
             error: ErrorPayload {
-                message,
                 code: code.to_owned(),
+                message,
                 details,
             },
         }
@@ -247,7 +260,8 @@ pub fn validated<T: Validate>(body: T) -> Result<T, BodyRejection> {
 
 /// `db/http/axum.rs`.
 const AXUM: &str = r"//! The axum extractor: [`ValidatedJson<T>`] takes a validated body, and
-//! [`BodyRejection`] answers anything else in the Rok error envelope.
+//! [`BodyRejection`] answers anything else with the wire standard's error
+//! body.
 //!
 //! The body goes through `axum::Json<T>`, so the router's `DefaultBodyLimit`
 //! applies (2 MiB unless set). A body over it is answered `413`.
@@ -350,8 +364,8 @@ impl IntoResponse for BodyRejection {
 
 /// `db/http/actix_web.rs`.
 const ACTIX_WEB: &str = r"//! The actix-web extractor: [`ValidatedJson<T>`] takes a validated body,
-//! and [`BodyRejection`] answers anything else in the Rok error envelope, so
-//! no `JsonConfig` error handler is needed.
+//! and [`BodyRejection`] answers anything else with the wire standard's
+//! error body, so no `JsonConfig` error handler is needed.
 //!
 //! The body goes through `web::Json<T>`, so the app's `JsonConfig` applies:
 //! its limit (2 MiB unless set; a body over it is answered `413`) and its

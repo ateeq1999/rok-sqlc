@@ -305,7 +305,7 @@ fn validate_needs_serde_and_extractors_need_validate() -> Result<()> {
     Ok(())
 }
 
-/// `extractors = ["axum"]` adds `db/http/mod.rs` (the shared envelope) and
+/// `extractors = ["axum"]` adds `db/http/mod.rs` (the shared error body) and
 /// `db/http/axum.rs`, declared by `db/mod.rs` with `axum` among the
 /// dependency hints; without `extractors` there is no `db/http`.
 #[test]
