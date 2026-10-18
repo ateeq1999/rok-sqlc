@@ -35,7 +35,7 @@ pub fn features<'a>(tables: &'a [Table], api: &'a ApiConfig) -> Result<Vec<Featu
 
 /// Whether `feature` needs the data layer's `listing.rs`.
 pub fn has_listing(feature: &Feature<'_>) -> bool {
-    feature.serves(Endpoint::List)
+    feature.serves(Endpoint::List) || feature.reads_owned_rows()
 }
 
 /// The files under `api.output`: each feature's, then `generated.rs` and

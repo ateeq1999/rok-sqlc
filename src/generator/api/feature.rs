@@ -10,7 +10,7 @@ use heck::{ToKebabCase, ToUpperCamelCase};
 
 use crate::generator::relationships::join_pair;
 use crate::schema::{BaseType, Column, FilterKind, Table};
-use crate::{ApiConfig, ApiEndpoint};
+use crate::{ApiAccess, ApiConfig, ApiEndpoint};
 
 /// One endpoint of a feature, in the order the files list them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,7 +110,18 @@ pub struct Feature<'a> {
     /// The text columns `q` matches.
     pub search: Vec<&'a Column>,
     /// The columns `sort` takes, at least one when the list is served.
+    /// Never a hidden column.
     pub sort: Vec<&'a Column>,
+    /// Who may call the endpoints (`[api.access]`).
+    pub access: ApiAccess,
+    /// The owner column (`[api.owner]`): every query is scoped to the
+    /// caller's id, and `create` sets it from the caller.
+    pub owner: Option<&'a Column>,
+    /// The columns left out of the response (`[api.hidden]`). They stay in
+    /// the create and update bodies. Filters and sorts can't name them: a
+    /// renderer taking either (ticket 08's search) checks
+    /// [`Feature::is_hidden`].
+    pub hidden: Vec<&'a Column>,
 }
 
 impl<'a> Feature<'a> {
@@ -138,7 +149,13 @@ impl<'a> Feature<'a> {
             [column] => Some(Key::Single(column)),
             columns => Some(Key::Composite(columns.to_vec())),
         };
-        let has_patch = !table.update_columns().is_empty();
+        let owner = entry(&api.owner, table)
+            .and_then(|name| table.columns.iter().find(|column| column.sql_name == *name));
+        // No update changes the owner.
+        let has_patch = table
+            .update_columns()
+            .iter()
+            .any(|column| owner.is_none_or(|owner| owner.sql_name != column.sql_name));
         let endpoints: Vec<Endpoint> = Endpoint::ALL
             .into_iter()
             .filter(|endpoint| !skipped.contains(&endpoint.config()))
@@ -149,10 +166,11 @@ impl<'a> Feature<'a> {
                 Endpoint::Update => key.is_some() && has_patch,
             })
             .collect();
+        let hidden = columns(table, entry(&api.hidden, table));
         let search = columns(table, entry(&api.search, table));
         let mut sort = columns(table, entry(&api.sort, table));
         if sort.is_empty() {
-            sort = default_sort(table);
+            sort = default_sort(table, &hidden);
         }
         if endpoints.contains(&Endpoint::List) && sort.is_empty() {
             return Err(format!(
@@ -171,7 +189,44 @@ impl<'a> Feature<'a> {
             endpoints,
             search,
             sort,
+            access: entry(&api.access, table).copied().unwrap_or_default(),
+            owner,
+            hidden,
         }))
+    }
+
+    /// Whether `column` is hidden: left out of the response, and never a
+    /// filter or a sort key.
+    pub fn is_hidden(&self, column: &Column) -> bool {
+        self.hidden
+            .iter()
+            .any(|hidden| hidden.sql_name == column.sql_name)
+    }
+
+    /// The columns the response holds: all but the hidden ones.
+    pub fn response_columns(&self) -> Vec<&'a Column> {
+        self.table
+            .columns
+            .iter()
+            .filter(|column| !self.is_hidden(column))
+            .collect()
+    }
+
+    /// The extractor the handlers take the caller with, `AuthUser` or
+    /// `AdminUser`; none for a public feature.
+    pub fn caller(&self) -> Option<&'static str> {
+        match self.access {
+            ApiAccess::Public => None,
+            ApiAccess::Admin => Some("AdminUser"),
+            ApiAccess::User => Some("AuthUser"),
+        }
+    }
+
+    /// Whether the feature reads one row the caller owns by its key: it has
+    /// an owner and serves an endpoint taking a key, so the data layer has
+    /// `get_owned` and `lock_owned`.
+    pub fn reads_owned_rows(&self) -> bool {
+        self.owner.is_some() && self.endpoints.iter().any(|endpoint| endpoint.takes_key())
     }
 
     /// Whether the feature serves `endpoint`.
@@ -287,13 +342,18 @@ fn columns<'a>(table: &'a Table, names: Option<&Vec<String>>) -> Vec<&'a Column>
 }
 
 /// The sort keys of a table without `[api.sort]`: its key columns and
-/// `created_at`, or, with neither, its first sortable column.
-fn default_sort(table: &Table) -> Vec<&Column> {
+/// `created_at`, or, with neither, its first sortable column. Never a
+/// `hidden` column (a key column can't be one).
+fn default_sort<'a>(table: &'a Table, hidden: &[&Column]) -> Vec<&'a Column> {
     let sortable = |column: &&Column| {
-        matches!(
-            column.filter_kind(),
-            Some(FilterKind::Ordered | FilterKind::Text)
-        ) || column.base_type() == BaseType::Uuid
+        let visible = !hidden
+            .iter()
+            .any(|hidden| hidden.sql_name == column.sql_name);
+        visible
+            && (matches!(
+                column.filter_kind(),
+                Some(FilterKind::Ordered | FilterKind::Text)
+            ) || column.base_type() == BaseType::Uuid)
     };
     let mut sort: Vec<&Column> = table.key_columns();
     sort.extend(

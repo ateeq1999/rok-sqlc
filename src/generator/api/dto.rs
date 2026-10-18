@@ -19,13 +19,13 @@ pub fn render(feature: &Feature<'_>) -> String {
         .then(|| create_columns(feature));
     let update = feature
         .serves(Endpoint::Update)
-        .then(|| table.update_columns());
+        .then(|| update_columns(feature));
     let mut output = format!(
         "{HEADER}\n//! The `{}` request and response bodies.\n\n",
         table.display_name()
     );
 
-    let mut fields: Vec<&Column> = table.columns.iter().collect();
+    let mut fields: Vec<&Column> = feature.response_columns();
     fields.extend(create.iter().flatten());
     fields.extend(update.iter().flatten());
     output.push_str(&imports(
@@ -51,14 +51,48 @@ pub fn render(feature: &Feature<'_>) -> String {
 }
 
 /// The create body's columns: the create input's, less a key the server
-/// makes (`primary_key_ids`).
+/// makes (`primary_key_ids`) and the owner, which is the caller.
 fn create_columns<'a>(feature: &Feature<'a>) -> Vec<&'a Column> {
     feature
         .table
         .insert_columns()
         .into_iter()
-        .filter(|column| column.id_generation.is_none())
+        .filter(|column| column.id_generation.is_none() && !is_owner(feature, column))
         .collect()
+}
+
+/// The update body's columns: the patch's, less the owner, which no update
+/// changes.
+fn update_columns<'a>(feature: &Feature<'a>) -> Vec<&'a Column> {
+    feature
+        .table
+        .update_columns()
+        .into_iter()
+        .filter(|column| !is_owner(feature, column))
+        .collect()
+}
+
+/// Whether `column` is the feature's owner column.
+fn is_owner(feature: &Feature<'_>, column: &Column) -> bool {
+    feature
+        .owner
+        .is_some_and(|owner| owner.sql_name == column.sql_name)
+}
+
+/// The value of the owner field of the create input, built from `owner`, a
+/// `uuid::Uuid`: converted to its typed id, and wrapped in `Some` when the
+/// input's field is optional.
+fn owner_value(owner: &Column) -> String {
+    let value = if owner.typed_id.is_some() {
+        "owner.into()"
+    } else {
+        "owner"
+    };
+    if insert_field_type(owner).starts_with("Option<") {
+        format!("Some({value})")
+    } else {
+        value.to_owned()
+    }
 }
 
 /// The `use` lines: the data layer's types the bodies convert to and from,
@@ -200,16 +234,41 @@ fn render_create(output: &mut String, feature: &Feature<'_>, columns: &[&Column]
         ));
     }
     output.push_str("}\n");
+    let binding = if feature.owner.is_some() {
+        "self"
+    } else {
+        "dto"
+    };
     let fields: Vec<String> = feature
         .table
         .insert_columns()
         .iter()
         .map(|column| match column.id_generation {
             Some(_) => format!("{}: None", column.rust_name),
-            None => format!("{name}: dto.{name}", name = column.rust_name),
+            None if is_owner(feature, column) => {
+                format!("{}: {}", column.rust_name, owner_value(column))
+            }
+            None => format!("{name}: {binding}.{name}", name = column.rust_name),
         })
         .collect();
-    push_from(output, &dto, &new, "dto", &fields);
+    if feature.owner.is_none() {
+        push_from(output, &dto, &new, "dto", &fields);
+        return;
+    }
+    // The owner is the caller, which only the service knows.
+    output.push_str(&format!("\nimpl {dto} {{\n"));
+    push_doc(
+        output,
+        4,
+        &[&format!(
+            "The [`{new}`] of this body, owned by `owner`: the caller's id."
+        )],
+    );
+    output.push_str(&format!(
+        "    #[must_use]\n    pub fn into_new(self, owner: uuid::Uuid) -> {new} {{\n"
+    ));
+    push_struct_lit(output, 8, &new, &fields);
+    output.push_str("    }\n}\n");
 }
 
 fn render_update(output: &mut String, feature: &Feature<'_>, columns: &[&Column]) {
@@ -253,10 +312,14 @@ fn render_update(output: &mut String, feature: &Feature<'_>, columns: &[&Column]
         ));
     }
     output.push_str("}\n");
-    let fields: Vec<String> = columns
+    let mut fields: Vec<String> = columns
         .iter()
         .map(|column| format!("{name}: dto.{name}", name = column.rust_name))
         .collect();
+    // No update changes the owner.
+    if let Some(owner) = feature.owner {
+        fields.push(format!("{}: None", owner.rust_name));
+    }
     push_from(output, &dto, &patch, "dto", &fields);
 }
 
@@ -274,7 +337,8 @@ fn render_response(output: &mut String, feature: &Feature<'_>) {
     );
     output.push_str("#[derive(Debug, Clone, PartialEq, serde::Serialize)]\n");
     output.push_str(&format!("pub struct {response} {{\n"));
-    for column in &feature.table.columns {
+    let columns = feature.response_columns();
+    for column in &columns {
         push_doc(output, 4, &[&field_doc(column)]);
         output.push_str(&format!(
             "    pub {}: {},\n",
@@ -283,9 +347,7 @@ fn render_response(output: &mut String, feature: &Feature<'_>) {
         ));
     }
     output.push_str("}\n");
-    let fields: Vec<String> = feature
-        .table
-        .columns
+    let fields: Vec<String> = columns
         .iter()
         .map(|column| format!("{name}: row.{name}", name = column.rust_name))
         .collect();

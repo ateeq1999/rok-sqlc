@@ -1,13 +1,18 @@
-//! `db/<table>/listing.rs`: what an API feature's list endpoint reads, in
-//! the data layer with the rest of the SQL (ADR 0016). Generated only for a
-//! table whose feature serves `list`: the `XSort` keys `sort` takes, and a
-//! page of rows matching `q`, with its count.
+//! `db/<table>/listing.rs`: the reads an API feature needs beyond the data
+//! layer's own, kept with the rest of the SQL (ADR 0016). Generated for a
+//! table whose feature serves `list` (the `XSort` keys `sort` takes, and a
+//! page of rows matching `q`, with its count) or has an owner (every read
+//! scoped to the caller: the list's, `get_owned` and `lock_owned`).
 
-use super::feature::Feature;
+use super::feature::{Endpoint, Feature};
 use crate::generator::sql::{
-    column_clause, ident, key_order, live_condition, raw_block, str_literal, table_ref,
+    column_clause, ident, key_order, live_condition, live_key_predicate, raw_block, str_literal,
+    table_ref,
 };
-use crate::generator::{HEADER, push_doc, push_fn_head, push_let_call, use_list};
+use crate::generator::{
+    HEADER, StaticQuery, doc_name, keys, push_doc, push_fn_head, push_let_call, types_import,
+    use_paths,
+};
 
 /// The `search.rs` helper the listing matches `q` with, appended to
 /// `db/search.rs` when `api.output` is set.
@@ -33,20 +38,152 @@ pub fn push_contains_any(columns: &[&str], text: &str, query: &mut QueryBuilder<
 /// Renders `listing.rs` for `feature`, which serves `list`.
 pub fn render(feature: &Feature<'_>) -> String {
     let table = feature.table;
+    let lists = feature.serves(Endpoint::List);
+    let searched = !feature.search.is_empty();
+    let owned = feature.reads_owned_rows();
+    let mut output = format!("{HEADER}\n");
+    if lists {
+        output.push_str(&format!(
+            "//! What the API's list endpoint reads: a page of rows{}{}, sorted by\n//! one of the [`{}`] keys.\n",
+            if searched { " matching `q`" } else { "" },
+            if feature.owner.is_some() {
+                " the caller owns"
+            } else {
+                ""
+            },
+            feature.sort_enum()
+        ));
+    }
+    if owned {
+        if lists {
+            output.push_str("//!\n");
+        }
+        output
+            .push_str("//! The reads of one row the caller owns: another caller's row is none.\n");
+    }
+    output.push('\n');
+
+    let mut paths = Vec::new();
+    if lists {
+        let mut search_items = vec!["Page", "Sort"];
+        if searched {
+            search_items.push("push_contains_any");
+        }
+        paths.push(format!(
+            "super::super::search::{{{}}}",
+            search_items.join(", ")
+        ));
+    }
+    let mut models = vec![feature.row().to_owned()];
+    if owned {
+        models.extend(keys::key_items(table));
+        paths.extend(keys::id_imports(table, keys::param_columns(table), true));
+        if !types_import("super::super", [keys::key_type(table).as_str()]).is_empty() {
+            paths.push("super::super::types".to_owned());
+        }
+    }
+    models.sort();
+    let models = if let [model] = models.as_slice() {
+        model.clone()
+    } else {
+        format!("{{{}}}", models.join(", "))
+    };
+    paths.push(format!("super::models::{models}"));
+    output.push_str(&use_paths(&paths));
+    output.push('\n');
+
+    if lists {
+        render_list(&mut output, feature);
+    }
+    if owned {
+        if lists {
+            output.push('\n');
+        }
+        render_owned(&mut output, feature);
+    }
+    output
+}
+
+/// The read of one row the caller owns, `get_owned`, and `lock_owned`, the
+/// check a write runs first.
+fn render_owned(output: &mut String, feature: &Feature<'_>) {
+    let table = feature.table;
+    let Some(owner) = feature.owner else {
+        return;
+    };
+    let keys = table.key_columns();
+    let predicate = format!(
+        "{} AND {} = ${}",
+        live_key_predicate(table, &keys),
+        ident(&owner.sql_name),
+        keys.len() + 1
+    );
+    let mut params = keys::key_params(table);
+    params.push("owner: uuid::Uuid".to_owned());
+    let mut binds = keys::scoped_key_binds(table);
+    binds.push("owner".to_owned());
+
+    let mut sql = column_clause("SELECT", table);
+    sql.push(format!("FROM {}", table_ref(table)));
+    sql.push(format!("WHERE {predicate}"));
+    push_doc(
+        output,
+        0,
+        &[
+            &format!(
+                "Fetches the row with the given primary key if `owner` owns it (its {}),",
+                doc_name(&owner.sql_name)
+            ),
+            "or `None`.",
+        ],
+    );
+    push_fn_head(
+        output,
+        "get_owned",
+        &params,
+        &format!("Result<Option<{}>, sqlx::Error>", feature.row()),
+    );
+    StaticQuery {
+        call: &format!("sqlx::query_as::<_, {}>", feature.row()),
+        sql,
+        binds: binds.clone(),
+        execute: "fetch_optional(executor)",
+    }
+    .push(output, 4, "", "");
+    output.push_str("}\n\n");
+
+    let sql = vec![
+        "SELECT 1".to_owned(),
+        format!("FROM {}", table_ref(table)),
+        format!("WHERE {predicate}"),
+        "FOR UPDATE".to_owned(),
+    ];
+    push_doc(
+        output,
+        0,
+        &[
+            "Returns whether `owner` owns the row with the given primary key, locking",
+            "it until the transaction ends, so a write that checks first changes only",
+            "a row the caller owns.",
+        ],
+    );
+    push_fn_head(output, "lock_owned", &params, "Result<bool, sqlx::Error>");
+    StaticQuery {
+        call: "sqlx::query_scalar::<_, i32>",
+        sql,
+        binds,
+        execute: "fetch_optional(executor)",
+    }
+    .push(output, 4, "let row = ", "?;");
+    output.push_str("    Ok(row.is_some())\n}\n");
+}
+
+/// `XSort`, `SEARCH_COLUMNS`, `list_matching` and `count_matching`.
+fn render_list(output: &mut String, feature: &Feature<'_>) {
+    let table = feature.table;
     let sort = feature.sort_enum();
     let searched = !feature.search.is_empty();
-    let mut output = format!(
-        "{HEADER}\n//! What the API's list endpoint reads: a page of rows{}, sorted by\n//! one of the [`{sort}`] keys.\n\n",
-        if searched { " matching `q`" } else { "" }
-    );
-    let mut search_items = vec!["Page".to_owned(), "Sort".to_owned()];
-    if searched {
-        search_items.push("push_contains_any".to_owned());
-    }
-    output.push_str(&use_list("super::super::search", &search_items));
-    output.push_str(&format!("use super::models::{};\n\n", feature.row()));
-
-    render_sort_enum(&mut output, feature);
+    render_sort_enum(output, feature);
     if searched {
         let names: Vec<String> = feature
             .search
@@ -73,9 +210,18 @@ pub fn render(feature: &Feature<'_>) -> String {
         live_condition(table, None).unwrap_or_else(|| "TRUE".to_owned())
     );
     let q_param = searched.then(|| "q: Option<&str>".to_owned());
+    let owner_param = feature.owner.map(|_| "owner: uuid::Uuid".to_owned());
 
     output.push('\n');
-    let matching = if searched { " matching `q`" } else { "" };
+    let matching = format!(
+        "{}{}",
+        if feature.owner.is_some() {
+            " `owner` owns"
+        } else {
+            ""
+        },
+        if searched { " matching `q`" } else { "" }
+    );
     let keys = table.primary_key_columns();
     let mut doc = vec![format!(
         "Fetches one page of rows{matching}, ordered by `sort`{}.",
@@ -92,12 +238,12 @@ pub fn render(feature: &Feature<'_>) -> String {
         doc.push("case; `%`, `_` and `\\` in it match themselves.".to_owned());
     }
     let doc: Vec<&str> = doc.iter().map(String::as_str).collect();
-    push_doc(&mut output, 0, &doc);
-    let mut params: Vec<String> = q_param.iter().cloned().collect();
+    push_doc(output, 0, &doc);
+    let mut params: Vec<String> = owner_param.iter().chain(&q_param).cloned().collect();
     params.push(format!("sort: Option<Sort<{sort}>>"));
     params.push("page: Page".to_owned());
     push_fn_head(
-        &mut output,
+        output,
         "list_matching",
         &params,
         &format!("Result<Vec<{}>, sqlx::Error>", feature.row()),
@@ -108,7 +254,8 @@ pub fn render(feature: &Feature<'_>) -> String {
     output.push_str("    let mut query = sqlx::QueryBuilder::<sqlx::Postgres>::new(\n");
     output.push_str(&raw_block(&sql, 8));
     output.push_str(",\n    );\n");
-    push_q(&mut output, searched);
+    push_owner(output, feature);
+    push_q(output, searched);
     if keys.is_empty() {
         output.push_str(
             "    if let Some(sort) = sort {\n        query.push(\" ORDER BY \");\n        query.push(sort.key.column());\n        query.push(sort.direction.sql());\n    }\n",
@@ -125,28 +272,38 @@ pub fn render(feature: &Feature<'_>) -> String {
     output.push_str(
         "    query.push(\" LIMIT \");\n    query.push_bind(page.limit());\n    query.push(\" OFFSET \");\n    query.push_bind(page.offset());\n",
     );
-    crate::generator::push_build_and_fetch(&mut output, table, "fetch_all");
+    crate::generator::push_build_and_fetch(output, table, "fetch_all");
     output.push_str("}\n\n");
 
     let doc = format!("Counts the rows{matching}: every page's rows together.");
-    push_doc(&mut output, 0, &[&doc]);
+    push_doc(output, 0, &[&doc]);
     push_fn_head(
-        &mut output,
+        output,
         "count_matching",
-        &q_param.into_iter().collect::<Vec<_>>(),
+        &owner_param.into_iter().chain(q_param).collect::<Vec<_>>(),
         "Result<i64, sqlx::Error>",
     );
     let count = format!("SELECT COUNT(*) FROM {} {filter}", table_ref(table));
     push_let_call(
-        &mut output,
+        output,
         4,
         "let mut query",
         "sqlx::QueryBuilder::<sqlx::Postgres>::new",
         &str_literal(&count),
     );
-    push_q(&mut output, searched);
+    push_owner(output, feature);
+    push_q(output, searched);
     output.push_str("    query.build_query_scalar::<i64>().fetch_one(executor).await\n}\n");
-    output
+}
+
+/// ` AND <owner> = ` and the `owner` bind, for an owned feature.
+fn push_owner(output: &mut String, feature: &Feature<'_>) {
+    if let Some(owner) = feature.owner {
+        output.push_str(&format!(
+            "    query.push({});\n    query.push_bind(owner);\n",
+            str_literal(&format!(" AND {} = ", ident(&owner.sql_name)))
+        ));
+    }
 }
 
 /// `if let Some(q) = q { push_contains_any(...) }`, with search columns.

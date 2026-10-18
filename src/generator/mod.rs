@@ -301,7 +301,7 @@ fn render_resource_mod(table: &Table, modules: ResourceModules) -> String {
     }
     if modules.listing {
         output.push_str(
-            "/// The API list endpoint's page of rows and its sort keys.\npub mod listing;\n",
+            "/// The API feature's reads: its list page and sort keys, and owned rows.\npub mod listing;\n",
         );
     }
     output.push_str(

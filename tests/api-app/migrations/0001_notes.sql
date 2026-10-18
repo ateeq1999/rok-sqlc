@@ -45,3 +45,21 @@ CREATE TABLE note_labels (
 CREATE TABLE drafts (
     title TEXT NOT NULL
 );
+
+-- Access, ownership and hidden columns (`tests/fixture_compile.rs`
+-- configures them): `accounts` is `admin` only and hides `password_hash`;
+-- `tasks` has the default access (`user`) and is owned through `owner_id`,
+-- an account's typed id.
+CREATE TABLE accounts (
+    id UUID PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL
+);
+
+CREATE TABLE tasks (
+    id UUID PRIMARY KEY,
+    owner_id UUID NOT NULL REFERENCES accounts (id),
+    title TEXT NOT NULL,
+    done BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

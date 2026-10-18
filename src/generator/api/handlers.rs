@@ -108,6 +108,9 @@ fn imports(feature: &Feature<'_>) -> String {
         feature.service_api()
     ));
     output.push_str("use crate::error::AppError;\n");
+    if let Some(caller) = feature.caller() {
+        output.push_str(&format!("use crate::shared::auth::{caller};\n"));
+    }
     if encoded {
         output.push_str("use crate::shared::response::path_segment;\n");
     }
@@ -156,6 +159,20 @@ fn render_handler(output: &mut String, feature: &Feature<'_>, endpoint: Endpoint
         )],
     );
     let mut params = vec![format!("service: web::Data<{}>", feature.service())];
+    // The caller: the extractor answers `401` (or `403`) before the
+    // handler runs. An owned feature's service scopes its rows to it.
+    let mut user = String::new();
+    if let Some(caller) = feature.caller() {
+        if feature.owner.is_none() {
+            params.push(format!("_: {caller}"));
+        } else if caller == "AdminUser" {
+            params.push(format!("admin: {caller}"));
+            user.push_str("admin.0, ");
+        } else {
+            params.push(format!("user: {caller}"));
+            user.push_str("user, ");
+        }
+    }
     let key = feature.key_type().unwrap_or_default();
     match endpoint {
         Endpoint::List => params.push(format!("query: web::Query<{}>", feature.list_query())),
@@ -175,14 +192,26 @@ fn render_handler(output: &mut String, feature: &Feature<'_>, endpoint: Endpoint
     );
     let response = feature.response();
     let (call, from) = match endpoint {
-        Endpoint::List => ("let page = service.list(query.into_inner())", "page.map"),
-        Endpoint::Create => ("let row = service.create(body.into_inner())", "row"),
-        Endpoint::GetOne => ("let row = service.get_one(path.into_inner())", "row"),
+        Endpoint::List => (
+            format!("let page = service.list({user}query.into_inner())"),
+            "page.map",
+        ),
+        Endpoint::Create => (
+            format!("let row = service.create({user}body.into_inner())"),
+            "row",
+        ),
+        Endpoint::GetOne => (
+            format!("let row = service.get_one({user}path.into_inner())"),
+            "row",
+        ),
         Endpoint::Update => {
             output.push_str("    let key = path.into_inner();\n");
-            ("let row = service.update(key, body.into_inner())", "row")
+            (
+                format!("let row = service.update({user}key, body.into_inner())"),
+                "row",
+            )
         }
-        Endpoint::Remove => ("service.remove(path.into_inner())", ""),
+        Endpoint::Remove => (format!("service.remove({user}path.into_inner())"), ""),
     };
     output.push_str(&format!("    {call}.await?;\n"));
     if endpoint == Endpoint::Create && feature.key.is_some() {

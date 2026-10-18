@@ -54,7 +54,7 @@ pub fn render_repo(feature: &Feature<'_>) -> String {
         "{HEADER}\n//! The data layer's functions for `{}`: reads, writes, and the list's.\n\n",
         feature.table.display_name()
     );
-    if feature.serves(Endpoint::List) {
+    if feature.serves(Endpoint::List) || feature.reads_owned_rows() {
         output.push_str(&format!("pub use {module}::listing::*;\n"));
     }
     output.push_str(&format!(

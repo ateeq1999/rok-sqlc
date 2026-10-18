@@ -499,7 +499,7 @@ fn the_api_configuration_is_checked_and_adds_the_pool_and_list_reads_to_the_data
                 .replace("pub mod pool;\n", "")
                 .replace("//   tracing = \"0.1\"\n", "")
                 .replace(
-                    "/// The API list endpoint's page of rows and its sort keys.\npub mod listing;\n",
+                    "/// The API feature's reads: its list page and sort keys, and owned rows.\npub mod listing;\n",
                     "",
                 );
         }

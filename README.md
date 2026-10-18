@@ -996,6 +996,16 @@ the features and `output/README.md` maps which files are generated and
 which (`service.rs`) are yours. Generated files there and in `shared/` are
 removed once stale.
 
+A feature's handlers take the caller as `AuthUser` (`user`) or `AdminUser`
+(`admin`), from the scaffolded `shared/auth.rs`, so no valid token is a
+`401` and a caller who isn't an admin a `403`; a `public` feature takes
+none. An owned table (`[api.owner]`) can't be `public`: its service methods
+take the `AuthUser`, every read and write is scoped to the caller's id
+(another caller's row is a `404`), and `create` sets the owner, which
+neither body holds. A hidden column (`[api.hidden]`) stays in both bodies
+but never appears in a response, and no `[api.search]` or `[api.sort]`
+entry may name it.
+
 `[modules]` renames a table's module, and its row struct, typed id and key
 struct follow the new name. That's how same-named tables of two schemas
 (`core.users` and `audit.users`) both generate. A key is the table's

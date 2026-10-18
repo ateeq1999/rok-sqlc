@@ -358,6 +358,16 @@ fn generate_api_app() -> Result<Vec<PathBuf>> {
         .insert("labels".into(), vec![rok_sqlc::ApiEndpoint::Remove]);
     api.routes
         .insert("audit_events".into(), "/audit-log".to_owned());
+    // Access: the shapes above are public, `accounts` is admin only, and
+    // `tasks` keeps the default (`user`), owned through `owner_id`.
+    for table in ["notes", "members", "audit_events", "labels", "drafts"] {
+        api.access.insert(table.into(), rok_sqlc::ApiAccess::Public);
+    }
+    api.access
+        .insert("accounts".into(), rok_sqlc::ApiAccess::Admin);
+    api.hidden
+        .insert("accounts".into(), names(&["password_hash"]));
+    api.owner.insert("tasks".into(), "owner_id".to_owned());
     config.api = Some(api);
 
     // The regeneration scenario: the features are generated from the first

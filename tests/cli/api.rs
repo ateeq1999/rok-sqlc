@@ -40,7 +40,8 @@ users = \"/members\"
 
 [api.access]
 users = \"admin\"
-posts = \"public\"
+posts = \"user\"
+audit_log = \"public\"
 
 [api.owner]
 posts = \"author_id\"
@@ -102,7 +103,7 @@ fn an_api_section_adds_the_features_the_pool_and_the_shared_tools() -> Result<()
                 .replace("pub mod pool;\n", "")
                 .replace("//   tracing = \"0.1\"\n", "")
                 .replace(
-                    "/// The API list endpoint's page of rows and its sort keys.\npub mod listing;\n",
+                    "/// The API feature's reads: its list page and sort keys, and owned rows.\npub mod listing;\n",
                     "",
                 );
         }
@@ -219,6 +220,18 @@ fn api_entries_are_checked_against_the_schema() -> Result<()> {
         (
             "[api.hidden]\nusers = [\"id\"]",
             "`api.hidden.users` in the configuration names `id`, a key column of `users`, which can't be hidden",
+        ),
+        (
+            "[api.access]\nposts = \"public\"\n[api.owner]\nposts = \"author_id\"",
+            "`api.owner.posts` in the configuration names `author_id`, but `posts` is public; an owned table needs a caller, so set `api.access.posts` to `user` or `admin`",
+        ),
+        (
+            "[api.hidden]\nusers = [\"email\"]\n[api.search]\nusers = [\"email\"]",
+            "`api.search.users` in the configuration names `email`, a hidden column of `users`, which `q` can't match",
+        ),
+        (
+            "[api.hidden]\nusers = [\"age\"]\n[api.sort]\nusers = [\"age\"]",
+            "`api.sort.users` in the configuration names `age`, a hidden column of `users`, which can't be a sort key",
         ),
         (
             "[api.hidden]\nusers = [\"secret\"]",

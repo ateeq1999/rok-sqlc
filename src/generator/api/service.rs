@@ -100,6 +100,9 @@ fn imports(feature: &Feature<'_>) -> String {
         ));
     }
     output.push_str("use crate::error::AppError;\n");
+    if feature.owner.is_some() && !feature.endpoints.is_empty() {
+        output.push_str("use crate::shared::auth::AuthUser;\n");
+    }
     if feature.serves(Endpoint::List) {
         output.push_str("use crate::shared::response::PaginatedResponse;\n");
     }
@@ -145,14 +148,14 @@ fn render_list(output: &mut String, feature: &Feature<'_>) {
             feature.url
         )],
     );
+    let mut params = vec!["&self".to_owned()];
+    params.extend(user_param(feature));
+    params.push(format!("query: {}", feature.list_query()));
     push_signature(
         output,
         4,
         "async fn list",
-        &[
-            "&self".to_owned(),
-            format!("query: {}", feature.list_query()),
-        ],
+        &params,
         &format!("Result<{page}, AppError>"),
     );
     output.push_str("        let pagination = query.pagination();\n");
@@ -166,13 +169,19 @@ fn render_list(output: &mut String, feature: &Feature<'_>) {
     if q {
         output.push_str("        let q = query.q.as_deref().filter(|q| !q.is_empty());\n");
     }
+    let owner_arg = if feature.owner.is_some() {
+        "user.id, "
+    } else {
+        ""
+    };
     let q_arg = if q { "q, " } else { "" };
     output.push_str(&format!(
-        "        let rows = repo::list_matching(self.pool(), {q_arg}sort, pagination.into()).await?;\n"
+        "        let rows = repo::list_matching(self.pool(), {owner_arg}{q_arg}sort, pagination.into()).await?;\n"
     ));
-    let count_args = if q { "self.pool(), q" } else { "self.pool()" };
+    let count_args = format!("self.pool(), {owner_arg}{q_arg}");
     output.push_str(&format!(
-        "        let total = repo::count_matching({count_args}).await?;\n"
+        "        let total = repo::count_matching({}).await?;\n",
+        count_args.trim_end_matches(", ")
     ));
     output.push_str("        Ok(PaginatedResponse::new(rows, pagination, total))\n    }\n");
 }
@@ -187,17 +196,43 @@ fn render_get_one(output: &mut String, feature: &Feature<'_>) {
             feature.key_path()
         )],
     );
+    let mut params = vec!["&self".to_owned()];
+    params.extend(user_param(feature));
+    params.push(key_param(feature));
     push_signature(
         output,
         4,
         "async fn get_one",
-        &["&self".to_owned(), key_param(feature)],
+        &params,
         &format!("Result<{}, AppError>", feature.row()),
     );
+    let read = if feature.owner.is_some() {
+        format!(
+            "repo::get_owned(self.pool(), {}, user.id)",
+            key_arg(feature)
+        )
+    } else {
+        format!("repo::get_by_id(self.pool(), {})", key_arg(feature))
+    };
     output.push_str(&format!(
-        "        let row = repo::get_by_id(self.pool(), {}).await?;\n        row.ok_or_else(not_found)\n    }}\n",
-        key_arg(feature)
+        "        let row = {read}.await?;\n        row.ok_or_else(not_found)\n    }}\n"
     ));
+}
+
+/// The caller parameter of an owned feature's methods, `user: AuthUser`.
+fn user_param(feature: &Feature<'_>) -> Option<String> {
+    feature.owner.map(|_| "user: AuthUser".to_owned())
+}
+
+/// An owned feature's check, on `conn`, that the caller owns the row with
+/// the key, locking it until the transaction ends: `404` otherwise.
+fn push_owned_check(output: &mut String, feature: &Feature<'_>) {
+    if feature.owner.is_some() {
+        output.push_str(&format!(
+            "        if !repo::lock_owned(&mut *conn, {}, user.id).await? {{\n            return Err(not_found());\n        }}\n",
+            key_arg(feature)
+        ));
+    }
 }
 
 /// `<write>_in` and `<write>`.
@@ -232,6 +267,7 @@ fn render_write(output: &mut String, feature: &Feature<'_>, endpoint: Endpoint) 
         ),
     };
     let returns = format!("Result<{returns}, AppError>");
+    let inputs: Vec<String> = user_param(feature).into_iter().chain(inputs).collect();
 
     push_doc(
         output,
@@ -244,7 +280,13 @@ fn render_write(output: &mut String, feature: &Feature<'_>, endpoint: Endpoint) 
     let mut params = vec!["&self".to_owned(), "conn: &mut PgConnection".to_owned()];
     params.extend(inputs.iter().cloned());
     push_signature(output, 4, &format!("async fn {name}_in"), &params, &returns);
+    if endpoint != Endpoint::Create {
+        push_owned_check(output, feature);
+    }
     match endpoint {
+        Endpoint::Create if feature.owner.is_some() => {
+            output.push_str("        Ok(repo::create(conn, input.into_new(user.id)).await?)\n");
+        }
         Endpoint::Create => {
             output.push_str("        Ok(repo::create(conn, input.into()).await?)\n");
         }

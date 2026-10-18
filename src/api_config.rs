@@ -169,6 +169,11 @@ fn find_table<'a>(tables: &'a [Table], key: &str) -> Option<&'a Table> {
     })
 }
 
+/// Whether `a` and `b` are the same table, however their entries name it.
+fn same(a: &Table, b: &Table) -> bool {
+    a.display_name() == b.display_name()
+}
+
 /// The table an `[api.<section>]` entry names.
 fn entry_table<'a>(tables: &'a [Table], section: &str, key: &str) -> Result<&'a Table, String> {
     find_table(tables, key).ok_or_else(|| {
@@ -201,8 +206,8 @@ fn entry_column<'a>(
 
 /// Checks `api` against `tables`, the generated tables of the schema: every
 /// table and column it names exists, owner, search and sort columns have
-/// fitting types, hidden columns aren't keys, and route bases are well
-/// formed and unique.
+/// fitting types, an owned table isn't public, hidden columns aren't keys,
+/// search columns or sort keys, and route bases are well formed and unique.
 pub(crate) fn check(api: &ApiConfig, tables: &[Table]) -> Result<(), String> {
     let mut excluded = Vec::new();
     for key in &api.exclude {
@@ -228,7 +233,35 @@ pub(crate) fn check(api: &ApiConfig, tables: &[Table]) -> Result<(), String> {
                 location("owner", key)
             ));
         }
+        let access = api
+            .access
+            .iter()
+            .find(|(other, _)| find_table(tables, other).is_some_and(|other| same(other, table)))
+            .map(|(_, access)| *access)
+            .unwrap_or_default();
+        if access == ApiAccess::Public {
+            return Err(format!(
+                "{} in the configuration names `{name}`, but `{}` is public; an owned table needs a caller, so set {} to `user` or `admin`",
+                location("owner", key),
+                table.display_name(),
+                location("access", key)
+            ));
+        }
     }
+    // Hidden columns, by table: `q` and `sort` can't name one.
+    let hidden = |table: &Table, name: &str| {
+        api.hidden.iter().any(|(other, names)| {
+            find_table(tables, other).is_some_and(|other| same(other, table))
+                && names.iter().any(|hidden| hidden == name)
+        })
+    };
+    let hidden_error = |section: &str, key: &str, table: &Table, name: &str, what: &str| {
+        format!(
+            "{} in the configuration names `{name}`, a hidden column of `{}`, which {what}",
+            location(section, key),
+            table.display_name()
+        )
+    };
     for (key, names) in &api.hidden {
         let table = entry_table(tables, "hidden", key)?;
         for name in names {
@@ -251,6 +284,9 @@ pub(crate) fn check(api: &ApiConfig, tables: &[Table]) -> Result<(), String> {
                     location("search", key)
                 ));
             }
+            if hidden(table, name) {
+                return Err(hidden_error("search", key, table, name, "`q` can't match"));
+            }
         }
     }
     for (key, names) in &api.sort {
@@ -261,6 +297,15 @@ pub(crate) fn check(api: &ApiConfig, tables: &[Table]) -> Result<(), String> {
                 return Err(format!(
                     "{} in the configuration names `{name}`, which can't be sorted: sort columns are numbers, dates, times or text",
                     location("sort", key)
+                ));
+            }
+            if hidden(table, name) {
+                return Err(hidden_error(
+                    "sort",
+                    key,
+                    table,
+                    name,
+                    "can't be a sort key",
                 ));
             }
         }

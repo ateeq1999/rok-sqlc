@@ -14,10 +14,13 @@ use actix_web::web::Bytes;
 use actix_web::{App, test as actix_test, web};
 use rok_sqlc_api_app::app::configure;
 use rok_sqlc_api_app::db::schema::SCHEMA_SQL;
-use rok_sqlc_api_app::shared::auth::JwtKeys;
+use rok_sqlc_api_app::shared::auth::{Claims, JwtKeys, Role};
 use serde_json::Value;
-use sqlx::{AssertSqlSafe, PgPool};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::{AssertSqlSafe, PgPool};
+
+/// The JWT secret the test application verifies tokens with.
+const SECRET: &str = "test secret";
 
 /// A schema of the test database holding a fresh copy of the tables, and a
 /// pool whose connections use it.
@@ -64,10 +67,13 @@ impl Database {
     /// Drops the schema.
     pub async fn drop(self) {
         self.pool.close().await;
-        sqlx::raw_sql(AssertSqlSafe(format!("DROP SCHEMA {} CASCADE", self.schema)))
-            .execute(&self.admin)
-            .await
-            .expect("drop the test schema");
+        sqlx::raw_sql(AssertSqlSafe(format!(
+            "DROP SCHEMA {} CASCADE",
+            self.schema
+        )))
+        .execute(&self.admin)
+        .await
+        .expect("drop the test schema");
     }
 }
 
@@ -92,7 +98,7 @@ async fn send(
     db: &Database,
     request: actix_test::TestRequest,
 ) -> (StatusCode, Option<String>, Bytes) {
-    let keys = web::Data::new(JwtKeys::new("test secret"));
+    let keys = web::Data::new(JwtKeys::new(SECRET));
     let pool = db.pool.clone();
     let app =
         actix_test::init_service(App::new().configure(move |cfg| configure(cfg, &pool, &keys)))
@@ -108,7 +114,39 @@ async fn send(
 
 /// Sends `method uri` with an optional JSON `body`.
 pub async fn call(db: &Database, method: Method, uri: &str, body: Option<Value>) -> Answer {
+    call_as(db, None, method, uri, body).await
+}
+
+/// A bearer token for the caller `id` with `role`, signed with the secret
+/// the test application verifies with, valid for an hour.
+pub fn token(id: uuid::Uuid, role: Role) -> String {
+    let exp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("a clock after 1970")
+        .as_secs()
+        + 3600;
+    let claims = Claims { sub: id, role, exp };
+    jsonwebtoken::encode(
+        &jsonwebtoken::Header::default(),
+        &claims,
+        &jsonwebtoken::EncodingKey::from_secret(SECRET.as_bytes()),
+    )
+    .expect("an encodable token")
+}
+
+/// Sends `method uri` with an optional JSON `body`, as the caller whose
+/// bearer `token` it is, or with no `Authorization` header.
+pub async fn call_as(
+    db: &Database,
+    token: Option<&str>,
+    method: Method,
+    uri: &str,
+    body: Option<Value>,
+) -> Answer {
     let mut request = actix_test::TestRequest::default().method(method).uri(uri);
+    if let Some(token) = token {
+        request = request.insert_header((header::AUTHORIZATION, format!("Bearer {token}")));
+    }
     if let Some(body) = body {
         request = request.set_json(body);
     }
