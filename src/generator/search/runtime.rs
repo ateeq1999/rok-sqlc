@@ -1,21 +1,47 @@
 //! The shared `db/search.rs` runtime module every resource's search uses.
 
-use crate::generator::{HEADER, push_derives, push_serde_snake_case, serde_derives};
+use crate::generator::openapi::TO_SCHEMA;
+use crate::generator::{DeriveOptions, HEADER, push_derives, push_serde_snake_case, serde_derives};
+
+/// The `Ordered::Between` variant, which utoipa 5 can't describe as two
+/// values of a generic type: with `openapi`, it is described as any value.
+const BETWEEN: &str =
+    "    /// Between the two values, inclusive on both ends.\n    Between(T, T),\n";
 
 /// Renders the shared `db/search.rs`. With `serde`, the types an API layer
 /// takes a search from (`Direction`, `Sort`, and the condition enums) derive
 /// serde; `Page` and `Limit` do not, since deserializing would skip their
-/// clamping.
-pub fn render_shared(serde: bool) -> String {
+/// clamping. With `openapi`, the condition enums, which a search body
+/// holds, derive `ToSchema`.
+pub fn render_shared(derives: DeriveOptions) -> String {
+    let serde = derives.serde;
     let mut output = format!("{HEADER}\n");
     for (part, next) in SHARED.iter().zip(SHARED.iter().skip(1)) {
         output.push_str(part);
-        push_derives(&mut output, serde_derives(serde));
+        let mut extra = serde_derives(serde).to_vec();
+        let condition = ["pub enum Ordered", "pub enum Equality", "pub enum Text"]
+            .iter()
+            .any(|head| next.starts_with(head));
+        if derives.openapi && condition {
+            extra.push(TO_SCHEMA);
+        }
+        push_derives(&mut output, &extra);
         if serde && next.starts_with("pub enum ") {
             push_serde_snake_case(&mut output);
         }
     }
     output.push_str(SHARED[SHARED.len() - 1]);
+    if derives.openapi {
+        output = output.replacen(
+            BETWEEN,
+            &BETWEEN.replacen(
+                "    Between",
+                "    #[schema(value_type = Value)]\n    Between",
+                1,
+            ),
+            1,
+        );
+    }
     output
 }
 

@@ -9,7 +9,9 @@ use super::super::search::{Page, Sort, push_contains_any};
 use super::models::{Task, TaskId};
 
 /// The columns `GET /api/v1/tasks?sort=` takes, in `snake_case`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskSort {
     /// Sorts by the `id` column.

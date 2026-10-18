@@ -331,6 +331,7 @@ pub(crate) struct ApiKeys {
     db_path: Option<String>,
     prefix: Option<String>,
     search_endpoint: Option<bool>,
+    openapi: Option<bool>,
     exclude: Option<Vec<String>>,
     #[serde(default)]
     skip: BTreeMap<String, Vec<EndpointName>>,
@@ -423,6 +424,7 @@ impl ApiKeys {
             db_path: self.db_path.or(lower.db_path),
             prefix: self.prefix.or(lower.prefix),
             search_endpoint: self.search_endpoint.or(lower.search_endpoint),
+            openapi: self.openapi.or(lower.openapi),
             exclude: self.exclude.or(lower.exclude),
             skip: merge(self.skip, lower.skip),
             routes: merge(self.routes, lower.routes),
@@ -446,6 +448,7 @@ impl ApiKeys {
             api.prefix = prefix;
         }
         api.search_endpoint = self.search_endpoint.unwrap_or_default();
+        api.openapi = self.openapi.unwrap_or(api.openapi);
         api.exclude = self.exclude.unwrap_or_default();
         api.skip = self
             .skip

@@ -78,7 +78,9 @@ fn if_match<T: FromStr>(req: &HttpRequest) -> Result<T, AppError> {
 
 /// The body of a many-to-many sync, `{"ids": [...]}`: the keys of the
 /// related rows to pair with, and no others.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, validator::Validate)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Deserialize, validator::Validate, utoipa::ToSchema,
+)]
 pub struct IdList<T> {
     /// The related rows' keys.
     pub ids: Vec<T>,

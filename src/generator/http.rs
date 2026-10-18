@@ -11,13 +11,17 @@ use crate::Extractor;
 pub const MODULE: &str = "http";
 
 /// The `db/http/` files for `extractors`, under `output`; none without
-/// extractors.
-pub fn render(output: &Path, extractors: &[Extractor]) -> Vec<(std::path::PathBuf, String)> {
+/// extractors. With `openapi`, the error body derives `ToSchema`.
+pub fn render(
+    output: &Path,
+    extractors: &[Extractor],
+    openapi: bool,
+) -> Vec<(std::path::PathBuf, String)> {
     if extractors.is_empty() {
         return Vec::new();
     }
     let dir = output.join(MODULE);
-    let mut files = vec![(dir.join("mod.rs"), render_mod(extractors))];
+    let mut files = vec![(dir.join("mod.rs"), render_mod(extractors, openapi))];
     if extractors.contains(&Extractor::ActixWeb) {
         files.push((dir.join("actix_web.rs"), format!("{HEADER}\n{ACTIX_WEB}")));
     }
@@ -28,7 +32,7 @@ pub fn render(output: &Path, extractors: &[Extractor]) -> Vec<(std::path::PathBu
 }
 
 /// `db/http/mod.rs`: a module per framework, then the shared items.
-fn render_mod(extractors: &[Extractor]) -> String {
+fn render_mod(extractors: &[Extractor], openapi: bool) -> String {
     let mut output = format!("{HEADER}\n{MOD_DOC}\n");
     // Sorted the way rustfmt sorts `mod` declarations.
     if extractors.contains(&Extractor::ActixWeb) {
@@ -38,8 +42,30 @@ fn render_mod(extractors: &[Extractor]) -> String {
         output.push_str("pub mod axum;\n");
     }
     output.push('\n');
-    output.push_str(SHARED);
+    if openapi {
+        output.push_str(&described(SHARED));
+    } else {
+        output.push_str(SHARED);
+    }
     output
+}
+
+/// `shared` with the error body's two types deriving `ToSchema`, and
+/// validator's `details` described as a free-form object.
+fn described(shared: &str) -> String {
+    let mut text = shared.to_owned();
+    for item in ["pub struct ErrorBody {", "pub struct ErrorPayload {"] {
+        text = text.replacen(
+            &format!("Serialize, Deserialize)]\n{item}"),
+            &format!("Serialize, Deserialize, utoipa::ToSchema)]\n{item}"),
+            1,
+        );
+    }
+    text.replacen(
+        "    pub details: Option<ValidationErrors>,",
+        "    #[schema(value_type = Option<Object>)]\n    pub details: Option<ValidationErrors>,",
+        1,
+    )
 }
 
 const MOD_DOC: &str = "//! Validated bodies for HTTP handlers: the wire standard's error body, and

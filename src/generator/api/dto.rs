@@ -5,6 +5,7 @@
 use super::feature::{Endpoint, Feature};
 use super::layout::{Uses, push_field_attr, push_struct_lit};
 use super::{relation_routes, search};
+use crate::generator::openapi::{push_into_params, push_to_schema, push_value_type, value_type};
 use crate::generator::validate::{push_decimal_checks, push_field_rule};
 use crate::generator::{
     HEADER, MAX_WIDTH, doc_name, insert_field_type, push_doc, update_field_type,
@@ -81,8 +82,10 @@ fn render_remove_query(output: &mut String, feature: &Feature<'_>) {
             feature.key_path()
         )],
     );
+    output.push_str("#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]\n");
+    push_into_params(output, feature.openapi);
     output.push_str(&format!(
-        "#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]\npub struct {} {{\n    /// Whether to delete the row for good rather than soft-delete it.\n    #[serde(default)]\n    pub permanent: bool,\n}}\n",
+        "pub struct {} {{\n    /// Whether to delete the row for good rather than soft-delete it.\n    #[serde(default)]\n    pub permanent: bool,\n}}\n",
         feature.remove_query()
     ));
 }
@@ -243,6 +246,7 @@ fn render_create(output: &mut String, feature: &Feature<'_>, columns: &[&Column]
     );
     output
         .push_str("#[derive(Debug, Clone, PartialEq, serde::Deserialize, validator::Validate)]\n");
+    push_to_schema(output, feature.openapi);
     output.push_str(&format!("pub struct {dto} {{\n"));
     for column in columns {
         push_doc(output, 4, &[&field_doc(column)]);
@@ -250,11 +254,7 @@ fn render_create(output: &mut String, feature: &Feature<'_>, columns: &[&Column]
             push_nullable(output, feature, true);
         }
         push_field_rule(output, column);
-        output.push_str(&format!(
-            "    pub {}: {},\n",
-            column.rust_name,
-            insert_field_type(column)
-        ));
+        push_field(output, feature, column, &insert_field_type(column));
     }
     output.push_str("}\n");
     let binding = if feature.owner.is_some() {
@@ -312,8 +312,10 @@ fn render_update(output: &mut String, feature: &Feature<'_>, columns: &[&Column]
         ],
     );
     output.push_str(
-        "#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize, validator::Validate)]\n#[serde(default)]\n",
+        "#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize, validator::Validate)]\n",
     );
+    push_to_schema(output, feature.openapi);
+    output.push_str("#[serde(default)]\n");
     output.push_str(&format!("pub struct {dto} {{\n"));
     for column in columns {
         push_doc(
@@ -328,11 +330,7 @@ fn render_update(output: &mut String, feature: &Feature<'_>, columns: &[&Column]
             push_nullable(output, feature, false);
         }
         push_field_rule(output, column);
-        output.push_str(&format!(
-            "    pub {}: {},\n",
-            column.rust_name,
-            update_field_type(column)
-        ));
+        push_field(output, feature, column, &update_field_type(column));
     }
     output.push_str("}\n");
     let mut fields: Vec<String> = columns
@@ -359,15 +357,12 @@ fn render_response(output: &mut String, feature: &Feature<'_>) {
         )],
     );
     output.push_str("#[derive(Debug, Clone, PartialEq, serde::Serialize)]\n");
+    push_to_schema(output, feature.openapi);
     output.push_str(&format!("pub struct {response} {{\n"));
     let columns = feature.response_columns();
     for column in &columns {
         push_doc(output, 4, &[&field_doc(column)]);
-        output.push_str(&format!(
-            "    pub {}: {},\n",
-            column.rust_name,
-            column.field_type()
-        ));
+        push_field(output, feature, column, &column.field_type());
     }
     output.push_str("}\n");
     let fields: Vec<String> = columns
@@ -375,4 +370,11 @@ fn render_response(output: &mut String, feature: &Feature<'_>) {
         .map(|column| format!("{name}: row.{name}", name = column.rust_name))
         .collect();
     push_from(output, row, &response, "row", &fields);
+}
+
+/// A body field holding `column` as `field_type`, with the `value_type`
+/// the OpenAPI document needs when utoipa can't describe `field_type`.
+fn push_field(output: &mut String, feature: &Feature<'_>, column: &Column, field_type: &str) {
+    push_value_type(output, feature.openapi, value_type(column, field_type));
+    output.push_str(&format!("    pub {}: {field_type},\n", column.rust_name));
 }

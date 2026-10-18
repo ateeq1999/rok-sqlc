@@ -9,6 +9,7 @@ use super::handlers::{own_scope, push_answer};
 use super::layout::{Uses, push_call, push_signature};
 use super::relations::{Kind, Relation};
 use super::scope::{self, Extraction};
+use crate::generator::openapi::{push_into_params, push_to_schema};
 use crate::generator::{MAX_WIDTH, push_doc};
 
 /// The relation routes: `(path, method, handler)`.
@@ -365,6 +366,7 @@ pub fn render_dto(output: &mut String, uses: &mut Uses, feature: &Feature<'_>) {
         )],
     );
     output.push_str("#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]\n");
+    push_into_params(output, feature.openapi);
     output.push_str(&format!(
         "pub struct {} {{\n    /// The relationship to embed.\n    pub include: Option<{include}>,\n}}\n",
         feature.get_query()
@@ -375,7 +377,9 @@ pub fn render_dto(output: &mut String, uses: &mut Uses, feature: &Feature<'_>) {
         0,
         &["The to-one relationships `?include=` takes, in `snake_case`."],
     );
-    output.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]\n#[serde(rename_all = \"snake_case\")]\n");
+    output.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]\n");
+    push_to_schema(output, feature.openapi);
+    output.push_str("#[serde(rename_all = \"snake_case\")]\n");
     output.push_str(&format!("pub enum {include} {{\n"));
     for relation in &includes {
         push_doc(
@@ -403,6 +407,7 @@ pub fn render_dto(output: &mut String, uses: &mut Uses, feature: &Feature<'_>) {
             )],
         );
         output.push_str("#[derive(Debug, Clone, PartialEq, serde::Serialize)]\n");
+        push_to_schema(output, feature.openapi);
         output.push_str(&format!(
             "pub struct {} {{\n    /// The row.\n    #[serde(flatten)]\n    pub row: {},\n",
             relation.with_response(feature),

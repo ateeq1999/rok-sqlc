@@ -129,7 +129,9 @@ fn render_insert_input(
     columns: &[&Column],
     derives: DeriveOptions,
 ) {
-    let DeriveOptions { serde, validate } = derives;
+    let DeriveOptions {
+        serde, validate, ..
+    } = derives;
     output.push('\n');
     let has_defaults = columns.iter().any(|column| column.is_omittable_on_insert());
     let mut doc = vec!["Input for `create`: every column the caller may supply."];
@@ -204,7 +206,9 @@ fn render_update_patch(
     columns: &[&Column],
     derives: DeriveOptions,
 ) {
-    let DeriveOptions { serde, validate } = derives;
+    let DeriveOptions {
+        serde, validate, ..
+    } = derives;
     output.push('\n');
     let mut doc = vec!["Partial update for `update`: `None` leaves a column unchanged."];
     if serde {
@@ -293,6 +297,7 @@ mod tests {
             DeriveOptions {
                 serde: false,
                 validate: false,
+                openapi: false,
             },
         )
     }
@@ -310,6 +315,7 @@ mod tests {
             DeriveOptions {
                 serde: true,
                 validate: false,
+                openapi: false,
             },
         );
         for item in ["", "pub struct User {", "pub struct NewUser {"] {
@@ -339,6 +345,7 @@ mod tests {
             DeriveOptions {
                 serde: true,
                 validate: true,
+                openapi: false,
             },
         );
         let derive = "serde::Serialize, serde::Deserialize, validator::Validate)]\n";
@@ -359,6 +366,7 @@ mod tests {
                 DeriveOptions {
                     serde: true,
                     validate: false,
+                    openapi: false,
                 },
             )
             .contains("validat")
@@ -395,6 +403,7 @@ mod tests {
             DeriveOptions {
                 serde: true,
                 validate: true,
+                openapi: false,
             },
         );
         let (input, patch) = rendered
@@ -435,6 +444,7 @@ mod tests {
                 DeriveOptions {
                     serde: true,
                     validate: false,
+                    openapi: false,
                 },
             )
             .contains("validat")
@@ -480,6 +490,7 @@ mod tests {
             DeriveOptions {
                 serde: true,
                 validate: true,
+                openapi: false,
             },
         );
         let (input, patch) = rendered
@@ -545,6 +556,7 @@ fn price_in_range(value: &rust_decimal::Decimal) -> Result<(), validator::Valida
                 DeriveOptions {
                     serde: true,
                     validate: false,
+                    openapi: false,
                 },
             )
             .contains("validat")
@@ -575,6 +587,7 @@ fn price_in_range(value: &rust_decimal::Decimal) -> Result<(), validator::Valida
             DeriveOptions {
                 serde: true,
                 validate: true,
+                openapi: false,
             },
         );
         assert!(
@@ -612,6 +625,7 @@ impl validator::ValidateLength<u64> for UserId {
                 DeriveOptions {
                     serde: true,
                     validate: false,
+                    openapi: false,
                 },
             )
             .contains("validat")
@@ -624,6 +638,7 @@ impl validator::ValidateLength<u64> for UserId {
             DeriveOptions {
                 serde: true,
                 validate: true,
+                openapi: false,
             },
         );
         assert!(!rendered.contains("ValidateLength"), "{rendered}");
@@ -662,6 +677,7 @@ impl validator::ValidateLength<u64> for UserId {
             DeriveOptions {
                 serde: true,
                 validate: false,
+                openapi: false,
             },
         );
         let patch = rendered.split("pub struct UpdateUser {").nth(1).unwrap();

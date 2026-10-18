@@ -177,6 +177,9 @@ pub struct Feature<'a> {
     /// Whether the data layer's filter can fail (it has relationship
     /// fields), so pushing its `WHERE` clause takes a `?`.
     pub filter_fallible: bool,
+    /// Whether the types the feature exposes derive utoipa's `ToSchema` or
+    /// `IntoParams` (`[api] openapi`).
+    pub openapi: bool,
 }
 
 impl<'a> Feature<'a> {
@@ -263,6 +266,7 @@ impl<'a> Feature<'a> {
             lookups,
             relations: Vec::new(),
             filter_fallible: !filter_relationships(table, tables).is_empty(),
+            openapi: api.openapi,
         }))
     }
 

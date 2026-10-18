@@ -7,6 +7,7 @@ mod http;
 mod joins;
 pub mod keys;
 pub mod models;
+pub mod openapi;
 pub mod queries;
 pub mod read;
 pub mod relationships;
@@ -175,7 +176,10 @@ pub fn plan_files_with_queries(
     kept: &KeptResources,
 ) -> Result<Vec<(PathBuf, String)>, String> {
     let (conventions, output) = (&config.conventions, config.output.as_path());
-    let derives = DeriveOptions::of(&config.derive);
+    let derives = DeriveOptions::of(
+        &config.derive,
+        config.api.as_ref().is_some_and(|api| api.openapi),
+    );
     let serde = derives.serde;
     if serde {
         check_serde(tables, queries)?;
@@ -248,7 +252,7 @@ pub fn plan_files_with_queries(
         }
         QueriesModule::None | QueriesModule::Keep => {}
     }
-    let mut search = search::render_shared(serde);
+    let mut search = search::render_shared(derives);
     if config.api.is_some() {
         search.push_str(api::listing::CONTAINS_ANY);
     }
@@ -256,13 +260,13 @@ pub fn plan_files_with_queries(
     if serde {
         files.push((output.join("nullable.rs"), models::render_nullable()));
     }
-    files.extend(http::render(output, &config.extractors));
+    files.extend(http::render(output, &config.extractors, derives.openapi));
     if let Some(api) = &config.api {
         files.extend(api::shared::render(output, api));
         files.extend(api::render(&features, api));
     }
     if !enums.is_empty() {
-        files.push((output.join("types.rs"), types::render(&enums, serde)));
+        files.push((output.join("types.rs"), types::render(&enums, derives)));
     }
     let session = session::render(conventions);
     let db_mod = DbMod {

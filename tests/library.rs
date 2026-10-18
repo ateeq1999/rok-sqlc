@@ -463,6 +463,10 @@ fn the_api_configuration_is_checked_and_adds_the_pool_and_list_reads_to_the_data
     assert_eq!(api.db_path, "crate::db");
     assert_eq!(api.prefix, "/api/v1");
     assert!(!api.search_endpoint);
+    assert!(api.openapi);
+    // Without the OpenAPI document's derives, the data layer below is
+    // compared with the plain one.
+    api.openapi = false;
     assert_eq!(ApiAccess::default(), ApiAccess::User);
     api.access.insert("users".into(), ApiAccess::Admin);
     api.skip.insert("users".into(), vec![ApiEndpoint::GetOne]);

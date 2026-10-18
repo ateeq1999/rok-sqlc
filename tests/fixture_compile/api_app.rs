@@ -103,6 +103,10 @@ fn generate_api_app() -> Result<Vec<PathBuf>> {
         .insert("documents".into(), rok_sqlc::ApiAccess::Admin);
     api.owner.insert("documents".into(), "owner_id".to_owned());
     api.hidden.insert("documents".into(), names(&["secret"]));
+    // `gadgets` (`0004_gadgets.sql`): the column types the OpenAPI schemas
+    // describe, public.
+    api.access
+        .insert("gadgets".into(), rok_sqlc::ApiAccess::Public);
     config.api = Some(api);
     let report = rok_sqlc::generate(&config)?;
     ensure!(
