@@ -220,7 +220,7 @@ fn generated_rs_holds_the_api_doc() -> Result<()> {
     let generated = project.read("src/features/generated.rs")?;
     for expected in [
         "#[derive(utoipa::OpenApi)]\n#[openapi(\n    paths(\n",
-        "        crate::shared::health::live,\n        crate::shared::health::ready,\n",
+        "        crate::shared::health::liveness,\n        crate::shared::health::readiness,\n",
         "        accounts::handlers::list,\n",
         "        accounts::handlers::get_by_email,\n",
         "        accounts::handlers::list_notes,\n",
@@ -243,29 +243,36 @@ fn generated_rs_holds_the_api_doc() -> Result<()> {
 }
 
 /// The shared health routes are documented under `health`, outside the
-/// prefix.
+/// prefix, as the target document has them: `liveness` and `readiness`,
+/// the handlers' names.
 #[test]
 fn health_routes_are_documented() -> Result<()> {
     let project = Project::generated()?;
     let health = project.read("src/shared/health.rs")?;
     for expected in [
-        "#[utoipa::path(\n    get,\n    path = \"/health/live\",\n    tag = \"health\",\n    operation_id = \"live\",\n",
-        "    path = \"/health/ready\",\n",
-        "(status = 503, description = \"The database is not reachable.\", body = ErrorBody)",
+        "#[utoipa::path(\n    get,\n    path = \"/health/live\",\n    tag = \"health\",\n    operation_id = \"liveness\",\n",
+        "    responses((status = 200, description = \"The process is running\")),\n)]\npub async fn liveness() -> HttpResponse {",
+        "    path = \"/health/ready\",\n    tag = \"health\",\n    operation_id = \"readiness\",\n",
+        "(status = 200, description = \"The database is reachable\")",
+        "(status = 503, description = \"The database is not reachable\", body = ErrorBody)",
+        "pub async fn readiness(pool: web::Data<PgPool>) -> HttpResponse {",
+        ".route(\"/health/live\", web::get().to(liveness))",
     ] {
         assert!(health.contains(expected), "{expected}\n{health}");
     }
     Ok(())
 }
 
-/// The data layer's `mod.rs` names Swagger UI beside utoipa.
+/// The data layer's `mod.rs` names Swagger UI beside utoipa, vendored so
+/// its build needs no network.
 #[test]
 fn the_dependency_hints_name_swagger_ui() -> Result<()> {
     let project = Project::generated()?;
     let db_mod = project.read("src/db/mod.rs")?;
     assert!(
-        db_mod
-            .contains("//   utoipa-swagger-ui = { version = \"9\", features = [\"actix-web\"] }\n"),
+        db_mod.contains(
+            "//   utoipa-swagger-ui = { version = \"9\", features = [\"actix-web\", \"vendored\"] }\n"
+        ),
         "{db_mod}"
     );
     Ok(())

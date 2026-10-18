@@ -388,8 +388,8 @@ fn app_serves_the_document_and_swagger_ui() {
     ] {
         assert!(text.contains(wiring), "missing {wiring}\n{text}");
     }
-    assert!(
-        template("rok-sqlc.toml")
-            .contains("# utoipa-swagger-ui = { version = \"9\", features = [\"actix-web\"] }\n")
-    );
+    // Vendored: its build script would otherwise download Swagger UI.
+    assert!(template("rok-sqlc.toml").contains(
+        "# utoipa-swagger-ui = { version = \"9\", features = [\"actix-web\", \"vendored\"] }\n"
+    ));
 }

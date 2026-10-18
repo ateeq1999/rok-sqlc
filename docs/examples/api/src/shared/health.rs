@@ -21,8 +21,8 @@ struct Status {
 /// Mounts `GET /health/live` and `GET /health/ready`. `/health/ready` reads
 /// the pool from the `web::Data<PgPool>` app data.
 pub fn routes(cfg: &mut web::ServiceConfig) {
-    cfg.route("/health/live", web::get().to(live))
-        .route("/health/ready", web::get().to(ready));
+    cfg.route("/health/live", web::get().to(liveness))
+        .route("/health/ready", web::get().to(readiness));
 }
 
 /// `200 {"status": "ok"}` while the server answers at all.
@@ -30,10 +30,10 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
     get,
     path = "/health/live",
     tag = "health",
-    operation_id = "live",
-    responses((status = 200, description = "The server answers.")),
+    operation_id = "liveness",
+    responses((status = 200, description = "The process is running")),
 )]
-pub async fn live() -> HttpResponse {
+pub async fn liveness() -> HttpResponse {
     HttpResponse::Ok().json(Status { status: "ok" })
 }
 
@@ -43,13 +43,13 @@ pub async fn live() -> HttpResponse {
     get,
     path = "/health/ready",
     tag = "health",
-    operation_id = "ready",
+    operation_id = "readiness",
     responses(
-        (status = 200, description = "The database answers."),
-        (status = 503, description = "The database is not reachable.", body = ErrorBody),
+        (status = 200, description = "The database is reachable"),
+        (status = 503, description = "The database is not reachable", body = ErrorBody),
     ),
 )]
-pub async fn ready(pool: web::Data<PgPool>) -> HttpResponse {
+pub async fn readiness(pool: web::Data<PgPool>) -> HttpResponse {
     match check_health(&pool).await {
         Ok(()) => HttpResponse::Ok().json(Status { status: "ready" }),
         Err(_) => HttpResponse::ServiceUnavailable().json(ErrorBody::new(

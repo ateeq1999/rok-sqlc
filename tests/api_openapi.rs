@@ -370,3 +370,80 @@ fn without_openapi_nothing_mentions_utoipa() -> Result<()> {
     }
     Ok(())
 }
+
+/// The milestone 1 record: `tests/openapi_off/milestone-1.txt`.
+fn milestone_1_record() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/openapi_off/milestone-1.txt")
+}
+
+/// A 64-bit FNV-1a digest of `text`: enough to tell two versions of a
+/// generated file apart, with no dependency.
+fn digest(text: &str) -> u64 {
+    text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
+/// `[api] openapi = false` gives exactly milestone 1's output:
+/// `tests/api-app`'s migrations and API settings
+/// (`tests/openapi_off/rok-sqlc.toml`) generate the files
+/// `tests/openapi_off/milestone-1.txt` records, one `<digest> <path>` line
+/// each.
+///
+/// The record was made with milestone 1's binary (commit a685022) and
+/// differs from it only where a later change was meant to reach output
+/// without OpenAPI too: `db/pool.rs`'s doc comments (the 0.4 CI fixes) and
+/// health's handlers, renamed `liveness` and `readiness` (milestone 2). To
+/// rewrite it after another such change, run
+/// `ROK_SQLC_UPDATE_SNAPSHOTS=1 cargo test --test api_openapi`, and diff
+/// the output against that commit's binary to check nothing else moved.
+#[test]
+fn without_openapi_the_output_is_milestone_1s() -> Result<()> {
+    let dir = TempDir::new()?;
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    fs::copy(
+        source.join("openapi_off/rok-sqlc.toml"),
+        dir.path().join("rok-sqlc.toml"),
+    )?;
+    fs::create_dir(dir.path().join("migrations"))?;
+    for entry in fs::read_dir(source.join("api-app/migrations"))? {
+        let path = entry?.path();
+        let name = path.file_name().expect("a file name");
+        fs::copy(&path, dir.path().join("migrations").join(name))?;
+    }
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_rok-sqlc"))
+        .arg("g")
+        .current_dir(dir.path())
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut record = String::new();
+    for (path, text) in read_tree(&dir.path().join("src"))? {
+        let path = path.to_string_lossy().replace('\\', "/");
+        let text = text.replace("\r\n", "\n");
+        record.push_str(&format!("{:016x} {path}\n", digest(&text)));
+    }
+    if std::env::var_os("ROK_SQLC_UPDATE_SNAPSHOTS").is_some() {
+        fs::write(milestone_1_record(), &record)?;
+        return Ok(());
+    }
+    let expected = fs::read_to_string(milestone_1_record())?.replace("\r\n", "\n");
+    let differing: Vec<&str> = record
+        .lines()
+        .filter(|line| !expected.lines().any(|expected| expected == *line))
+        .chain(
+            expected
+                .lines()
+                .filter(|line| !record.lines().any(|actual| actual == *line)),
+        )
+        .collect();
+    assert!(
+        differing.is_empty(),
+        "without OpenAPI, the output is no longer milestone 1's:\n{}",
+        differing.join("\n")
+    );
+    Ok(())
+}

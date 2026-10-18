@@ -163,18 +163,18 @@ struct Status {
 /// Mounts `GET /health/live` and `GET /health/ready`. `/health/ready` reads
 /// the pool from the `web::Data<PgPool>` app data.
 pub fn routes(cfg: &mut web::ServiceConfig) {
-    cfg.route("/health/live", web::get().to(live))
-        .route("/health/ready", web::get().to(ready));
+    cfg.route("/health/live", web::get().to(liveness))
+        .route("/health/ready", web::get().to(readiness));
 }
 
 /// `200 {"status": "ok"}` while the server answers at all.
-pub async fn live() -> HttpResponse {
+pub async fn liveness() -> HttpResponse {
     HttpResponse::Ok().json(Status { status: "ok" })
 }
 
 /// `200 {"status": "ready"}` when the database answers, otherwise `503`
 /// with [`SERVICE_UNAVAILABLE`].
-pub async fn ready(pool: web::Data<PgPool>) -> HttpResponse {
+pub async fn readiness(pool: web::Data<PgPool>) -> HttpResponse {
     match check_health(&pool).await {
         Ok(()) => HttpResponse::Ok().json(Status { status: "ready" }),
         Err(_) => HttpResponse::ServiceUnavailable().json(ErrorBody::new(

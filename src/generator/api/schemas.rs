@@ -13,13 +13,13 @@ pub fn describe(name: &str, template: &str) -> String {
     match name {
         "health.rs" => template
             .replacen(
-                "pub async fn live()",
-                &format!("{LIVE}pub async fn live()"),
+                "pub async fn liveness()",
+                &format!("{LIVENESS}pub async fn liveness()"),
                 1,
             )
             .replacen(
-                "pub async fn ready(",
-                &format!("{READY}pub async fn ready("),
+                "pub async fn readiness(",
+                &format!("{READINESS}pub async fn readiness("),
                 1,
             ),
         "pagination.rs" => describe_pagination(template),
@@ -81,25 +81,26 @@ fn describe_pagination(template: &str) -> String {
     )
 }
 
-/// The path of `GET /health/live`.
-const LIVE: &str = r#"#[utoipa::path(
+/// The path of `GET /health/live`, as the target document has it.
+const LIVENESS: &str = r#"#[utoipa::path(
     get,
     path = "/health/live",
     tag = "health",
-    operation_id = "live",
-    responses((status = 200, description = "The server answers.")),
+    operation_id = "liveness",
+    responses((status = 200, description = "The process is running")),
 )]
 "#;
 
-/// The path of `GET /health/ready`.
-const READY: &str = r#"#[utoipa::path(
+/// The path of `GET /health/ready`, as the target document has it, with
+/// the `503`'s body (the target document describes no error bodies).
+const READINESS: &str = r#"#[utoipa::path(
     get,
     path = "/health/ready",
     tag = "health",
-    operation_id = "ready",
+    operation_id = "readiness",
     responses(
-        (status = 200, description = "The database answers."),
-        (status = 503, description = "The database is not reachable.", body = ErrorBody),
+        (status = 200, description = "The database is reachable"),
+        (status = 503, description = "The database is not reachable", body = ErrorBody),
     ),
 )]
 "#;

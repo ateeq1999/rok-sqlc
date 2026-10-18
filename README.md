@@ -1000,7 +1000,10 @@ which (`service.rs`) are yours. Generated files there and in `shared/` are
 removed once stale. With `openapi` on (the default), every type a feature
 exposes derives utoipa's `ToSchema` (or `IntoParams` for a query string),
 as do the data layer's typed ids, enums, sort keys and search conditions
-inside them; the data layer's `mod.rs` names the `utoipa` dependency.
+inside them; each handler carries `#[utoipa::path]`, `generated.rs` holds
+`GeneratedApiDoc`, and the data layer's `mod.rs` names the `utoipa` and
+`utoipa-swagger-ui` dependencies. With `openapi = false` the output is
+exactly as without the document: nothing mentions utoipa.
 
 A feature's handlers take the caller as `AuthUser` (`user`) or `AdminUser`
 (`admin`), from the scaffolded `shared/auth.rs`, so no valid token is a
@@ -1083,7 +1086,9 @@ follows one architecture, described in the guide
 - [Architecture guidelines](docs/guide/architecture.md): the layout, the
   rules `check-arch` enforces, services, transactions and ports;
 - [Generated and scaffolded files](docs/guide/layout.md): which files are
-  rok-sqlc's, which are yours, and what regeneration does to each.
+  rok-sqlc's, which are yours, and what regeneration does to each;
+- [The OpenAPI document](docs/guide/openapi.md): what is generated, your
+  hand-written paths, and serving it.
 
 The workflow is three commands: `rok-sqlc init` scaffolds the application
 skeleton once, `rok-sqlc g` generates `src/db/`, `src/shared/` and
@@ -1126,6 +1131,30 @@ one wire standard, `{"error": {"code", "message", "details"?}}`, with the
 snake_case codes `bad_request`, `unauthorized`, `forbidden`, `not_found`,
 `conflict`, `payload_too_large`, `validation_failed`,
 `precondition_required`, `version_conflict` and `internal_error`.
+
+The API documents itself. Every generated handler carries utoipa's
+`#[utoipa::path]` (its tag is the route base, its operation id the
+handler's name, its responses exactly the statuses it answers, each error
+with `ErrorBody`, and `bearer_auth` when it needs a caller), every body
+derives `ToSchema`, and `src/features/generated.rs` gathers them in
+`GeneratedApiDoc`. The scaffolded `app.rs` serves the document at
+`/api-docs/openapi.json` and Swagger UI at `/docs/`. Your hand-written
+paths and schemas go in the scaffolded `src/openapi.rs`, whose `ApiDoc`
+the generated document merges into:
+
+<!-- source: docs/examples/api/src/openapi.rs -->
+```rust
+#[derive(OpenApi)]
+#[openapi(paths(), components(schemas()))]
+pub struct ApiDoc;
+```
+
+Name a handler annotated with `#[utoipa::path]` in `paths(...)`, and a
+schema no path reaches in `components(schemas(...))`. A project scaffolded
+before the document adds `src/openapi.rs`, the routes in `app.rs` and the
+`utoipa-swagger-ui` dependency by hand (the
+[OpenAPI guide](docs/guide/openapi.md) lists the steps). `[api] openapi =
+false` turns the document off, leaving output with no utoipa at all.
 
 The handlers call a generated service trait with a working default per
 endpoint. A business rule overrides one method in the feature's
@@ -1171,7 +1200,8 @@ nothing; `rok-sqlc g` does that once there are migrations.
 | `migrations/` | empty: your migrations go here |
 | `src/lib.rs` | declares every module `pub`: the application is a library, so generated code it does not use yet never warns |
 | `src/main.rs` | starts the server through the library (named after `Cargo.toml`'s package), nothing else |
-| `src/app.rs` | the only wiring file: the pool, the generated `register_services` and `configure_all`, and health |
+| `src/app.rs` | the only wiring file: the pool, the generated `register_services` and `configure_all`, health, and the OpenAPI document at `/api-docs/openapi.json` with Swagger UI at `/docs/` |
+| `src/openapi.rs` | `ApiDoc`, for your hand-written paths and schemas, and `document()`, which merges the generated `GeneratedApiDoc` into it |
 | `src/config.rs` | `Config::from_env` (`DATABASE_URL`, `BIND_ADDR`, `JWT_SECRET`, pool settings), the only environment reader |
 | `src/error.rs` | `AppError`, answered with the wire standard's error body, and the `sqlx` error mapping |
 | `src/shared/mod.rs`, `src/shared/auth.rs` | the shared tools, and the `AuthUser` and `AdminUser` extractors (HS256 JWT bearer tokens) |

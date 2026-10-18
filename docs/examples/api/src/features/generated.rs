@@ -35,8 +35,8 @@ pub fn configure_all(cfg: &mut web::ServiceConfig) {
 #[derive(utoipa::OpenApi)]
 #[openapi(
     paths(
-        crate::shared::health::live,
-        crate::shared::health::ready,
+        crate::shared::health::liveness,
+        crate::shared::health::readiness,
         projects::handlers::list,
         projects::handlers::create,
         projects::handlers::get_one,

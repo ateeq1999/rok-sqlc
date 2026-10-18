@@ -16,8 +16,8 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 /// `GeneratedApiDoc` and its `BearerAuth` addon, over `features`.
 pub fn render(features: &[Feature<'_>]) -> String {
     let mut paths = vec![
-        "crate::shared::health::live".to_owned(),
-        "crate::shared::health::ready".to_owned(),
+        "crate::shared::health::liveness".to_owned(),
+        "crate::shared::health::readiness".to_owned(),
     ];
     // The sort keys and `?include=` names are `$ref`s from the params,
     // which utoipa doesn't follow, and an embedding's response is only

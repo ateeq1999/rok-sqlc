@@ -13,7 +13,7 @@
 //   actix-web = "4"
 //   tracing = "0.1"
 //   utoipa = { version = "5", features = ["chrono", "uuid"] }
-//   utoipa-swagger-ui = { version = "9", features = ["actix-web"] }
+//   utoipa-swagger-ui = { version = "9", features = ["actix-web", "vendored"] }
 
 pub mod http;
 pub mod nullable;

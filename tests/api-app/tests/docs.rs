@@ -5,47 +5,11 @@
 
 mod common;
 
-use actix_web::http::{Method, StatusCode, header};
-use actix_web::{App, test as actix_test, web};
-use common::{Database, call_as, token};
-use rok_sqlc_api_app::app::configure;
-use rok_sqlc_api_app::shared::auth::{JwtKeys, Role};
+use actix_web::http::{Method, StatusCode};
+use common::{Database, call_as, document, fetch, token};
+use rok_sqlc_api_app::shared::auth::Role;
 use serde_json::{Value, json};
-use sqlx::PgPool;
 use uuid::Uuid;
-
-/// `GET uri` against the whole application, over a pool that never
-/// connects: the document and Swagger UI need no database. Returns the
-/// status, the `Content-Type` and `Location` headers, and the body.
-async fn fetch(uri: &str) -> (StatusCode, String, String, Vec<u8>) {
-    let pool = PgPool::connect_lazy("postgres://localhost/unused").expect("a well-formed URL");
-    let keys = web::Data::new(JwtKeys::new("unused"));
-    let app = App::new().configure(move |cfg| configure(cfg, &pool, &keys));
-    let app = actix_test::init_service(app).await;
-    let request = actix_test::TestRequest::get().uri(uri).to_request();
-    let response = actix_test::call_service(&app, request).await;
-    let status = response.status();
-    let header = |name| {
-        response
-            .headers()
-            .get(name)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default()
-            .to_owned()
-    };
-    let content_type = header(header::CONTENT_TYPE);
-    let location = header(header::LOCATION);
-    let body = actix_test::read_body(response).await.to_vec();
-    (status, content_type, location, body)
-}
-
-/// The served document.
-async fn document() -> Value {
-    let (status, content_type, _, body) = fetch("/api-docs/openapi.json").await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(content_type.starts_with("application/json"), "{content_type}");
-    serde_json::from_slice(&body).expect("a JSON document")
-}
 
 /// The documented statuses of `method path`, sorted.
 fn statuses(operation: &Value) -> Vec<u16> {
@@ -102,7 +66,10 @@ async fn the_document_is_served_with_the_bearer_scheme() {
         .iter()
         .filter_map(|tag| tag["name"].as_str())
         .collect();
-    assert!(tags.contains(&"health") && tags.contains(&"audit-log"), "{tags:?}");
+    assert!(
+        tags.contains(&"health") && tags.contains(&"audit-log"),
+        "{tags:?}"
+    );
 }
 
 #[actix_web::test]
