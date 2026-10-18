@@ -348,7 +348,22 @@ fn generate_api_app() -> Result<Vec<PathBuf>> {
     config.derive = vec![rok_sqlc::Derive::Serde, rok_sqlc::Derive::Validate];
     config.extractors = vec![rok_sqlc::Extractor::ActixWeb];
     config.conventions.primary_key_ids = Some(rok_sqlc::IdGeneration::UuidV7);
+    // Ticket 08's conventions: only `documents` has these columns.
+    config.conventions.tenant_column = Some("tenant_id".into());
+    config.conventions.version_column = Some("revision".into());
+    config.conventions.soft_delete_column = Some("deleted_at".into());
+    // A renamed relationship keeps its route under the new name:
+    // `/notes/{id}/memberships`.
+    config.relationships.insert(
+        "notes".into(),
+        [(
+            "members".to_owned(),
+            rok_sqlc::RelationshipChange::Rename("memberships".into()),
+        )]
+        .into(),
+    );
     let mut api = rok_sqlc::ApiConfig::new(api_app_dir().join("src/features"));
+    api.search_endpoint = true;
     let names = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
     api.search.insert("notes".into(), names(&["title", "body"]));
     api.search.insert("labels".into(), names(&["name"]));
@@ -368,7 +383,7 @@ fn generate_api_app() -> Result<Vec<PathBuf>> {
     api.hidden
         .insert("accounts".into(), names(&["password_hash"]));
     api.owner.insert("tasks".into(), "owner_id".to_owned());
-    config.api = Some(api);
+    config.api = Some(api.clone());
 
     // The regeneration scenario: the features are generated from the first
     // migration, where `drafts` has no key, then from both, where it has
@@ -379,6 +394,13 @@ fn generate_api_app() -> Result<Vec<PathBuf>> {
     config.schema = vec![api_app_dir().join("migrations/0001_notes.sql")];
     let first = rok_sqlc::generate(&config)?;
     config.schema = vec![api_app_dir().join("migrations")];
+    // `documents` (`0003_extended.sql`): admin only, owned and hiding
+    // `secret`, so owner scoping works under `AdminUser` too.
+    api.access
+        .insert("documents".into(), rok_sqlc::ApiAccess::Admin);
+    api.owner.insert("documents".into(), "owner_id".to_owned());
+    api.hidden.insert("documents".into(), names(&["secret"]));
+    config.api = Some(api);
     let report = rok_sqlc::generate(&config)?;
     ensure!(
         std::fs::read(&service)? == checked_in,

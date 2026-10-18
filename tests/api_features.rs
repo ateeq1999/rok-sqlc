@@ -4,7 +4,7 @@
 //! behaviour is tested by compiling and running them in `tests/api-app`.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Result;
 use rok_sqlc::{ApiConfig, ApiEndpoint, Config, Derive, Extractor};
@@ -66,6 +66,43 @@ impl Project {
 
 fn api(config: &mut Config) -> &mut ApiConfig {
     config.api.as_mut().expect("the API is configured")
+}
+
+/// A schema with ticket 08's shapes: `users` soft-deletes and has unique
+/// columns, one hidden; `posts` is versioned and tenant-scoped, belongs to
+/// its author and has many `tags`, through `post_tags`.
+const EXTENDED: &str = "CREATE TABLE users (
+    id UUID PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    token TEXT UNIQUE,
+    deleted_at TIMESTAMPTZ
+);
+CREATE TABLE posts (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    author_id UUID NOT NULL REFERENCES users (id),
+    title TEXT NOT NULL,
+    revision BIGINT NOT NULL DEFAULT 1
+);
+CREATE TABLE tags (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE post_tags (
+    post_id BIGINT NOT NULL REFERENCES posts (id),
+    tag_id BIGINT NOT NULL REFERENCES tags (id),
+    PRIMARY KEY (post_id, tag_id)
+);
+";
+
+/// The configuration of [`EXTENDED`]: its conventions, and `users`
+/// public, hiding `token`.
+fn extended(project: &Project) -> Config {
+    let mut config = project.config();
+    config.conventions.tenant_column = Some("tenant_id".into());
+    config.conventions.version_column = Some("revision".into());
+    config.conventions.soft_delete_column = Some("deleted_at".into());
+    api(&mut config)
+        .hidden
+        .insert("users".into(), vec!["token".into()]);
+    config
 }
 
 #[test]
@@ -148,14 +185,17 @@ fn a_table_without_a_key_serves_list_and_create_and_skips_drop_methods() -> Resu
 
     let routes = project.read("src/features/posts/routes.rs")?;
     assert!(!routes.contains("handlers::remove"), "{routes}");
-    assert!(!routes.contains("handlers::list"), "{routes}");
+    assert!(!routes.contains("handlers::list)"), "{routes}");
     assert!(routes.contains("handlers::update"), "{routes}");
     let service = project.read("src/features/posts/service_api.rs")?;
-    for gone in ["fn remove", "fn remove_in", "fn list"] {
+    for gone in ["fn remove(", "fn remove_in(", "fn list("] {
         assert!(!service.contains(gone), "{service}");
     }
     assert!(service.contains("async fn update_in("), "{service}");
-    assert!(!project.path("src/db/posts/listing.rs").exists());
+    // No list reads: its listing holds only its many-to-many writes.
+    let listing = project.read("src/db/posts/listing.rs")?;
+    assert!(!listing.contains("list_matching"), "{listing}");
+    assert!(listing.contains("pub async fn attach_tags"), "{listing}");
     Ok(())
 }
 
@@ -213,20 +253,89 @@ fn stale_features_and_shared_tools_are_removed_but_never_the_users_files() -> Re
     Ok(())
 }
 
+/// Ticket 08's routes follow the schema: a `by-` route per unique column
+/// that isn't hidden, `restore` on a soft-delete table, `/search` only
+/// when `api.search_endpoint` is set, relationship routes to tables with a
+/// feature, and `If-Match` and the `Tenant` on a versioned tenant table.
 #[test]
-fn tables_the_api_cant_serve_yet_are_refused() -> Result<()> {
-    let project =
-        Project::new("CREATE TABLE notes (id UUID PRIMARY KEY, tenant_id UUID NOT NULL);")?;
-    let mut config = project.config();
-    config.conventions.tenant_column = Some("tenant_id".into());
-    let error = rok_sqlc::generate(&config).unwrap_err().to_string();
-    assert!(
-        error.contains("`notes` has a tenant column, which API features don't support yet; add it to `api.exclude`"),
-        "{error}"
-    );
-    api(&mut config).exclude.push("notes".into());
+fn extended_routes_follow_the_schema() -> Result<()> {
+    let project = Project::new(EXTENDED)?;
+    let mut config = extended(&project);
     rok_sqlc::generate(&config)?;
-    assert!(!Path::new(&project.path("src/features/notes")).exists());
+    let routes = project.read("src/features/users/routes.rs")?;
+    for route in [
+        "\"/by-email/{value}\", web::get().to(handlers::get_by_email)",
+        "\"/{id}/restore\", web::post().to(handlers::restore)",
+        "\"/{id}/posts\", web::get().to(handlers::list_posts)",
+    ] {
+        assert!(routes.contains(route), "{routes}");
+    }
+    assert!(!routes.contains("by-token"), "{routes}");
+    assert!(!routes.contains("/search"), "{routes}");
+    let routes = project.read("src/features/posts/routes.rs")?;
+    assert!(
+        routes.contains("\"/{id}/tags\", web::put().to(handlers::sync_tags)"),
+        "{routes}"
+    );
+    let routes = project.read("src/features/tags/routes.rs")?;
+    // Only the join table's first key column's side syncs.
+    assert!(!routes.contains("sync_posts"), "{routes}");
+    assert!(routes.contains("handlers::attach_posts"), "{routes}");
+    let handlers = project.read("src/features/posts/handlers.rs")?;
+    assert!(handlers.contains("version: IfMatch<i64>"), "{handlers}");
+    assert!(
+        handlers.contains("tenant: Tenant<uuid::Uuid>"),
+        "{handlers}"
+    );
+    assert!(
+        handlers.contains("query: web::Query<GetPostQuery>"),
+        "{handlers}"
+    );
+
+    api(&mut config).search_endpoint = true;
+    rok_sqlc::generate(&config)?;
+    let routes = project.read("src/features/users/routes.rs")?;
+    assert!(
+        routes.contains("\"/search\", web::post().to(handlers::search)"),
+        "{routes}"
+    );
+    let dto = project.read("src/features/users/dto.rs")?;
+    assert!(
+        dto.contains("pub token: Option<serde_json::Value>"),
+        "{dto}"
+    );
+    Ok(())
+}
+
+#[test]
+fn skip_and_relationship_opt_outs_drop_the_extended_routes() -> Result<()> {
+    let project = Project::new(EXTENDED)?;
+    let mut config = extended(&project);
+    api(&mut config).search_endpoint = true;
+    api(&mut config).skip.insert(
+        "users".into(),
+        vec![
+            ApiEndpoint::Lookups,
+            ApiEndpoint::Restore,
+            ApiEndpoint::Search,
+            ApiEndpoint::Relationships,
+        ],
+    );
+    config.relationships.insert(
+        "post_tags".into(),
+        [("tag".to_owned(), rok_sqlc::RelationshipChange::OptOut)].into(),
+    );
+    rok_sqlc::generate(&config)?;
+    let routes = project.read("src/features/users/routes.rs")?;
+    for gone in ["by-email", "restore", "/search", "posts"] {
+        assert!(!routes.contains(gone), "{gone}: {routes}");
+    }
+    // `posts` still reaches its author.
+    let dto = project.read("src/features/posts/dto.rs")?;
+    assert!(dto.contains("pub enum PostInclude"), "{dto}");
+    // Without the pair, `post_tags` is no join table: no many-to-many.
+    let routes = project.read("src/features/posts/routes.rs")?;
+    assert!(!routes.contains("\"/{id}/tags"), "{routes}");
     Ok(())
 }
 
@@ -243,9 +352,51 @@ fn features_with_long_names_are_rustfmt_clean() -> Result<()> {
     PRIMARY KEY (organization_identifier, invited_email_address_of_the_person)
 );
 CREATE TABLE x (id BIGSERIAL PRIMARY KEY, n INT NOT NULL);
+CREATE TABLE quarterly_financial_statement_documents (
+    statement_document_identifier UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    responsible_accountant_owner_id UUID NOT NULL,
+    organization_identifier TEXT,
+    invited_email_address_of_the_person TEXT,
+    externally_visible_reference_code TEXT NOT NULL,
+    revision BIGINT NOT NULL DEFAULT 1,
+    deleted_at TIMESTAMPTZ,
+    FOREIGN KEY (organization_identifier, invited_email_address_of_the_person)
+        REFERENCES organization_membership_invitations (organization_identifier, invited_email_address_of_the_person),
+    UNIQUE (tenant_id, externally_visible_reference_code)
+);
+CREATE TABLE financial_statement_review_categories (
+    review_category_identifier BIGSERIAL PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    descriptive_category_label TEXT NOT NULL UNIQUE
+);
+CREATE TABLE statement_document_review_category_pairings (
+    statement_document_identifier UUID NOT NULL REFERENCES quarterly_financial_statement_documents (statement_document_identifier),
+    review_category_identifier BIGINT NOT NULL REFERENCES financial_statement_review_categories (review_category_identifier),
+    tenant_id UUID NOT NULL,
+    PRIMARY KEY (tenant_id, statement_document_identifier, review_category_identifier)
+);
 ",
     )?;
     let mut config = project.config();
+    // Ticket 08's routes, with long names: lookups, search, soft delete,
+    // versions, tenants, owners, and relationships of every kind.
+    config.conventions.tenant_column = Some("tenant_id".into());
+    config.conventions.version_column = Some("revision".into());
+    config.conventions.soft_delete_column = Some("deleted_at".into());
+    api(&mut config).search_endpoint = true;
+    api(&mut config).access.insert(
+        "quarterly_financial_statement_documents".into(),
+        rok_sqlc::ApiAccess::Admin,
+    );
+    api(&mut config).owner.insert(
+        "quarterly_financial_statement_documents".into(),
+        "responsible_accountant_owner_id".into(),
+    );
+    api(&mut config).hidden.insert(
+        "financial_statement_review_categories".into(),
+        vec!["descriptive_category_label".into()],
+    );
     api(&mut config).search.insert(
         "organization_membership_invitations".into(),
         vec![

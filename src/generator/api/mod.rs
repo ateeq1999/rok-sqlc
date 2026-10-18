@@ -1,10 +1,11 @@
 //! Everything `api.output` generates (ADR 0016): the infrastructure beside
 //! the features ([`shared`]), each table's API feature under
 //! `api.output/<module>/`, the root `generated.rs` and `README.md`, and the
-//! data layer's `listing.rs` that a feature's list reads.
+//! data layer's `listing.rs` that a feature's reads and relationship writes
+//! go through.
 //!
-//! [`Feature`] is the model the renderers share: its endpoints decide the
-//! routes, handlers, and service methods.
+//! [`Feature`] is the model the renderers share: its endpoints, lookups and
+//! relations decide the routes, handlers, and service methods.
 
 mod dto;
 mod feature;
@@ -12,7 +13,12 @@ mod files;
 mod handlers;
 mod layout;
 pub mod listing;
+mod relation_routes;
+mod relation_service;
+mod relations;
 mod root;
+mod scope;
+mod search;
 mod service;
 pub mod shared;
 
@@ -24,18 +30,31 @@ use crate::ApiConfig;
 use crate::schema::Table;
 
 /// The API features of `tables` (the run's tables, kept ones included), in
-/// table order.
+/// table order, each with its relations to the others.
 pub fn features<'a>(tables: &'a [Table], api: &'a ApiConfig) -> Result<Vec<Feature<'a>>, String> {
     let mut features = Vec::new();
     for table in tables {
-        features.extend(Feature::of(table, api)?);
+        features.extend(Feature::of(table, api, tables)?);
+    }
+    let relations: Vec<_> = features
+        .iter()
+        .map(|feature| relations::relations(feature, &features, tables, api))
+        .collect();
+    for (feature, relations) in features.iter_mut().zip(relations) {
+        feature.relations = relations;
     }
     Ok(features)
 }
 
 /// Whether `feature` needs the data layer's `listing.rs`.
 pub fn has_listing(feature: &Feature<'_>) -> bool {
-    feature.serves(Endpoint::List) || feature.reads_owned_rows()
+    feature.serves(Endpoint::List)
+        || feature.serves(Endpoint::Search)
+        || feature.reads_owned_rows()
+        || feature
+            .relations
+            .iter()
+            .any(|relation| relation.writes().is_some())
 }
 
 /// The files under `api.output`: each feature's, then `generated.rs` and

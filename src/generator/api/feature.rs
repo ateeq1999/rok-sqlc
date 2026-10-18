@@ -1,14 +1,17 @@
 //! The model every API feature renderer reads (ADR 0016): one [`Feature`]
 //! per table with an API, holding its names, its route base, its key, and
-//! the [`Endpoint`]s it serves. The renderers iterate the endpoints, so an
-//! endpoint added here (a lookup, a restore) reaches the routes, handlers,
-//! and service trait in one place.
+//! the [`Endpoint`]s it serves, its unique [`Lookup`]s and its
+//! [`Relation`]s. The renderers iterate them, so an endpoint added here
+//! reaches the routes, handlers, and service trait in one place.
 
 use std::collections::BTreeMap;
 
 use heck::{ToKebabCase, ToUpperCamelCase};
 
+use super::relations::Relation;
 use crate::generator::relationships::join_pair;
+use crate::generator::search::{SearchApi, filter_relationships};
+use crate::generator::write::{has_versioned_update, version_column};
 use crate::schema::{BaseType, Column, FilterKind, Table};
 use crate::{ApiAccess, ApiConfig, ApiEndpoint};
 
@@ -17,34 +20,43 @@ use crate::{ApiAccess, ApiConfig, ApiEndpoint};
 pub enum Endpoint {
     /// `GET /`: a page of rows.
     List,
+    /// `POST /search`: a page of rows matching per-field filters.
+    Search,
     /// `POST /`: create a row.
     Create,
     /// `GET /{key}`: one row.
     GetOne,
     /// `PATCH /{key}`: update a row.
     Update,
-    /// `DELETE /{key}`: delete a row.
+    /// `DELETE /{key}`: delete a row (soft-delete it, on a soft-delete
+    /// table, which also takes `?permanent=true`).
     Remove,
+    /// `POST /{key}/restore`: undo a soft delete.
+    Restore,
 }
 
 impl Endpoint {
     /// Every endpoint, in order.
-    const ALL: [Endpoint; 5] = [
+    const ALL: [Endpoint; 7] = [
         Endpoint::List,
+        Endpoint::Search,
         Endpoint::Create,
         Endpoint::GetOne,
         Endpoint::Update,
         Endpoint::Remove,
+        Endpoint::Restore,
     ];
 
     /// The handler's name, which is also the service method's.
     pub fn name(self) -> &'static str {
         match self {
             Endpoint::List => "list",
+            Endpoint::Search => "search",
             Endpoint::Create => "create",
             Endpoint::GetOne => "get_one",
             Endpoint::Update => "update",
             Endpoint::Remove => "remove",
+            Endpoint::Restore => "restore",
         }
     }
 
@@ -52,10 +64,12 @@ impl Endpoint {
     fn config(self) -> ApiEndpoint {
         match self {
             Endpoint::List => ApiEndpoint::List,
+            Endpoint::Search => ApiEndpoint::Search,
             Endpoint::Create => ApiEndpoint::Create,
             Endpoint::GetOne => ApiEndpoint::GetOne,
             Endpoint::Update => ApiEndpoint::Update,
             Endpoint::Remove => ApiEndpoint::Remove,
+            Endpoint::Restore => ApiEndpoint::Restore,
         }
     }
 
@@ -63,7 +77,7 @@ impl Endpoint {
     pub fn method(self) -> &'static str {
         match self {
             Endpoint::List | Endpoint::GetOne => "get",
-            Endpoint::Create => "post",
+            Endpoint::Create | Endpoint::Search | Endpoint::Restore => "post",
             Endpoint::Update => "patch",
             Endpoint::Remove => "delete",
         }
@@ -76,13 +90,37 @@ impl Endpoint {
 
     /// Whether the endpoint addresses one row by its key.
     pub fn takes_key(self) -> bool {
-        matches!(self, Endpoint::GetOne | Endpoint::Update | Endpoint::Remove)
+        matches!(
+            self,
+            Endpoint::GetOne | Endpoint::Update | Endpoint::Remove | Endpoint::Restore
+        )
     }
 
-    /// Whether the endpoint writes, so the service has an `_in` method for
-    /// it running on the caller's connection.
-    pub fn writes(self) -> bool {
-        matches!(self, Endpoint::Create | Endpoint::Update | Endpoint::Remove)
+    /// The path under the feature's URL, given the key's path.
+    pub fn path(self, key_path: &str) -> String {
+        match self {
+            Endpoint::List | Endpoint::Create => String::new(),
+            Endpoint::Search => "/search".to_owned(),
+            Endpoint::GetOne | Endpoint::Update | Endpoint::Remove => key_path.to_owned(),
+            Endpoint::Restore => format!("{key_path}/restore"),
+        }
+    }
+}
+
+/// A `GET /by-<column>/{value}` route: the data layer's lookup over a
+/// single-column unique key that isn't hidden.
+#[derive(Debug, Clone)]
+pub struct Lookup<'a> {
+    pub column: &'a Column,
+    /// The data layer's function, which is also the handler's and the
+    /// service method's name: `get_by_slug`.
+    pub function: String,
+}
+
+impl Lookup<'_> {
+    /// The route under the feature's URL: `/by-slug/{value}`.
+    pub fn path(&self) -> String {
+        format!("/by-{}/{{value}}", self.column.rust_name.to_kebab_case())
     }
 }
 
@@ -119,29 +157,39 @@ pub struct Feature<'a> {
     pub owner: Option<&'a Column>,
     /// The columns left out of the response (`[api.hidden]`). They stay in
     /// the create and update bodies. Filters and sorts can't name them: a
-    /// renderer taking either (ticket 08's search) checks
+    /// renderer taking either (the search body) checks
     /// [`Feature::is_hidden`].
     pub hidden: Vec<&'a Column>,
+    /// The tenant column: every handler takes the `Tenant` extractor, and
+    /// every data layer call the tenant.
+    pub tenant: Option<&'a Column>,
+    /// The version column: reads answer `ETag`, and `update` needs a
+    /// matching `If-Match`.
+    pub version: Option<&'a Column>,
+    /// Whether rows are soft-deleted: `remove` takes `?permanent=true`.
+    pub soft_delete: bool,
+    /// The `GET /by-<column>/{value}` routes.
+    pub lookups: Vec<Lookup<'a>>,
+    /// The relationship routes, filled by [`super::features`] once every
+    /// feature is known.
+    pub relations: Vec<Relation<'a>>,
+    /// Whether the data layer's filter can fail (it has relationship
+    /// fields), so pushing its `WHERE` clause takes a `?`.
+    pub filter_fallible: bool,
 }
 
 impl<'a> Feature<'a> {
-    /// The feature of `table` under `api`, or `None` when the table has no
-    /// API: it is excluded, or a join table. Fails on a table the API can't
-    /// serve yet.
-    pub fn of(table: &'a Table, api: &'a ApiConfig) -> Result<Option<Self>, String> {
+    /// The feature of `table` (one of `tables`) under `api`, or `None` when
+    /// the table has no API: it is excluded, or a join table. Its
+    /// relations are left empty. Fails on a list with nothing to sort by.
+    pub fn of(
+        table: &'a Table,
+        api: &'a ApiConfig,
+        tables: &'a [Table],
+    ) -> Result<Option<Self>, String> {
         let excluded = api.exclude.iter().any(|key| names(table, key));
         if excluded || join_pair(table).is_some() {
             return Ok(None);
-        }
-        let unsupported = [
-            (&table.tenant_column, "a tenant column"),
-            (&table.version_column, "a version column"),
-        ];
-        if let Some((_, what)) = unsupported.iter().find(|(column, _)| column.is_some()) {
-            return Err(format!(
-                "`{}` has {what}, which API features don't support yet; add it to `api.exclude`",
-                table.display_name()
-            ));
         }
         let skipped = entry(&api.skip, table).cloned().unwrap_or_default();
         let key = match table.key_columns().as_slice() {
@@ -156,28 +204,44 @@ impl<'a> Feature<'a> {
             .update_columns()
             .iter()
             .any(|column| owner.is_none_or(|owner| owner.sql_name != column.sql_name));
-        let endpoints: Vec<Endpoint> = Endpoint::ALL
-            .into_iter()
-            .filter(|endpoint| !skipped.contains(&endpoint.config()))
-            .filter(|endpoint| match endpoint {
-                Endpoint::List => true,
-                Endpoint::Create => !table.insert_columns().is_empty(),
-                Endpoint::GetOne | Endpoint::Remove => key.is_some(),
-                Endpoint::Update => key.is_some() && has_patch,
-            })
-            .collect();
         let hidden = columns(table, entry(&api.hidden, table));
         let search = columns(table, entry(&api.search, table));
         let mut sort = columns(table, entry(&api.sort, table));
         if sort.is_empty() {
             sort = default_sort(table, &hidden);
         }
+        let soft_delete = table.soft_delete_column.is_some();
+        // The search body's filter is the data layer's, less hidden and
+        // relationship fields; its sort keys are the list's.
+        let searchable =
+            api.search_endpoint && SearchApi::for_table(table).any() && !sort.is_empty();
+        let endpoints: Vec<Endpoint> = Endpoint::ALL
+            .into_iter()
+            .filter(|endpoint| !skipped.contains(&endpoint.config()))
+            .filter(|endpoint| match endpoint {
+                Endpoint::List => true,
+                Endpoint::Search => searchable,
+                Endpoint::Create => !table.insert_columns().is_empty(),
+                Endpoint::GetOne | Endpoint::Remove => key.is_some(),
+                Endpoint::Update => key.is_some() && has_patch,
+                Endpoint::Restore => key.is_some() && soft_delete,
+            })
+            .collect();
         if endpoints.contains(&Endpoint::List) && sort.is_empty() {
             return Err(format!(
                 "`{}` has no column its list can sort by; name one in `api.sort`, or skip `list` in `api.skip`",
                 table.display_name()
             ));
         }
+        let lookups = if skipped.contains(&ApiEndpoint::Lookups) {
+            Vec::new()
+        } else {
+            lookups(table, &hidden)
+        };
+        // A versioned table's `update` takes the version (`If-Match`).
+        let version = version_column(table)
+            .filter(|_| key.is_some())
+            .filter(|_| !endpoints.contains(&Endpoint::Update) || has_versioned_update(table));
         let base = entry(&api.routes, table)
             .cloned()
             .unwrap_or_else(|| format!("/{}", table.module_name.to_kebab_case()));
@@ -192,7 +256,18 @@ impl<'a> Feature<'a> {
             access: entry(&api.access, table).copied().unwrap_or_default(),
             owner,
             hidden,
+            tenant: table.tenant(),
+            version,
+            soft_delete,
+            lookups,
+            relations: Vec::new(),
+            filter_fallible: !filter_relationships(table, tables).is_empty(),
         }))
+    }
+
+    /// The feature's relationship routes are skipped (`[api.skip]`).
+    pub fn skips_relationships(api: &ApiConfig, table: &Table) -> bool {
+        entry(&api.skip, table).is_some_and(|skip| skip.contains(&ApiEndpoint::Relationships))
     }
 
     /// Whether `column` is hidden: left out of the response, and never a
@@ -212,21 +287,30 @@ impl<'a> Feature<'a> {
             .collect()
     }
 
-    /// The extractor the handlers take the caller with, `AuthUser` or
-    /// `AdminUser`; none for a public feature.
-    pub fn caller(&self) -> Option<&'static str> {
-        match self.access {
-            ApiAccess::Public => None,
-            ApiAccess::Admin => Some("AdminUser"),
-            ApiAccess::User => Some("AuthUser"),
-        }
+    /// Whether the feature reads one row the caller owns by its key: it has
+    /// an owner and a key, so the data layer has `get_owned`, `lock_owned`
+    /// and `owned_by` (which other features' relationship routes use too).
+    pub fn reads_owned_rows(&self) -> bool {
+        self.owner.is_some() && self.key.is_some()
     }
 
-    /// Whether the feature reads one row the caller owns by its key: it has
-    /// an owner and serves an endpoint taking a key, so the data layer has
-    /// `get_owned` and `lock_owned`.
-    pub fn reads_owned_rows(&self) -> bool {
-        self.owner.is_some() && self.endpoints.iter().any(|endpoint| endpoint.takes_key())
+    /// The service methods' scope parameters: the tenant, then the caller
+    /// when `user`.
+    pub fn scope_params(&self, tenant: Option<&Column>, user: bool) -> Vec<String> {
+        let mut params: Vec<String> = tenant
+            .map(|tenant| format!("tenant: {}", tenant.value_type()))
+            .into_iter()
+            .collect();
+        if user {
+            params.push("user: AuthUser".to_owned());
+        }
+        params
+    }
+
+    /// Whether an endpoint's service method takes the caller (an owned
+    /// feature's); a relation's may too ([`Relation::needs_user`]).
+    pub fn takes_user(&self) -> bool {
+        self.owner.is_some() && !(self.endpoints.is_empty() && self.lookups.is_empty())
     }
 
     /// Whether the feature serves `endpoint`.
@@ -277,6 +361,38 @@ impl<'a> Feature<'a> {
     /// The list's query string, such as `ListNotesQuery`.
     pub fn list_query(&self) -> String {
         format!("List{}Query", self.plural())
+    }
+
+    /// The search body, such as `SearchNotesBody`.
+    pub fn search_body(&self) -> String {
+        format!("Search{}Body", self.plural())
+    }
+
+    /// The search body's filter, such as `NoteSearchFilter`.
+    pub fn search_filter(&self) -> String {
+        format!("{}SearchFilter", self.row())
+    }
+
+    /// The data layer's filter, such as `NoteFilter`.
+    pub fn db_filter(&self) -> String {
+        format!("{}Filter", self.row())
+    }
+
+    /// The query string of a soft-delete table's `DELETE`, such as
+    /// `RemoveNoteQuery`.
+    pub fn remove_query(&self) -> String {
+        format!("Remove{}Query", self.row())
+    }
+
+    /// The query string of `GET /{key}` with `?include=`, such as
+    /// `GetTaskQuery`.
+    pub fn get_query(&self) -> String {
+        format!("Get{}Query", self.row())
+    }
+
+    /// The relationships `?include=` names, such as `TaskInclude`.
+    pub fn include_enum(&self) -> String {
+        format!("{}Include", self.row())
     }
 
     /// The list's sort keys, such as `NoteSort`.
@@ -330,6 +446,21 @@ fn entry<'m, V>(map: &'m BTreeMap<String, V>, table: &Table) -> Option<&'m V> {
     map.iter()
         .find(|(key, _)| names(table, key))
         .map(|(_, value)| value)
+}
+
+/// The `by-` routes of `table`: its data layer lookups over one column,
+/// other than a `hidden` one.
+fn lookups<'a>(table: &'a Table, hidden: &[&Column]) -> Vec<Lookup<'a>> {
+    crate::generator::read::unique_lookups(table)
+        .into_iter()
+        .filter_map(|lookup| match lookup.columns.as_slice() {
+            [column] if !hidden.iter().any(|h| h.sql_name == column.sql_name) => Some(Lookup {
+                column,
+                function: lookup.fn_name,
+            }),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The columns of `table` an `[api]` entry names, in its order.

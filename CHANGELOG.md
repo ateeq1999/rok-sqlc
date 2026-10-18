@@ -50,9 +50,25 @@ the *generated* API count as breaking (see ADR 0012).
   `PATCH` and `DELETE /{key}`; `[api.skip]` drops any. The data layer
   gains `<table>/listing.rs` (`XSort`, `list_matching`, `count_matching`)
   and `search::push_contains_any`; `shared/` gains `response::path_segment`
-  and `validation::{path_config, query_config}`. Tables with a tenant or
-  version column are refused for now. Generated files under `api.output`
-  and `shared/` are removed once stale; scaffolded ones never are.
+  and `validation::{path_config, query_config}`. Generated files under
+  `api.output` and `shared/` are removed once stale; scaffolded ones never
+  are.
+- API features serve the rest of ADR 0016's routes, each skippable in
+  `[api.skip]`: `GET /by-<column>/{value}` per single-column unique key that
+  isn't hidden; `POST /search` (`{filter, sort, order, page, per_page}`)
+  with `api.search_endpoint`, whose filter is the data layer's less hidden
+  columns (a `422` naming the field) and relationship filters; relationship
+  routes to tables with a feature (`GET /{key}?include=<name>` for a to-one,
+  `GET /{key}/<name>` for a to-many, and for a many-to-many `PUT
+  /{key}/<name>` sync and `PUT`/`DELETE /{key}/<name>/{other}`), answering
+  through the related feature's response under its access and owner; and
+  on soft-delete tables `POST /{key}/restore` and `DELETE
+  /{key}?permanent=true`. Versioned tables answer `ETag` and need `If-Match`
+  on `PATCH` (`428` without, `412` when stale); tenant-scoped tables take
+  `Tenant<T>`. `shared/` gains `response::{ItemsResponse, etag}` and
+  `validation::{IfMatch, IdList}`; `generated.rs` re-exports the responses
+  relationship routes use, and `listing.rs` gains the search reads,
+  `owned_by`/`owned`/`retain_owned`, and the join tables' writes.
 - `rok-sqlc init [DIR]` scaffolds the actix-web application skeleton of
   ADR 0016 (`rok-sqlc.toml`, `migrations/`, `src/{main,app,config,error}.rs`,
   `src/shared/{mod,auth}.rs`, `src/features/mod.rs` and `AGENTS.md`), each

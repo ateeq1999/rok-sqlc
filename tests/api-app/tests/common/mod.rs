@@ -9,9 +9,10 @@
 
 use std::str::FromStr;
 
+use actix_web::dev::Service;
 use actix_web::http::{Method, StatusCode, header};
 use actix_web::web::Bytes;
-use actix_web::{App, test as actix_test, web};
+use actix_web::{App, HttpMessage, test as actix_test, web};
 use rok_sqlc_api_app::app::configure;
 use rok_sqlc_api_app::db::schema::SCHEMA_SQL;
 use rok_sqlc_api_app::shared::auth::{Claims, JwtKeys, Role};
@@ -77,12 +78,13 @@ impl Database {
     }
 }
 
-/// One answer: its status, `Location` header, and body as JSON (`Null`
-/// when empty).
+/// One answer: its status, `Location` and `ETag` headers, and body as JSON
+/// (`Null` when empty).
 #[derive(Debug)]
 pub struct Answer {
     pub status: StatusCode,
     pub location: Option<String>,
+    pub etag: Option<String>,
     pub body: Value,
 }
 
@@ -93,23 +95,86 @@ impl Answer {
     }
 }
 
-/// Sends `request` to the whole application over `db`'s pool.
+/// The headers of an answer the tests read.
+struct Headers {
+    location: Option<String>,
+    etag: Option<String>,
+}
+
+/// Sends `request` to the whole application over `db`'s pool. With a
+/// `tenant`, a middleware stores it in the request's extensions, as the
+/// application's auth middleware would.
 async fn send(
     db: &Database,
     request: actix_test::TestRequest,
-) -> (StatusCode, Option<String>, Bytes) {
+    tenant: Option<uuid::Uuid>,
+) -> (StatusCode, Headers, Bytes) {
     let keys = web::Data::new(JwtKeys::new(SECRET));
     let pool = db.pool.clone();
-    let app =
-        actix_test::init_service(App::new().configure(move |cfg| configure(cfg, &pool, &keys)))
-            .await;
+    let app = App::new()
+        .wrap_fn(move |req, srv| {
+            if let Some(tenant) = tenant {
+                req.extensions_mut().insert(tenant);
+            }
+            srv.call(req)
+        })
+        .configure(move |cfg| configure(cfg, &pool, &keys));
+    let app = actix_test::init_service(app).await;
     let response = actix_test::call_service(&app, request.to_request()).await;
     let status = response.status();
-    let location = response
-        .headers()
-        .get(header::LOCATION)
-        .map(|value| value.to_str().expect("an ASCII Location").to_owned());
-    (status, location, actix_test::read_body(response).await)
+    let header = |name| {
+        response
+            .headers()
+            .get(name)
+            .map(|value| value.to_str().expect("an ASCII header").to_owned())
+    };
+    let headers = Headers {
+        location: header(header::LOCATION),
+        etag: header(header::ETAG),
+    };
+    (status, headers, actix_test::read_body(response).await)
+}
+
+/// What a request carries besides its method, URI and body: the caller's
+/// bearer token, the tenant the auth middleware found, and `If-Match`.
+#[derive(Debug, Clone, Default)]
+pub struct With {
+    pub token: Option<String>,
+    pub tenant: Option<uuid::Uuid>,
+    pub if_match: Option<String>,
+}
+
+/// Sends `method uri` with an optional JSON `body` and what `with` holds.
+pub async fn call_with(
+    db: &Database,
+    with: &With,
+    method: Method,
+    uri: &str,
+    body: Option<Value>,
+) -> Answer {
+    let mut request = actix_test::TestRequest::default().method(method).uri(uri);
+    if let Some(token) = &with.token {
+        request = request.insert_header((header::AUTHORIZATION, format!("Bearer {token}")));
+    }
+    if let Some(version) = &with.if_match {
+        request = request.insert_header((header::IF_MATCH, version.as_str()));
+    }
+    if let Some(body) = body {
+        request = request.set_json(body);
+    }
+    let (status, headers, bytes) = send(db, request, with.tenant).await;
+    let body = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| panic!("a JSON body, got {}", String::from_utf8_lossy(&bytes)))
+    };
+    Answer {
+        status,
+        location: headers.location,
+        etag: headers.etag,
+        body,
+    }
 }
 
 /// Sends `method uri` with an optional JSON `body`.
@@ -143,25 +208,11 @@ pub async fn call_as(
     uri: &str,
     body: Option<Value>,
 ) -> Answer {
-    let mut request = actix_test::TestRequest::default().method(method).uri(uri);
-    if let Some(token) = token {
-        request = request.insert_header((header::AUTHORIZATION, format!("Bearer {token}")));
-    }
-    if let Some(body) = body {
-        request = request.set_json(body);
-    }
-    let (status, location, bytes) = send(db, request).await;
-    let body = if bytes.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(&bytes)
-            .unwrap_or_else(|_| panic!("a JSON body, got {}", String::from_utf8_lossy(&bytes)))
+    let with = With {
+        token: token.map(str::to_owned),
+        ..With::default()
     };
-    Answer {
-        status,
-        location,
-        body,
-    }
+    call_with(db, &with, method, uri, body).await
 }
 
 /// Sends `method uri` with `raw` as its JSON body, malformed or not.
@@ -171,10 +222,11 @@ pub async fn call_raw(db: &Database, method: Method, uri: &str, raw: &'static st
         .uri(uri)
         .insert_header((header::CONTENT_TYPE, "application/json"))
         .set_payload(raw);
-    let (status, location, bytes) = send(db, request).await;
+    let (status, headers, bytes) = send(db, request, None).await;
     Answer {
         status,
-        location,
+        location: headers.location,
+        etag: headers.etag,
         body: serde_json::from_slice(&bytes).unwrap_or(Value::Null),
     }
 }

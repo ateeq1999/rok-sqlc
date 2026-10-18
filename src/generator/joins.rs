@@ -96,6 +96,11 @@ pub fn key_struct(table: &Table, joins: &[Join<'_>]) -> Option<String> {
 }
 
 impl<'a> Join<'a> {
+    /// The relationship's name.
+    pub fn name(&self) -> &str {
+        &self.relationship.name
+    }
+
     /// Whether the related row may be absent: a has-one, or a belongs-to
     /// whose foreign key is nullable or whose related table hides rows (by
     /// tenant or soft delete). Otherwise the foreign key guarantees it.
@@ -108,11 +113,11 @@ impl<'a> Join<'a> {
 
     /// The tenant parameter: the table's tenant column, or the related
     /// table's when only it has one. Both tables' conditions bind it as `$1`.
-    fn tenant(&self) -> Option<&'a Column> {
+    pub fn tenant(&self) -> Option<&'a Column> {
         self.table.tenant().or_else(|| self.target.tenant())
     }
 
-    fn struct_name(&self) -> String {
+    pub fn struct_name(&self) -> String {
         format!(
             "{}With{}",
             self.table.struct_name,
@@ -122,7 +127,7 @@ impl<'a> Join<'a> {
 
     /// The field holding the row read: the row's name (`product`), or `row`
     /// when the relationship has that name.
-    fn row_field(&self) -> String {
+    pub fn row_field(&self) -> String {
         let name = self.table.struct_name.to_snake_case();
         if name == self.relationship.name {
             "row".to_owned()
@@ -131,7 +136,7 @@ impl<'a> Join<'a> {
         }
     }
 
-    fn function_name(&self) -> String {
+    pub fn function_name(&self) -> String {
         format!("get_with_{}", self.relationship.name)
     }
 

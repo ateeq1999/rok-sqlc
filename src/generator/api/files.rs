@@ -2,7 +2,7 @@
 //! what `generated.rs` and `app.rs` use, and `model.rs` and `repo.rs`,
 //! re-exporting the table's rows and functions from the data layer.
 
-use super::feature::{Endpoint, Feature};
+use super::feature::Feature;
 use crate::generator::HEADER;
 
 /// Renders the feature's `mod.rs`.
@@ -54,11 +54,13 @@ pub fn render_repo(feature: &Feature<'_>) -> String {
         "{HEADER}\n//! The data layer's functions for `{}`: reads, writes, and the list's.\n\n",
         feature.table.display_name()
     );
-    if feature.serves(Endpoint::List) || feature.reads_owned_rows() {
+    if super::has_listing(feature) {
         output.push_str(&format!("pub use {module}::listing::*;\n"));
     }
-    output.push_str(&format!(
-        "pub use {module}::read::*;\npub use {module}::write::*;\n"
-    ));
+    output.push_str(&format!("pub use {module}::read::*;\n"));
+    if !feature.relations.is_empty() {
+        output.push_str(&format!("pub use {module}::relationships::*;\n"));
+    }
+    output.push_str(&format!("pub use {module}::write::*;\n"));
     output
 }

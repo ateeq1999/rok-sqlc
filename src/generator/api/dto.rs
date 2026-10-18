@@ -3,11 +3,11 @@
 //! and the response, joined to the data layer's types by `From`.
 
 use super::feature::{Endpoint, Feature};
-use super::layout::{push_field_attr, push_struct_lit};
+use super::layout::{Uses, push_field_attr, push_struct_lit};
+use super::{relation_routes, search};
 use crate::generator::validate::{push_decimal_checks, push_field_rule};
 use crate::generator::{
-    HEADER, MAX_WIDTH, doc_name, insert_field_type, push_doc, update_field_type, use_list,
-    use_paths,
+    HEADER, MAX_WIDTH, doc_name, insert_field_type, push_doc, update_field_type,
 };
 use crate::schema::{Column, mentions_generated_type};
 
@@ -28,26 +28,63 @@ pub fn render(feature: &Feature<'_>) -> String {
     let mut fields: Vec<&Column> = feature.response_columns();
     fields.extend(create.iter().flatten());
     fields.extend(update.iter().flatten());
-    output.push_str(&imports(
+    let mut uses = Uses::default();
+    let mut body = String::new();
+    if feature.serves(Endpoint::List) {
+        render_list_query(&mut body, feature);
+    }
+    if feature.serves(Endpoint::Search) {
+        fields.extend(search::render_dto(&mut body, &mut uses, feature));
+    }
+    if let Some(columns) = &create {
+        render_create(&mut body, feature, columns);
+    }
+    if let Some(columns) = &update {
+        render_update(&mut body, feature, columns);
+    }
+    if feature.soft_delete && feature.serves(Endpoint::Remove) {
+        render_remove_query(&mut body, feature);
+    }
+    render_response(&mut body, feature);
+    relation_routes::render_dto(&mut body, &mut uses, feature);
+    let checked = create.iter().flatten().chain(update.iter().flatten());
+    push_decimal_checks(&mut body, checked.copied());
+
+    imports(
+        &mut uses,
         feature,
         &fields,
         create.is_some(),
         update.is_some(),
-    ));
-
-    if feature.serves(Endpoint::List) {
-        render_list_query(&mut output, feature);
+    );
+    output.push_str(&uses.render());
+    if feature.serves(Endpoint::List) || feature.serves(Endpoint::Search) {
+        output.push_str(&format!(
+            "pub use {}::listing::{};\n\n",
+            feature.db_module(),
+            feature.sort_enum()
+        ));
     }
-    if let Some(columns) = &create {
-        render_create(&mut output, feature, columns);
-    }
-    if let Some(columns) = &update {
-        render_update(&mut output, feature, columns);
-    }
-    render_response(&mut output, feature);
-    let checked = create.iter().flatten().chain(update.iter().flatten());
-    push_decimal_checks(&mut output, checked.copied());
+    output.push_str(body.trim_start_matches('\n'));
     output
+}
+
+/// `DELETE`'s query string on a soft-delete table.
+fn render_remove_query(output: &mut String, feature: &Feature<'_>) {
+    output.push('\n');
+    push_doc(
+        output,
+        0,
+        &[&format!(
+            "`DELETE {}{}`'s query string: `?permanent=true` deletes the row for good.",
+            feature.url,
+            feature.key_path()
+        )],
+    );
+    output.push_str(&format!(
+        "#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]\npub struct {} {{\n    /// Whether to delete the row for good rather than soft-delete it.\n    #[serde(default)]\n    pub permanent: bool,\n}}\n",
+        feature.remove_query()
+    ));
 }
 
 /// The create body's columns: the create input's, less a key the server
@@ -97,48 +134,34 @@ fn owner_value(owner: &Column) -> String {
 
 /// The `use` lines: the data layer's types the bodies convert to and from,
 /// the typed ids and enums their fields hold, and the list's query.
-fn imports(feature: &Feature<'_>, fields: &[&Column], create: bool, update: bool) -> String {
+fn imports(uses: &mut Uses, feature: &Feature<'_>, fields: &[&Column], create: bool, update: bool) {
     let table = feature.table;
-    let mut model = vec![feature.row().to_owned()];
+    uses.add(&format!("super::model::{}", feature.row()));
     if create {
-        model.push(format!("New{}", feature.row()));
+        uses.add(&format!("super::model::New{}", feature.row()));
     }
     if update {
-        model.push(format!("Update{}", feature.row()));
+        uses.add(&format!("super::model::Update{}", feature.row()));
     }
-    let mut paths = Vec::new();
     for id in fields.iter().filter_map(|column| column.typed_id.as_ref()) {
         if id.module == table.module_name {
-            model.push(id.name.clone());
+            uses.add(&format!("super::model::{}", id.name));
         } else {
-            paths.push(format!(
+            uses.add(&format!(
                 "{}::{}::models::{}",
                 feature.db_path, id.module, id.name
             ));
         }
     }
-    model.sort();
-    model.dedup();
     if feature.serves(Endpoint::List) {
-        paths.push("crate::shared::pagination::ListQuery".to_owned());
+        uses.add("crate::shared::pagination::ListQuery");
     }
     if fields
         .iter()
         .any(|column| mentions_generated_type(&column.rust_type))
     {
-        paths.push(format!("{}::types", feature.db_path));
+        uses.add(&format!("{}::types", feature.db_path));
     }
-    let mut output = use_list("super::model", &model);
-    output.push_str(&use_paths(&paths));
-    if feature.serves(Endpoint::List) {
-        output.push_str(&format!(
-            "\npub use {}::listing::{};\n",
-            feature.db_module(),
-            feature.sort_enum()
-        ));
-    }
-    output.push('\n');
-    output
 }
 
 fn render_list_query(output: &mut String, feature: &Feature<'_>) {
@@ -196,9 +219,9 @@ fn push_nullable(output: &mut String, feature: &Feature<'_>, default: bool) {
 
 /// `impl From<{from}> for {to}`, building `to` from `binding`'s `fields`.
 fn push_from(output: &mut String, from: &str, to: &str, binding: &str, fields: &[String]) {
-    output.push_str(&format!(
-        "\nimpl From<{from}> for {to} {{\n    fn from({binding}: {from}) -> Self {{\n"
-    ));
+    output.push('\n');
+    output.push_str(&super::layout::impl_head(&format!("From<{from}>"), to));
+    output.push_str(&format!("    fn from({binding}: {from}) -> Self {{\n"));
     push_struct_lit(output, 8, to, fields);
     output.push_str("    }\n}\n");
 }

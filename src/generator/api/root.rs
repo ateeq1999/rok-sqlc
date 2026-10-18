@@ -31,6 +31,27 @@ use sqlx::PgPool;
     if !features.is_empty() {
         output.push('\n');
     }
+    // The responses relationship routes answer related rows with: a
+    // feature names another's response only through these, never its
+    // module.
+    let mut related: Vec<(&str, String)> = features
+        .iter()
+        .flat_map(|feature| {
+            feature
+                .relations
+                .iter()
+                .filter(|relation| relation.target.module_name != feature.module())
+                .map(|relation| (relation.target.module_name.as_str(), relation.response()))
+        })
+        .collect();
+    related.sort();
+    related.dedup();
+    if !related.is_empty() {
+        output.push_str("\n// The responses other features' relationship routes answer with.\n");
+        for (module, response) in related {
+            output.push_str(&format!("pub use {module}::dto::{response};\n"));
+        }
+    }
     let (cfg, pool) = if features.is_empty() {
         ("_cfg", "_pool")
     } else {

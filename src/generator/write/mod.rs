@@ -19,12 +19,12 @@ use crate::schema::{Column, Table};
 use self::create::{render_dynamic_create, render_static_create};
 use self::delete::render_delete;
 use self::join::render_join_writes;
-use self::update::{render_update, render_versioned_update, version_column};
+use self::update::{render_update, render_versioned_update};
 use super::relationships::join_pair;
 use super::sql::column_clause;
 use super::{HEADER, types_import, use_list};
 
-pub use self::update::has_versioned_update;
+pub use self::update::{has_versioned_update, version_column};
 
 pub fn render(table: &Table) -> String {
     let insert_columns = table.insert_columns();

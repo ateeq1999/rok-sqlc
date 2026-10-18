@@ -305,7 +305,7 @@ impl From<Pagination> for Page {
 "#;
 
 const RESPONSE: &str = r#"//! What handlers answer besides a bare row: the wire standard's error body,
-//! and a page of a list.
+//! a page of a list, a relationship's rows, and a versioned row's `ETag`.
 
 use serde::{Deserialize, Serialize};
 
@@ -366,6 +366,33 @@ pub fn path_segment(value: &impl std::fmt::Display) -> String {
     }
     encoded
 }
+
+/// The rows of a relationship: `{"items": [...]}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ItemsResponse<T> {
+    /// The rows.
+    pub items: Vec<T>,
+}
+
+impl<T> ItemsResponse<T> {
+    /// The responses of `rows`, in order.
+    #[must_use]
+    pub fn from_rows<R>(rows: Vec<R>) -> Self
+    where
+        T: From<R>,
+    {
+        ItemsResponse {
+            items: rows.into_iter().map(T::from).collect(),
+        }
+    }
+}
+
+/// The `ETag` of a row at `version`: the version in quotes, which
+/// `If-Match` sends back to update the row.
+#[must_use]
+pub fn etag(version: &impl std::fmt::Display) -> String {
+    format!("\"{version}\"")
+}
 "#;
 
 const TENANT: &str = r#"//! [`Tenant`]: the tenant of a request, as the auth middleware found it.
@@ -420,14 +447,20 @@ impl<T: Clone + 'static> FromRequest for Tenant<T> {
 }
 "#;
 
-const VALIDATION: &str = r#"//! Reading a request: validated JSON bodies, and the wire standard's `400`
-//! for a malformed path or query.
+const VALIDATION: &str = r#"//! Reading a request: validated JSON bodies, the wire standard's `400` for a
+//! malformed path or query, a versioned row's `If-Match`, and a
+//! many-to-many sync's list of keys.
 //!
 //! A handler takes [`ValidatedJson`], which checks the body's rules and
 //! answers a bad body with a [`BodyRejection`] in the wire standard's error
 //! body. Every feature's scope uses [`path_config`] and [`query_config`].
 
-use actix_web::web;
+use std::future::{Ready, ready};
+use std::str::FromStr;
+
+use actix_web::dev::Payload;
+use actix_web::http::header;
+use actix_web::{FromRequest, HttpRequest, web};
 
 use crate::error::AppError;
 
@@ -448,5 +481,53 @@ pub fn path_config() -> web::PathConfig {
 pub fn query_config() -> web::QueryConfig {
     web::QueryConfig::default()
         .error_handler(|error, _| AppError::BadRequest(error.to_string()).into())
+}
+
+/// The version an `If-Match` header holds, `"<version>"`: the `ETag` a
+/// versioned row was read with. A handler updating such a row takes it, so
+/// a request without one is a `428` with `precondition_required`, and one
+/// holding no version is a `412` with `version_conflict`, as it can't
+/// match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IfMatch<T>(pub T);
+
+impl<T> IfMatch<T> {
+    /// The version.
+    #[must_use]
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+}
+
+impl<T: FromStr> FromRequest for IfMatch<T> {
+    type Error = AppError;
+    type Future = Ready<Result<Self, AppError>>;
+
+    fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
+        ready(if_match(req).map(IfMatch))
+    }
+}
+
+/// The version `req`'s `If-Match` holds.
+fn if_match<T: FromStr>(req: &HttpRequest) -> Result<T, AppError> {
+    let value = req.headers().get(header::IF_MATCH).ok_or_else(|| {
+        AppError::PreconditionRequired("`If-Match` must hold the row's `ETag`".to_owned())
+    })?;
+    let version = value
+        .to_str()
+        .ok()
+        .and_then(|value| value.trim().strip_prefix('"')?.strip_suffix('"'))
+        .and_then(|version| version.parse().ok());
+    version.ok_or_else(|| {
+        AppError::VersionConflict("`If-Match` holds no version of the row".to_owned())
+    })
+}
+
+/// The body of a many-to-many sync, `{"ids": [...]}`: the keys of the
+/// related rows to pair with, and no others.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, validator::Validate)]
+pub struct IdList<T> {
+    /// The related rows' keys.
+    pub ids: Vec<T>,
 }
 "#;

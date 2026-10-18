@@ -61,7 +61,7 @@ const VERSION_PARAM: &str = "expected_version";
 
 /// The table's version column, when it has one and the column can be
 /// compared (it is not part of the key).
-pub(super) fn version_column(table: &Table) -> Option<&Column> {
+pub fn version_column(table: &Table) -> Option<&Column> {
     let name = table.version_column.as_deref()?;
     table
         .columns
