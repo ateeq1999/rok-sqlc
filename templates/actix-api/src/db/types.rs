@@ -52,3 +52,161 @@ pub enum ApiKeyScope {
     #[sqlx(rename = "write")]
     Write,
 }
+
+/// The values of the `auth_tokens.purpose` column.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
+pub enum AuthTokenPurpose {
+    /// `email_verification`
+    #[serde(rename = "email_verification")]
+    EmailVerification,
+    /// `password_reset`
+    #[serde(rename = "password_reset")]
+    PasswordReset,
+    /// `email_change`
+    #[serde(rename = "email_change")]
+    EmailChange,
+    /// `invitation`
+    #[serde(rename = "invitation")]
+    Invitation,
+}
+
+impl AuthTokenPurpose {
+    /// The column whose values this enum lists.
+    pub const COLUMN: &str = "auth_tokens.purpose";
+
+    /// The exact database value.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::EmailVerification => "email_verification",
+            Self::PasswordReset => "password_reset",
+            Self::EmailChange => "email_change",
+            Self::Invitation => "invitation",
+        }
+    }
+}
+
+impl std::str::FromStr for AuthTokenPurpose {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "email_verification" => Ok(Self::EmailVerification),
+            "password_reset" => Ok(Self::PasswordReset),
+            "email_change" => Ok(Self::EmailChange),
+            "invitation" => Ok(Self::Invitation),
+            other => Err(format!("`{other}` is not a value of `{}`", Self::COLUMN)),
+        }
+    }
+}
+
+impl sqlx::Type<sqlx::Postgres> for AuthTokenPurpose {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <str as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+
+    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <str as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+impl sqlx::postgres::PgHasArrayType for AuthTokenPurpose {
+    fn array_type_info() -> sqlx::postgres::PgTypeInfo {
+        <&str as sqlx::postgres::PgHasArrayType>::array_type_info()
+    }
+
+    fn array_compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <&str as sqlx::postgres::PgHasArrayType>::array_compatible(ty)
+    }
+}
+
+impl sqlx::Encode<'_, sqlx::Postgres> for AuthTokenPurpose {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        <&str as sqlx::Encode<'_, sqlx::Postgres>>::encode(self.as_str(), buf)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for AuthTokenPurpose {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        Ok(<&str as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?.parse()?)
+    }
+}
+
+/// The values of the `outbound_mail.status` column.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
+pub enum OutboundMailStatus {
+    /// `pending`
+    #[serde(rename = "pending")]
+    Pending,
+    /// `dead`
+    #[serde(rename = "dead")]
+    Dead,
+}
+
+impl OutboundMailStatus {
+    /// The column whose values this enum lists.
+    pub const COLUMN: &str = "outbound_mail.status";
+
+    /// The exact database value.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Dead => "dead",
+        }
+    }
+}
+
+impl std::str::FromStr for OutboundMailStatus {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "dead" => Ok(Self::Dead),
+            other => Err(format!("`{other}` is not a value of `{}`", Self::COLUMN)),
+        }
+    }
+}
+
+impl sqlx::Type<sqlx::Postgres> for OutboundMailStatus {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <str as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+
+    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <str as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+impl sqlx::postgres::PgHasArrayType for OutboundMailStatus {
+    fn array_type_info() -> sqlx::postgres::PgTypeInfo {
+        <&str as sqlx::postgres::PgHasArrayType>::array_type_info()
+    }
+
+    fn array_compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <&str as sqlx::postgres::PgHasArrayType>::array_compatible(ty)
+    }
+}
+
+impl sqlx::Encode<'_, sqlx::Postgres> for OutboundMailStatus {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        <&str as sqlx::Encode<'_, sqlx::Postgres>>::encode(self.as_str(), buf)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for OutboundMailStatus {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        Ok(<&str as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?.parse()?)
+    }
+}

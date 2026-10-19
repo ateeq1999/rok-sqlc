@@ -28,7 +28,8 @@ where
             locked_until,
             created_at,
             updated_at,
-            deleted_at
+            deleted_at,
+            token_version
         FROM users
         WHERE id = $1 AND deleted_at IS NULL
         "#,
@@ -82,7 +83,8 @@ where
             locked_until,
             created_at,
             updated_at,
-            deleted_at
+            deleted_at,
+            token_version
         FROM users
         WHERE lower(email) = lower($1) AND deleted_at IS NULL
         "#,
@@ -116,7 +118,8 @@ where
             locked_until,
             created_at,
             updated_at,
-            deleted_at
+            deleted_at,
+            token_version
         FROM users
         WHERE deleted_at IS NULL
         ORDER BY id
@@ -155,7 +158,8 @@ where
             locked_until,
             created_at,
             updated_at,
-            deleted_at
+            deleted_at,
+            token_version
         FROM users
         WHERE deleted_at IS NULL
         ORDER BY id
@@ -214,7 +218,8 @@ where
             locked_until,
             created_at,
             updated_at,
-            deleted_at
+            deleted_at,
+            token_version
         FROM users
         "#,
     );
@@ -261,7 +266,8 @@ where
             locked_until,
             created_at,
             updated_at,
-            deleted_at
+            deleted_at,
+            token_version
         FROM users
         "#,
     );

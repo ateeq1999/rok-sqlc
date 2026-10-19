@@ -57,6 +57,7 @@ pub(crate) enum Rule {
     SharedToFeatures,
     Panics,
     CrossFeatureWrite,
+    CrossFeatureQuery,
 }
 
 impl Rule {
@@ -76,6 +77,7 @@ impl fmt::Display for Rule {
             Rule::SharedToFeatures => "rule-5",
             Rule::Panics => "rule-6",
             Rule::CrossFeatureWrite => "cross-feature-write",
+            Rule::CrossFeatureQuery => "cross-feature-query",
         })
     }
 }
@@ -301,7 +303,7 @@ impl Layout {
         }
     }
 
-    /// Rules 1, 2, 4, 5 and 6 and the cross-feature write rule, for the
+    /// Rules 1, 2, 4, 5 and 6 and the cross-feature write and query rules, for the
     /// Rust file at `rel`.
     fn check_source(
         &self,
@@ -450,6 +452,17 @@ impl Layout {
                 {
                     rules.push(Rule::CrossFeatureWrite);
                 }
+                // A feature's own query module is `<db>::queries::<its
+                // name>`; another feature's is reported.
+                if let Some(own) = feature
+                    && let Some(rest) = path.strip_prefix(self.db.as_slice())
+                    && let [queries, module, ..] = rest
+                    && queries == "queries"
+                    && module != own
+                    && self.feature_names.contains(module)
+                {
+                    rules.push(Rule::CrossFeatureQuery);
+                }
             }
         }
         rules
@@ -477,6 +490,11 @@ impl Layout {
             Rule::CrossFeatureWrite => format!(
                 "`{target}`: feature `{}` writes another table; declare a port in its \
                  service.rs and implement it in app.rs",
+                self.feature_of(rel).unwrap_or_default()
+            ),
+            Rule::CrossFeatureQuery => format!(
+                "`{target}`: feature `{}` calls another feature's query module; declare a port \
+                 in its service.rs and implement it in app.rs",
                 self.feature_of(rel).unwrap_or_default()
             ),
             Rule::Layout | Rule::Panics => String::new(),

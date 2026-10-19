@@ -1,7 +1,8 @@
 //! `rok-sqlc check-arch` checks a project against ADR 0016's architecture:
 //! the feature layout, and the guidelines' rules 1, 2, 4, 5 and 6 plus the
-//! cross-feature write rule, read from the Rust source with `syn`. Each
-//! violation is printed as `path:line: rule: message`; any fails the run.
+//! cross-feature write and query rules, read from the Rust source with
+//! `syn`. Each violation is printed as `path:line: rule: message`; any
+//! fails the run.
 
 use super::*;
 
@@ -284,6 +285,53 @@ fn writing_another_tables_data_is_reported_and_reading_it_is_not() -> Result<()>
             &format!(
                 "src/features/notes/service.rs:4: cross-feature-write: {}",
                 message("crate::db::labels::write::delete")
+            ),
+        ],
+    );
+    Ok(())
+}
+
+#[test]
+fn a_feature_calls_its_own_query_module_but_not_another_features() -> Result<()> {
+    let mut files = NOTES.to_vec();
+    files.push(("src/features/labels/mod.rs", "pub mod service;\n"));
+    files.push((
+        "src/features/labels/service.rs",
+        "pub struct LabelsService;\n",
+    ));
+    // shared/ is infrastructure: it may call any query module.
+    files.push((
+        "src/shared/auth.rs",
+        "pub fn f() { crate::db::queries::labels::count(); }\n",
+    ));
+    let dir = project(&files)?;
+    // Its own module (and nested paths) and a module named after no
+    // feature are fine.
+    fs::write(
+        dir.path().join("src/features/notes/service.rs"),
+        "use crate::db::queries::notes;\n\
+         use crate::db::queries::notes::archive::run;\n\
+         use crate::db::queries::reports::totals;\n\
+         use crate::db::queries;\n\
+         pub fn f() { notes::open(); queries::labels::count(); }\n\
+         pub fn g() { crate::db::queries::labels::rename(); }\n",
+    )?;
+    let message = |path: &str| {
+        format!(
+            "`{path}`: feature `notes` calls another feature's query module; declare a port in \
+             its service.rs and implement it in app.rs"
+        )
+    };
+    assert_violations(
+        &check_arch(&dir, &[]),
+        &[
+            &format!(
+                "src/features/notes/service.rs:5: cross-feature-query: {}",
+                message("crate::db::queries::labels::count")
+            ),
+            &format!(
+                "src/features/notes/service.rs:6: cross-feature-query: {}",
+                message("crate::db::queries::labels::rename")
             ),
         ],
     );

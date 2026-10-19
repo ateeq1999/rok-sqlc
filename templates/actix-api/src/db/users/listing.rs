@@ -65,7 +65,8 @@ where
             locked_until,
             created_at,
             updated_at,
-            deleted_at
+            deleted_at,
+            token_version
         FROM users
         WHERE deleted_at IS NULL
         "#,

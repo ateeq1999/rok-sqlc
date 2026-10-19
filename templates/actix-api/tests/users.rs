@@ -34,7 +34,7 @@ async fn an_admin_lists_users_matching_q_and_sorted() -> TestResult {
     seed(&db.pool, "bob@example.com", Some("Bob")).await?;
     seed(&db.pool, "alice@example.com", Some("Alice")).await?;
     seed(&db.pool, "carol@example.com", None).await?;
-    let token = admin()?;
+    let token = admin(&db.pool).await?;
 
     let answer = call(
         &db.pool,
@@ -73,7 +73,14 @@ async fn a_user_who_is_not_an_admin_may_not_list_users() -> TestResult {
     let Some(db) = Database::fresh().await? else {
         return Ok(());
     };
-    let answer = call(&db.pool, Some(&user()?), Method::GET, "/api/v1/users", None).await?;
+    let answer = call(
+        &db.pool,
+        Some(&user(&db.pool).await?),
+        Method::GET,
+        "/api/v1/users",
+        None,
+    )
+    .await?;
     assert_eq!(answer.status, StatusCode::FORBIDDEN);
     assert_eq!(answer.code(), "forbidden");
     db.drop().await
@@ -91,7 +98,14 @@ async fn an_admin_gets_a_user_without_its_hidden_columns() -> TestResult {
         .await?;
 
     let uri = format!("/api/v1/users/{}", row.id);
-    let answer = call(&db.pool, Some(&admin()?), Method::GET, &uri, None).await?;
+    let answer = call(
+        &db.pool,
+        Some(&admin(&db.pool).await?),
+        Method::GET,
+        &uri,
+        None,
+    )
+    .await?;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
     let mut fields: Vec<&String> = answer
         .body
@@ -125,7 +139,14 @@ async fn getting_a_missing_user_is_not_found() -> TestResult {
         return Ok(());
     };
     let uri = format!("/api/v1/users/{}", uuid::Uuid::now_v7());
-    let answer = call(&db.pool, Some(&admin()?), Method::GET, &uri, None).await?;
+    let answer = call(
+        &db.pool,
+        Some(&admin(&db.pool).await?),
+        Method::GET,
+        &uri,
+        None,
+    )
+    .await?;
     assert_eq!(answer.status, StatusCode::NOT_FOUND);
     assert_eq!(answer.code(), "not_found");
     db.drop().await
@@ -140,7 +161,14 @@ async fn an_admin_updates_a_users_role_and_name() -> TestResult {
 
     let uri = format!("/api/v1/users/{}", row.id);
     let body = json!({"role": "admin", "display_name": null, "is_active": false});
-    let answer = call(&db.pool, Some(&admin()?), Method::PATCH, &uri, Some(body)).await?;
+    let answer = call(
+        &db.pool,
+        Some(&admin(&db.pool).await?),
+        Method::PATCH,
+        &uri,
+        Some(body),
+    )
+    .await?;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
     assert_eq!(answer.body["role"], "admin");
     assert_eq!(answer.body["display_name"], serde_json::Value::Null);
@@ -161,7 +189,14 @@ async fn an_update_with_an_unknown_role_fails_validation() -> TestResult {
 
     let uri = format!("/api/v1/users/{}", row.id);
     let body = json!({"role": "owner"});
-    let answer = call(&db.pool, Some(&admin()?), Method::PATCH, &uri, Some(body)).await?;
+    let answer = call(
+        &db.pool,
+        Some(&admin(&db.pool).await?),
+        Method::PATCH,
+        &uri,
+        Some(body),
+    )
+    .await?;
     assert_eq!(
         answer.status,
         StatusCode::UNPROCESSABLE_ENTITY,
@@ -178,7 +213,7 @@ async fn an_admin_soft_deletes_a_user() -> TestResult {
         return Ok(());
     };
     let row = seed(&db.pool, "gil@example.com", None).await?;
-    let token = admin()?;
+    let token = admin(&db.pool).await?;
 
     let uri = format!("/api/v1/users/{}", row.id);
     let answer = call(&db.pool, Some(&token), Method::DELETE, &uri, None).await?;

@@ -2,6 +2,7 @@
 
 use super::super::api_keys::filter::ApiKeyFilter;
 use super::super::audit_log_entry::filter::AuditLogEntryFilter;
+use super::super::auth_tokens::filter::AuthTokenFilter;
 use super::super::media::filter::MediaFilter;
 use super::super::search::{Equality, Ordered, Text, correlate, open_exists, push_null_check};
 use super::super::types;
@@ -73,6 +74,8 @@ pub struct UserFilter {
     pub deleted_at: Vec<Ordered<chrono::DateTime<chrono::Utc>>>,
     /// Whether the `deleted_at` column is `NULL`.
     pub deleted_at_is_null: Option<bool>,
+    /// Conditions on the `token_version` column.
+    pub token_version: Vec<Ordered<i32>>,
     /// Matches rows with at least one of their `audit_log_entry_by_actor_user` (`audit_log` rows) matching this filter.
     pub audit_log_entry_by_actor_user: Option<Box<AuditLogEntryFilter>>,
     /// Matches rows with at least one of their `audit_log_entry_by_target_user` (`audit_log` rows) matching this filter.
@@ -81,6 +84,8 @@ pub struct UserFilter {
     pub media: Option<Box<MediaFilter>>,
     /// Matches rows with at least one of their `api_keys` (`api_keys` rows) matching this filter.
     pub api_keys: Option<Box<ApiKeyFilter>>,
+    /// Matches rows with at least one of their `auth_tokens` (`auth_tokens` rows) matching this filter.
+    pub auth_tokens: Option<Box<AuthTokenFilter>>,
 }
 
 impl UserFilter {
@@ -170,6 +175,9 @@ impl UserFilter {
             condition.push("deleted_at", query);
         }
         push_null_check("deleted_at", self.deleted_at_is_null, query);
+        for condition in self.token_version {
+            condition.push("token_version", query);
+        }
         if let Some(filter) = self.audit_log_entry_by_actor_user {
             let alias = open_exists("audit_log", depth, query)?;
             correlate(&alias, "actor_user_id", outer, "id", query);
@@ -190,6 +198,12 @@ impl UserFilter {
         }
         if let Some(filter) = self.api_keys {
             let alias = open_exists("api_keys", depth, query)?;
+            correlate(&alias, "user_id", outer, "id", query);
+            filter.push_conditions(&alias, depth + 1, query)?;
+            query.push(")");
+        }
+        if let Some(filter) = self.auth_tokens {
+            let alias = open_exists("auth_tokens", depth, query)?;
             correlate(&alias, "user_id", outer, "id", query);
             filter.push_conditions(&alias, depth + 1, query)?;
             query.push(")");
@@ -234,6 +248,8 @@ pub enum UserSortKey {
     UpdatedAt,
     /// Sorts by the `deleted_at` column.
     DeletedAt,
+    /// Sorts by the `token_version` column.
+    TokenVersion,
 }
 
 impl UserSortKey {
@@ -257,6 +273,7 @@ impl UserSortKey {
             Self::CreatedAt => "created_at",
             Self::UpdatedAt => "updated_at",
             Self::DeletedAt => "deleted_at",
+            Self::TokenVersion => "token_version",
         }
     }
 }

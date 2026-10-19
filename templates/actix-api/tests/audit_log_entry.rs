@@ -56,7 +56,7 @@ async fn an_admin_lists_the_log_newest_first() -> TestResult {
 
     let answer = call(
         &db.pool,
-        Some(&admin()?),
+        Some(&admin(&db.pool).await?),
         Method::GET,
         "/api/v1/audit-log",
         None,
@@ -81,7 +81,7 @@ async fn a_user_who_is_not_an_admin_may_not_read_the_log() -> TestResult {
     };
     let answer = call(
         &db.pool,
-        Some(&user()?),
+        Some(&user(&db.pool).await?),
         Method::GET,
         "/api/v1/audit-log",
         None,

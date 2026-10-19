@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use super::super::api_keys::models::ApiKey;
 use super::super::audit_log_entry::models::AuditLogEntry;
+use super::super::auth_tokens::models::AuthToken;
 use super::super::media::models::Media;
 use super::models::{User, UserId};
 
@@ -179,6 +180,52 @@ where
             revoked_at,
             created_at
         FROM api_keys
+        WHERE user_id = ANY($1)
+        ORDER BY id
+        "#,
+    )
+    .bind(keys)
+    .fetch_all(executor)
+    .await?;
+    for row in related {
+        if let Some(list) = loaded.get_mut(&row.user_id) {
+            list.push(row);
+        }
+    }
+    Ok(loaded)
+}
+
+/// Loads the `auth_tokens` of each of `rows`: the `auth_tokens` rows whose
+/// `user_id` references it, keyed by `id`, in one query.
+/// Every row's key has an entry, empty when no row references it.
+pub async fn load_auth_tokens<'e, E>(
+    executor: E,
+    rows: &[User],
+) -> Result<HashMap<UserId, Vec<AuthToken>>, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    let mut loaded = HashMap::new();
+    let mut keys = Vec::new();
+    for row in rows {
+        loaded.insert(row.id, Vec::new());
+        keys.push(row.id);
+    }
+    if keys.is_empty() {
+        return Ok(loaded);
+    }
+    let related = sqlx::query_as::<_, AuthToken>(
+        r#"
+        SELECT
+            id,
+            user_id,
+            purpose,
+            token_hash,
+            new_email,
+            expires_at,
+            used_at,
+            created_at
+        FROM auth_tokens
         WHERE user_id = ANY($1)
         ORDER BY id
         "#,

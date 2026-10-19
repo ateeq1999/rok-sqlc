@@ -106,8 +106,9 @@ or it belongs in a feature. Decide which.
 4. A feature never refers to another feature's modules. It may read another
    table through the data layer, but never calls another table's
    `<db_path>::<table>::write`: it writes another feature's data only
-   through a port it declares itself, inside the caller's transaction. The
-   data layer is exempt: the schema crosses features.
+   through a port it declares itself, inside the caller's transaction. It
+   calls its own query module, `<db_path>::queries::<feature>`, never
+   another feature's. The data layer is exempt: the schema crosses features.
 5. `shared/` never refers to the features.
 6. No `unwrap()`, `expect()`, `panic!`, `todo!`, `println!` or `dbg!`. Every
    fallible function returns `Result<_, AppError>`.
@@ -127,9 +128,13 @@ features' and `bin/`. Test code is exempt from every rule: files under
 functions, and `tests/`, which is not read. Each violation prints as
 `path:line: rule: message`. Rule 3 is yours to keep.
 
-The cross-feature write part of rule 4 is reported as `cross-feature-write`
-and the layout as `layout`. `check-arch` reads `src/` with a Rust parser, so
-comments and strings never count. A path counts wherever it appears: a
+The cross-feature write part of rule 4 is reported as `cross-feature-write`,
+its query part as `cross-feature-query`, and the layout as `layout`. A query
+module belongs to the feature it is named after: `queries/tasks.sql`
+generates `<db_path>::queries::tasks`, which the `tasks` feature calls and
+no other feature does. A query module named after no feature (or the single
+`queries.rs` of a lone query file) is anyone's. `check-arch` reads `src/`
+with a Rust parser, so comments and strings never count. A path counts wherever it appears: a
 `use`, an expression, a type, a pattern, a `#[derive(...)]` list or an
 attribute like `#[actix_web::main]`. A path reached through a `use` binding
 that already breaks a rule is reported once, at the `use`. Rule 6 counts

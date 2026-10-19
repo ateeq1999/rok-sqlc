@@ -17,10 +17,13 @@
 
 pub mod api_keys;
 pub mod audit_log_entry;
+pub mod auth_tokens;
 pub mod http;
 pub mod media;
 pub mod nullable;
+pub mod outbound_mail;
 pub mod pool;
+pub mod queries;
 pub mod schema;
 pub mod search;
 pub mod types;

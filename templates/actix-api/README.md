@@ -20,7 +20,7 @@ You need PostgreSQL and Rust 1.94 or newer.
 
 1. Create a database and apply `migrations/` to it, for example with
    `sqlx migrate run` ([sqlx-cli](https://crates.io/crates/sqlx-cli)) or
-   `psql -f migrations/0001_init.sql`.
+   `psql` on each file of `migrations/` in order.
 2. Set `DATABASE_URL` and `JWT_SECRET` (`.env.example` lists every
    setting; `src/config.rs` reads them from the environment).
 3. `cargo run`. The API is under `/api/v1`, health at `/health/live` and
@@ -29,8 +29,13 @@ You need PostgreSQL and Rust 1.94 or newer.
 
 Every route but health needs `Authorization: Bearer <token>`: an HS256 JWT
 signed with `JWT_SECRET`, with `sub` (the user's id), `role` (`user` or
-`admin`) and `exp`. `src/shared/auth.rs` verifies it. Issuing tokens (sign
-in) is not part of the template yet; see below.
+`admin`), `tv` (the account's `token_version`) and `exp`.
+`src/shared/auth.rs` verifies it, then checks the account on every request:
+a disabled or deleted account, or a token issued before the account's
+`token_version` was bumped, is a `401`, and the role is read from the
+database, so a role change applies at once. `src/shared/security/` holds the
+tools the account flows use: argon2id password hashing, single-use tokens
+and issuing the JWT. Signing in is not part of the template yet; see below.
 
 ## Dependencies
 
@@ -40,10 +45,14 @@ The template's `Cargo.toml` has them. Starting from a package of your own
 ```toml
 [dependencies]
 actix-web = "4"
+argon2 = "0.6"
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
+rand = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.11"
 sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "derive", "uuid", "chrono", "json"] }
 thiserror = "2"
 tracing = "0.1"
@@ -89,9 +98,15 @@ test needs no database. The lints in `Cargo.toml` deny `unwrap`, `expect`,
   response,tenant,validation}.rs`, and every file of `src/features/` but
   `mod.rs` and each feature's `service.rs`.
 - **Yours** (first line `Scaffolded once`, or no header): `rok-sqlc.toml`,
-  `migrations/`, `src/{lib,main,app,config,error,openapi}.rs`,
-  `src/shared/{mod,auth}.rs`, `src/features/mod.rs`, each feature's
-  `service.rs` (business rules go there), `tests/`, and this README.
+  `migrations/`, `queries/`, `src/{lib,main,app,config,error,openapi}.rs`,
+  `src/shared/{mod,auth}.rs`, `src/shared/security/`,
+  `src/features/mod.rs`, each feature's `service.rs` (business rules go
+  there), `tests/`, and this README.
+
+`queries/` holds hand-written SQL, one file per feature: `rok-sqlc g` turns
+`queries/auth.sql` into `src/db/queries/auth.rs`, one function per query.
+Only the feature of that name (and `src/shared/`) calls it; `check-arch`
+reports another feature that does.
 
 Change the schema with a new migration, adjust `rok-sqlc.toml`, run
 `rok-sqlc g`, and the features follow.
@@ -101,7 +116,7 @@ Change the schema with a new migration, adjust `rok-sqlc.toml`, run
 - `role` is a PostgreSQL enum, so the schema `Role` is `user` or `admin`.
 - `has_password` is a generated column (`password_hash IS NOT NULL`).
 - `password_hash`, `totp_secret`, `avatar_key`, `failed_logins`,
-  `locked_until`, `updated_at` and `deleted_at` are hidden
+  `locked_until`, `token_version`, `updated_at` and `deleted_at` are hidden
   (`[api.hidden]`): no response carries them.
 - The columns the server sets are managed (`[conventions]
   managed_columns`), so no request body takes them; a trigger keeps
@@ -114,8 +129,12 @@ Change the schema with a new migration, adjust `rok-sqlc.toml`, run
   (`AuditLogEntryResponse`), served at `/audit-log`, read-only.
 - `[api.search]` and `[api.sort]` give the users list its `q` and
   `UserSort` (`created_at`, `email`).
-- `media` and `api_keys` are in the schema for the features to come and
-  have no API yet (`[api] exclude`).
+- `media` and `api_keys` are in the schema for the features to come, and
+  `auth_tokens` (single-use mailed tokens) and `outbound_mail` (the mail
+  outbox) for the account flows; none has a generated API (`[api]
+  exclude`).
+- `token_version` is bumped to sign an account out everywhere: a token
+  carrying an older one is rejected.
 
 `tests/contract.rs` lists the differences that remain, each with its
 reason: `avatar_url` (uploads), and the `?permanent=` and list `sort`/`order`

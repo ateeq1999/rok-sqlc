@@ -22,8 +22,9 @@ src/
 ├─ config.rs      reads env vars into one Config (the ONLY env reader)
 ├─ error.rs       AppError and its HTTP mapping, shared by all features
 ├─ db/            generated data layer: rows, typed ids, enums, all SQL, pool.rs
-├─ shared/        tools with no business meaning (auth.rs is yours; response,
-│                 pagination, validation, tenant, health are generated)
+├─ shared/        tools with no business meaning (auth.rs and security/ are
+│                 yours; response, pagination, validation, tenant, health
+│                 are generated)
 └─ features/
    ├─ mod.rs        `mod generated; pub use generated::*;` plus hand-written features
    ├─ generated.rs  generated: declares the features, register_services, configure_all
@@ -53,7 +54,7 @@ rules below follow them.
 |---|---|---|
 | A business rule | the feature's `service.rs`, overriding a `service_api.rs` default (`create_in`, `update_in`, ...) | handler, repo |
 | A new endpoint, request or response shape | the schema and `rok-sqlc.toml` (`[api]`), then `rok-sqlc g` | generated files |
-| SQL query | the data layer: a migration and `rok-sqlc g`, or a query file | service, handler |
+| SQL query | the data layer: a migration and `rok-sqlc g`, or the feature's query file, `queries/<feature>.sql` | service, handler |
 | New DB table or column | `migrations/000N_name.sql`, then `rok-sqlc g` | anywhere else |
 | Error case | a variant in `error.rs` | feature folder |
 | Code two features need | `shared/` | one feature |
@@ -77,8 +78,9 @@ rules below follow them.
 4. A feature never refers to another feature's modules. It may read another
    table through the data layer, but never calls another table's
    `<db_path>::<table>::write`: it writes another feature's data only
-   through a port it declares itself, inside the caller's transaction. The
-   data layer is exempt: the schema crosses features.
+   through a port it declares itself, inside the caller's transaction. It
+   calls its own query module, `<db_path>::queries::<feature>`, never
+   another feature's. The data layer is exempt: the schema crosses features.
 5. `shared/` never refers to the features.
 6. No `unwrap()`, `expect()`, `panic!`, `todo!`, `println!` or `dbg!`. Every
    fallible function returns `Result<_, AppError>`.

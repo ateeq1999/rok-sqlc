@@ -12,8 +12,8 @@ use crate::config::Config;
 use crate::db::pool::init_pool;
 use crate::features::{configure_all, register_services};
 use crate::openapi::document;
-use crate::shared::auth::JwtKeys;
 use crate::shared::health;
+use crate::shared::security::jwt::JwtKeys;
 
 /// Connects the pool, then serves the application on `config.bind_addr`
 /// until the server stops.
@@ -21,7 +21,7 @@ pub async fn run(config: Config) -> std::io::Result<()> {
     let pool = init_pool(&config.database_url, &config.pool)
         .await
         .map_err(std::io::Error::other)?;
-    let keys = web::Data::new(JwtKeys::new(&config.jwt_secret));
+    let keys = web::Data::new(JwtKeys::new(&config.jwt_secret, config.jwt_ttl));
     tracing::info!(addr = %config.bind_addr, "listening");
     HttpServer::new(move || App::new().configure(|cfg| configure(cfg, &pool, &keys)))
         .bind(&config.bind_addr)?

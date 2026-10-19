@@ -77,8 +77,9 @@ rules below follow them.
 4. A feature never refers to another feature's modules. It may read another
    table through the data layer, but never calls another table's
    `<db_path>::<table>::write`: it writes another feature's data only
-   through a port it declares itself, inside the caller's transaction. The
-   data layer is exempt: the schema crosses features.
+   through a port it declares itself, inside the caller's transaction. It
+   calls its own query module, `<db_path>::queries::<feature>`, never
+   another feature's. The data layer is exempt: the schema crosses features.
 5. `shared/` never refers to the features.
 6. No `unwrap()`, `expect()`, `panic!`, `todo!`, `println!` or `dbg!`. Every
    fallible function returns `Result<_, AppError>`.

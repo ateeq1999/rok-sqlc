@@ -1328,6 +1328,7 @@ test code, `#[cfg(test)]` or `#[test]`, never count):
 | `rule-5` | `shared/` never refers to the features module |
 | `rule-6` | no `unwrap()`, `expect()` (as methods or called through a path, `Option::unwrap(x)`), `panic!`, `todo!`, `println!` or `dbg!` |
 | `cross-feature-write` | a feature never refers to another table's `<db_path>::<table>::write`; reads are fine |
+| `cross-feature-query` | a feature calls its own query module, `<db_path>::queries::<feature>`, never another feature's |
 
 `-l`/`--lenient` prints layout violations as warnings on stderr instead of
 failing; rule violations still fail. Generated code passes every check.

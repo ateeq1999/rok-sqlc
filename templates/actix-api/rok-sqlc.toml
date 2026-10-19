@@ -1,9 +1,12 @@
 # The actix template's configuration; this file is yours. `rok-sqlc g` reads
-# it: `migrations/` becomes the data layer in `src/db/`, and `users` and
-# `audit_log` API features in `src/features/`. See README.md.
+# it: `migrations/` and `queries/` become the data layer in `src/db/`, and
+# `users` and `audit_log` API features in `src/features/`. See README.md.
 
 schema = "migrations/"
 output = "src/db"
+# Hand-written SQL, one file per feature: `queries/auth.sql` becomes
+# `db::queries::auth`, which only the `auth` feature (and `shared/`) calls.
+queries = ["queries/"]
 derive = ["serde", "validate"]
 extractors = ["actix_web"]
 
@@ -22,6 +25,7 @@ managed_columns = [
     "avatar_key",
     "failed_logins",
     "locked_until",
+    "token_version",
 ]
 
 [modules]
@@ -31,8 +35,10 @@ audit_log = "audit_log_entry"
 [api]
 output = "src/features"
 prefix = "/api/v1"
-# Their features are hand-written in a later release (uploads, API keys).
-exclude = ["media", "api_keys"]
+# `media` and `api_keys` are hand-written features of a later release
+# (uploads, API keys); `auth_tokens` and `outbound_mail` belong to the
+# account flows and the mail outbox.
+exclude = ["media", "api_keys", "auth_tokens", "outbound_mail"]
 
 [api.access]
 users = "admin"
@@ -55,6 +61,7 @@ users = [
     "avatar_key",
     "failed_logins",
     "locked_until",
+    "token_version",
     "updated_at",
     "deleted_at",
 ]

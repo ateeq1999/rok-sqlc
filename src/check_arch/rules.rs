@@ -65,7 +65,9 @@ pub(crate) fn rules() -> [String; 6] {
          table through the data layer, but never calls another table's \
          `<db_path>::<table>::write`: it writes another feature's data only \
          through a port it declares itself, inside the caller's transaction. \
-         The data layer is exempt: the schema crosses features."
+         It calls its own query module, `<db_path>::queries::<feature>`, never \
+         another feature's. The data layer is exempt: the schema crosses \
+         features."
             .to_owned(),
         "`shared/` never refers to the features.".to_owned(),
         "No `unwrap()`, `expect()`, `panic!`, `todo!`, `println!` or `dbg!`. \

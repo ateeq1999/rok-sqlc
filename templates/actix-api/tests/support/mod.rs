@@ -1,5 +1,5 @@
 //! What the API tests share: the whole application over a PostgreSQL schema
-//! of its own, requests to it, and callers' tokens.
+//! of its own, requests to it, and callers' accounts and tokens.
 //!
 //! The tests need `DATABASE_URL`; without it they print a note and pass.
 //! Each one creates a fresh schema holding the tables (`db::schema`'s
@@ -9,15 +9,20 @@
 #![allow(dead_code, reason = "each test file uses some of the helpers")]
 
 use std::str::FromStr;
+use std::time::Duration;
 
 use actix_api::app::configure;
 use actix_api::db::schema::SCHEMA_SQL;
-use actix_api::shared::auth::{Claims, JwtKeys, Role};
+use actix_api::db::types::Role;
+use actix_api::db::users::models::NewUser;
+use actix_api::db::users::write;
+use actix_api::shared::security::jwt::JwtKeys;
 use actix_web::http::{Method, StatusCode, header};
 use actix_web::{App, test, web};
 use serde_json::Value;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{AssertSqlSafe, PgPool};
+use uuid::Uuid;
 
 /// What a test returns.
 pub type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -93,7 +98,7 @@ pub async fn call(
     uri: &str,
     body: Option<Value>,
 ) -> Result<Answer, Box<dyn std::error::Error>> {
-    let keys = web::Data::new(JwtKeys::new(SECRET));
+    let keys = keys();
     let app = test::init_service(App::new().configure(|cfg| configure(cfg, pool, &keys))).await;
     let mut request = test::TestRequest::default().method(method).uri(uri);
     if let Some(token) = token {
@@ -113,26 +118,47 @@ pub async fn call(
     Ok(Answer { status, body })
 }
 
-/// A bearer token for the caller `id` with `role`, valid for an hour.
-pub fn token(id: uuid::Uuid, role: Role) -> Result<String, Box<dyn std::error::Error>> {
-    let exp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_secs()
-        + 3600;
-    let claims = Claims { sub: id, role, exp };
-    Ok(jsonwebtoken::encode(
-        &jsonwebtoken::Header::default(),
-        &claims,
-        &jsonwebtoken::EncodingKey::from_secret(SECRET.as_bytes()),
-    )?)
+/// The keys the test application signs and verifies tokens with.
+pub fn keys() -> web::Data<JwtKeys> {
+    web::Data::new(JwtKeys::new(SECRET, Duration::from_secs(3600)))
 }
 
-/// An admin's token.
-pub fn admin() -> Result<String, Box<dyn std::error::Error>> {
-    token(uuid::Uuid::now_v7(), Role::Admin)
+/// A bearer token for the account `id` with `role` and `token_version`,
+/// valid for an hour.
+pub fn token(
+    id: Uuid,
+    role: Role,
+    token_version: i32,
+) -> Result<String, Box<dyn std::error::Error>> {
+    Ok(keys().issue(id, role, token_version)?)
 }
 
-/// A signed-in user's token, not an admin's.
-pub fn user() -> Result<String, Box<dyn std::error::Error>> {
-    token(uuid::Uuid::now_v7(), Role::User)
+/// A new account with `role`, and a token for it: what signing in gives.
+pub async fn account(
+    pool: &PgPool,
+    role: Role,
+) -> Result<(Uuid, String), Box<dyn std::error::Error>> {
+    let id = Uuid::now_v7();
+    let row = write::create(
+        pool,
+        NewUser {
+            id: Some(id.into()),
+            email: format!("caller-{}@test.invalid", id.simple()),
+            display_name: None,
+            role: Some(role),
+            is_active: None,
+        },
+    )
+    .await?;
+    Ok((id, token(id, role, row.token_version)?))
+}
+
+/// A token of a new admin account.
+pub async fn admin(pool: &PgPool) -> Result<String, Box<dyn std::error::Error>> {
+    Ok(account(pool, Role::Admin).await?.1)
+}
+
+/// A token of a new account that is not an admin's.
+pub async fn user(pool: &PgPool) -> Result<String, Box<dyn std::error::Error>> {
+    Ok(account(pool, Role::User).await?.1)
 }

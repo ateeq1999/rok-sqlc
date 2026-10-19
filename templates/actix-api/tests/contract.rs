@@ -24,9 +24,10 @@
 //! gone (so the list stays true).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 
 use actix_api::app::configure;
-use actix_api::shared::auth::JwtKeys;
+use actix_api::shared::security::jwt::JwtKeys;
 use actix_web::{App, test, web};
 use serde_json::Value;
 
@@ -423,7 +424,7 @@ fn differences(target: &Value, served: &Value, covered: &[(&str, &str)]) -> Vec<
 /// pool never connects: serving the document needs no database.
 async fn served_document() -> Result<Value, Box<dyn std::error::Error>> {
     let pool = sqlx::PgPool::connect_lazy("postgres://localhost/unused")?;
-    let keys = web::Data::new(JwtKeys::new("unused"));
+    let keys = web::Data::new(JwtKeys::new("unused", Duration::from_secs(1)));
     let app = test::init_service(App::new().configure(|cfg| configure(cfg, &pool, &keys))).await;
     let request = test::TestRequest::get().uri("/api-docs/openapi.json");
     let response = test::call_service(&app, request.to_request()).await;

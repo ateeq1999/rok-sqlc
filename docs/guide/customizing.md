@@ -114,8 +114,9 @@ A feature may read any table through `crate::db`, but it writes another
 feature's data only through a **port**: a trait it declares in its own
 `service.rs`, implemented in `app.rs`, the only file that sees both
 features. `check-arch` reports a feature that names another feature's
-modules (`rule-4`) or another table's `crate::db::<table>::write`
-(`cross-feature-write`).
+modules (`rule-4`), another table's `crate::db::<table>::write`
+(`cross-feature-write`) or another feature's query module,
+`crate::db::queries::<feature>` (`cross-feature-query`).
 
 The tasks feature declares what it needs from projects:
 

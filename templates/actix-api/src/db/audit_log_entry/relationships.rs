@@ -48,7 +48,8 @@ where
             locked_until,
             created_at,
             updated_at,
-            deleted_at
+            deleted_at,
+            token_version
         FROM users
         WHERE id = ANY($1) AND deleted_at IS NULL
         "#,
@@ -101,7 +102,8 @@ where
             locked_until,
             created_at,
             updated_at,
-            deleted_at
+            deleted_at,
+            token_version
         FROM users
         WHERE id = ANY($1) AND deleted_at IS NULL
         "#,
@@ -157,6 +159,7 @@ impl<'r> sqlx::FromRow<'r, PgRow> for AuditLogEntryWithActorUser {
                     created_at: row.try_get("r_created_at")?,
                     updated_at: row.try_get("r_updated_at")?,
                     deleted_at: row.try_get("r_deleted_at")?,
+                    token_version: row.try_get("r_token_version")?,
                 })
             } else {
                 None
@@ -200,7 +203,8 @@ where
             r.locked_until AS r_locked_until,
             r.created_at AS r_created_at,
             r.updated_at AS r_updated_at,
-            r.deleted_at AS r_deleted_at
+            r.deleted_at AS r_deleted_at,
+            r.token_version AS r_token_version
         FROM audit_log AS t
         LEFT JOIN users AS r
             ON r.id = t.actor_user_id
@@ -254,6 +258,7 @@ impl<'r> sqlx::FromRow<'r, PgRow> for AuditLogEntryWithTargetUser {
                     created_at: row.try_get("r_created_at")?,
                     updated_at: row.try_get("r_updated_at")?,
                     deleted_at: row.try_get("r_deleted_at")?,
+                    token_version: row.try_get("r_token_version")?,
                 })
             } else {
                 None
@@ -297,7 +302,8 @@ where
             r.locked_until AS r_locked_until,
             r.created_at AS r_created_at,
             r.updated_at AS r_updated_at,
-            r.deleted_at AS r_deleted_at
+            r.deleted_at AS r_deleted_at,
+            r.token_version AS r_token_version
         FROM audit_log AS t
         LEFT JOIN users AS r
             ON r.id = t.target_user_id
