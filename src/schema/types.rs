@@ -166,23 +166,45 @@ impl Table {
     /// The table's unique keys as column lists: the primary key first, then
     /// each unique constraint or index that [counts](UniqueKey::counts), in
     /// declaration order. A key over the same columns as an earlier one (in
-    /// any order) is left out.
+    /// any order) is left out, and so is a
+    /// [case-insensitive](UniqueKey::case_insensitive) key, whose columns'
+    /// values are not unique as `=` compares them.
     pub fn unique_key_columns(&self, soft_delete_column: Option<&str>) -> Vec<Vec<String>> {
-        let mut keys: Vec<Vec<String>> = Vec::new();
+        self.unique_keys_with(soft_delete_column, false)
+            .into_iter()
+            .map(|key| key.columns)
+            .collect()
+    }
+
+    /// Like [`unique_key_columns`](Self::unique_key_columns), but keeping
+    /// case-insensitive keys: a key over the same columns as an earlier one
+    /// is left out whichever of them compares ignoring case.
+    pub fn lookup_unique_keys(&self, soft_delete_column: Option<&str>) -> Vec<UniqueKey> {
+        self.unique_keys_with(soft_delete_column, true)
+    }
+
+    fn unique_keys_with(
+        &self,
+        soft_delete_column: Option<&str>,
+        case_insensitive: bool,
+    ) -> Vec<UniqueKey> {
+        let mut keys: Vec<UniqueKey> = Vec::new();
         if !self.primary_key.is_empty() {
-            keys.push(self.primary_key.clone());
+            keys.push(UniqueKey::new(self.primary_key.clone()));
         }
-        let declared = self
-            .unique_keys
-            .iter()
-            .filter(|key| key.counts(soft_delete_column));
+        let declared = self.unique_keys.iter().filter(|key| {
+            key.counts(soft_delete_column) && (case_insensitive || !key.case_insensitive)
+        });
         for key in declared {
-            let same = |other: &Vec<String>| {
-                other.len() == key.columns.len()
-                    && key.columns.iter().all(|column| other.contains(column))
+            let same = |other: &UniqueKey| {
+                other.columns.len() == key.columns.len()
+                    && key
+                        .columns
+                        .iter()
+                        .all(|column| other.columns.contains(column))
             };
             if !keys.iter().any(same) {
-                keys.push(key.columns.clone());
+                keys.push(key.clone());
             }
         }
         keys
@@ -477,9 +499,10 @@ pub struct KeyConstraint {
     pub columns: Vec<String>,
 }
 
-/// Columns no two rows share, from a unique constraint or a unique index on
-/// plain columns, as declared. Whether a partial index makes a unique key is
-/// decided by [`UniqueKey::counts`].
+/// Columns no two rows share, from a unique constraint, a unique index on
+/// plain columns, or a unique index on `lower(<column>)` (a case-insensitive
+/// key), as declared. Whether a partial index makes a unique key is decided
+/// by [`UniqueKey::counts`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UniqueKey {
     /// Key columns in declaration order.
@@ -487,6 +510,10 @@ pub struct UniqueKey {
     /// The `WHERE` condition of a partial unique index, as SQL text; `None`
     /// for a constraint or a full index.
     pub predicate: Option<String>,
+    /// Whether the key is a unique index on `lower(<column>)`: its single
+    /// column's values are unique ignoring case, so a lookup compares
+    /// `lower(<column>) = lower($1)`.
+    pub case_insensitive: bool,
 }
 
 impl UniqueKey {
@@ -495,6 +522,7 @@ impl UniqueKey {
         Self {
             columns,
             predicate: None,
+            case_insensitive: false,
         }
     }
 
@@ -534,6 +562,7 @@ mod tests {
         UniqueKey {
             columns: vec!["sku".to_owned()],
             predicate: Some(predicate.to_owned()),
+            case_insensitive: false,
         }
     }
 

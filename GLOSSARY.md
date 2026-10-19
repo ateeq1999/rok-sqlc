@@ -97,7 +97,7 @@ Removing a row from the table, as opposed to a soft delete.
 _Avoid_: hard delete, purge
 
 **Unique key**:
-A set of columns no two live rows share (the primary key, a unique constraint, or an eligible unique index); each one gets a generated lookup.
+A set of columns no two live rows share (the primary key, a unique constraint, or an eligible unique index); each one gets a generated lookup. A unique index on `lower(<column>)` makes a **case-insensitive** unique key, whose lookup compares ignoring case.
 _Avoid_: natural key, alternate key
 
 **Drift**:
@@ -169,6 +169,10 @@ _Avoid_: constraint (that is the database's own check), validator
 **Validation failure**:
 The rejection of a body whose fields break validation rules, reported to the caller field by field with a stable code.
 _Avoid_: validation error (in user-facing text), 422
+
+**Pre-check**:
+A rule a generated `create_in` or `update_in` checks against the database, on the write's transaction, before it writes, such as `exists`: a foreign key must name a row the caller can see. Its failures are validation failures, every one answered together; the constraint behind it still answers a write that loses a race.
+_Avoid_: database validation, async rule
 
 **Update patch**:
 The `UpdateXxx` struct a caller passes to `update`; each field is optional, where `None` means "leave unchanged" and, for a nullable column, `Some(None)` means "set NULL".

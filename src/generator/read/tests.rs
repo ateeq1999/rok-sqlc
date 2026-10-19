@@ -147,3 +147,32 @@ fn output_is_deterministic() {
     let build = || render_alone(&table(vec![column("id", "i64")], &["id"]));
     assert_eq!(build(), build());
 }
+
+/// A unique index on `lower(email)` makes `get_by_email`, which compares
+/// ignoring case and, on a soft-delete table, sees only live rows.
+#[test]
+fn case_insensitive_unique_keys_look_up_ignoring_case() {
+    let mut users = table(
+        vec![
+            column("id", "i64"),
+            column("email", "String"),
+            column("deleted_at", "Option<chrono::DateTime<chrono::Utc>>"),
+        ],
+        &["id"],
+    );
+    users.soft_delete_column = Some("deleted_at".to_owned());
+    users.unique_keys.push(crate::schema::UniqueKey {
+        columns: vec!["email".to_owned()],
+        predicate: Some("deleted_at IS NULL".to_owned()),
+        case_insensitive: true,
+    });
+    let rendered = render_alone(&users);
+    assert!(
+        rendered.contains("pub async fn get_by_email<'e, E>(executor: E, email: &str)"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("        WHERE lower(email) = lower($1) AND deleted_at IS NULL\n"),
+        "{rendered}"
+    );
+}

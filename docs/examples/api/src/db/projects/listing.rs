@@ -154,6 +154,31 @@ where
     Ok(row.is_some())
 }
 
+/// Returns whether `owner` owns the row with the given primary key: the
+/// `exists` check of a reference to it in a create or update body.
+pub async fn exists_owned<'e, E>(
+    executor: E,
+    id: ProjectId,
+    owner: uuid::Uuid,
+) -> Result<bool, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS (
+            SELECT 1
+            FROM projects
+            WHERE id = $1 AND owner_id = $2
+        )
+        "#,
+    )
+    .bind(id)
+    .bind(owner)
+    .fetch_one(executor)
+    .await
+}
+
 /// Whether `owner` owns `row` (its `owner_id`).
 #[must_use]
 pub fn owned_by(row: &Project, owner: uuid::Uuid) -> bool {

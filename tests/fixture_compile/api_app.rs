@@ -109,7 +109,7 @@ fn generate_api_app() -> Result<Vec<PathBuf>> {
     // describe, public.
     api.access
         .insert("gadgets".into(), rok_sqlc::ApiAccess::Public);
-    // `profiles` (`0005_profiles.sql`): a string rule or transform on each
+    // `profiles` (`0006_profiles.sql`): a string rule or transform on each
     // column, public.
     api.access
         .insert("profiles".into(), rok_sqlc::ApiAccess::Public);

@@ -4,8 +4,8 @@
 
 use super::feature::{Endpoint, Feature, Key};
 use super::layout::{Uses, push_call, push_signature};
-use super::relation_service;
 use super::scope::tenant_arg;
+use super::{prechecks, relation_service};
 use crate::generator::{HEADER, push_doc};
 use crate::output::SCAFFOLD_HEADER;
 
@@ -368,6 +368,7 @@ fn render_write(output: &mut String, uses: &mut Uses, feature: &Feature<'_>, end
     params.extend(inputs);
     let inputs = params[1..].to_vec();
     let name = endpoint.name();
+    prechecks::import(uses, feature, endpoint);
     render_write_pair(output, feature, name, endpoint, &doc, &inputs, &returns);
     if endpoint == Endpoint::Remove && feature.soft_delete {
         let doc = format!(
@@ -411,6 +412,9 @@ fn render_write_pair(
     push_signature(output, 4, &format!("async fn {name}_in"), &params, &returns);
     if endpoint != Endpoint::Create {
         push_owned_check(output, feature);
+    }
+    if name == endpoint.name() {
+        prechecks::push_checks(output, feature, endpoint);
     }
     let mut args = data_args(feature, "&mut *conn");
     match endpoint {

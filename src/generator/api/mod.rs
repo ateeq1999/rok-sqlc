@@ -16,6 +16,7 @@ mod layout;
 pub mod listing;
 mod operation;
 mod paths;
+mod prechecks;
 mod relation_routes;
 mod relation_service;
 mod relations;
@@ -28,6 +29,7 @@ mod scope;
 mod search;
 mod service;
 pub mod shared;
+mod shared_validation;
 
 use std::path::PathBuf;
 
@@ -37,7 +39,8 @@ use crate::ApiConfig;
 use crate::schema::Table;
 
 /// The API features of `tables` (the run's tables, kept ones included), in
-/// table order, each with its relations to the others.
+/// table order, each with its relations to the others and the references
+/// its writes check.
 pub fn features<'a>(tables: &'a [Table], api: &'a ApiConfig) -> Result<Vec<Feature<'a>>, String> {
     let mut features = Vec::new();
     for table in tables {
@@ -47,8 +50,13 @@ pub fn features<'a>(tables: &'a [Table], api: &'a ApiConfig) -> Result<Vec<Featu
         .iter()
         .map(|feature| relations::relations(feature, &features, tables, api))
         .collect();
-    for (feature, relations) in features.iter_mut().zip(relations) {
+    let references: Vec<_> = features
+        .iter()
+        .map(|feature| prechecks::references(feature, &features, tables))
+        .collect();
+    for ((feature, relations), references) in features.iter_mut().zip(relations).zip(references) {
         feature.relations = relations;
+        feature.references = references;
     }
     Ok(features)
 }

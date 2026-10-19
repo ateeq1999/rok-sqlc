@@ -2,7 +2,8 @@
 
 //! Reading a request: validated JSON bodies, the wire standard's `400` for a
 //! malformed path or query, a versioned row's `If-Match`, and a
-//! many-to-many sync's list of keys.
+//! many-to-many sync's list of keys; and [`FieldFailures`], the failures of
+//! a write's database checks.
 //!
 //! A handler takes [`ValidatedJson`], which checks the body's rules and
 //! answers a bad body with a [`BodyRejection`] in the wire standard's error
@@ -14,6 +15,7 @@ use std::str::FromStr;
 use actix_web::dev::Payload;
 use actix_web::http::header;
 use actix_web::{FromRequest, HttpRequest, web};
+use validator::{ValidationError, ValidationErrors};
 
 use crate::error::AppError;
 
@@ -84,4 +86,47 @@ fn if_match<T: FromStr>(req: &HttpRequest) -> Result<T, AppError> {
 pub struct IdList<T> {
     /// The related rows' keys.
     pub ids: Vec<T>,
+}
+
+/// The field failures a write's database checks find, such as a foreign
+/// key naming no row the caller can see (`exists`). A generated `create_in`
+/// or `update_in` runs every check on its transaction, adding each failure
+/// here, then calls [`into_result`](Self::into_result) before it writes, so
+/// one `422 validation_failed` lists them all, in the `details` shape of
+/// the body's rules.
+#[derive(Debug, Default)]
+pub struct FieldFailures(ValidationErrors);
+
+impl FieldFailures {
+    /// Adds the failure `code` of `field`, with `message`.
+    pub fn add(&mut self, field: &'static str, code: &'static str, message: String) {
+        let error = ValidationError::new(code).with_message(message.into());
+        self.0.add(field, error);
+    }
+
+    /// Adds the `exists` failure of `field`, which names no `singular` row
+    /// the caller can see.
+    pub fn missing(&mut self, field: &'static str, singular: &str) {
+        let message = format!("{field} does not refer to an existing {singular}");
+        self.add(field, "exists", message);
+    }
+
+    /// Whether no failure was added.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// `Ok` when no failure was added.
+    ///
+    /// # Errors
+    ///
+    /// The `422 validation_failed` listing every failure added.
+    pub fn into_result(self) -> Result<(), AppError> {
+        if self.0.is_empty() {
+            Ok(())
+        } else {
+            Err(AppError::from(self.0))
+        }
+    }
 }

@@ -58,6 +58,40 @@ where
     .await
 }
 
+/// Fetches the row with the given `email`, or `None` if there is none.
+/// Soft-deleted rows are left out.
+pub async fn get_by_email<'e, E>(executor: E, email: &str) -> Result<Option<User>, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query_as::<_, User>(
+        r#"
+        SELECT
+            id,
+            email,
+            display_name,
+            password_hash,
+            has_password,
+            role,
+            is_active,
+            email_verified,
+            totp_secret,
+            totp_enabled,
+            avatar_key,
+            failed_logins,
+            locked_until,
+            created_at,
+            updated_at,
+            deleted_at
+        FROM users
+        WHERE lower(email) = lower($1) AND deleted_at IS NULL
+        "#,
+    )
+    .bind(email)
+    .fetch_optional(executor)
+    .await
+}
+
 /// Fetches every row, ordered by primary key.
 /// Soft-deleted rows are left out.
 pub async fn list<'e, E>(executor: E) -> Result<Vec<User>, sqlx::Error>

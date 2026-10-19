@@ -125,6 +125,107 @@
         ],
         "type": "string"
       },
+      "CommentInclude": {
+        "description": "The to-one relationships `?include=` takes, in `snake_case`.",
+        "enum": [
+          "document"
+        ],
+        "type": "string"
+      },
+      "CommentResponse": {
+        "description": "A `comments` row as the API answers it.",
+        "properties": {
+          "body": {
+            "description": "The `body` column.",
+            "type": "string"
+          },
+          "document_id": {
+            "description": "The `document_id` column.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "description": "The `id` column.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "tenant_id": {
+            "description": "The `tenant_id` column.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "document_id",
+          "body"
+        ],
+        "type": "object"
+      },
+      "CommentSearchFilter": {
+        "additionalProperties": false,
+        "description": "The search body's conditions by column: `CommentFilter` without its\nrelationship filters. A hidden column can't be named.",
+        "properties": {
+          "body": {
+            "default": [],
+            "description": "Conditions on the `body` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "document_id": {
+            "default": [],
+            "description": "Conditions on the `document_id` column.",
+            "items": {
+              "$ref": "#/components/schemas/Equality_DocumentId"
+            },
+            "type": "array"
+          },
+          "id": {
+            "default": [],
+            "description": "Conditions on the `id` column.",
+            "items": {
+              "$ref": "#/components/schemas/Equality_CommentId"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "CommentSort": {
+        "description": "The columns `GET /api/v1/comments?sort=` takes, in `snake_case`.",
+        "enum": [
+          "id"
+        ],
+        "type": "string"
+      },
+      "CommentWithDocumentResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CommentResponse",
+            "description": "The row."
+          },
+          {
+            "properties": {
+              "document": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DocumentResponse",
+                    "description": "Its `document`, or `null` when there is none the caller may read."
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          }
+        ],
+        "description": "A `comments` row with its `document`, as `?include=document` answers it."
+      },
       "CreateAccountDto": {
         "description": "`POST /api/v1/accounts`'s body, checked by the rules of `NewAccount`.\nA field for a defaulted column may be left out.",
         "properties": {
@@ -168,6 +269,25 @@
         },
         "required": [
           "action"
+        ],
+        "type": "object"
+      },
+      "CreateCommentDto": {
+        "description": "`POST /api/v1/comments`'s body, checked by the rules of `NewComment`.\nA field for a defaulted column may be left out.",
+        "properties": {
+          "body": {
+            "description": "The `body` column.",
+            "type": "string"
+          },
+          "document_id": {
+            "description": "The `document_id` column.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "body"
         ],
         "type": "object"
       },
@@ -919,6 +1039,75 @@
                 "description": "Equal to none of the values.",
                 "items": {
                   "description": "The primary key of the `accounts` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "not_in"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Equality_CommentId": {
+        "description": "A condition on a boolean or UUID column.",
+        "oneOf": [
+          {
+            "description": "Equal to the value.",
+            "properties": {
+              "eq": {
+                "description": "The primary key of the `comments` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "eq"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Not equal to the value.",
+            "properties": {
+              "ne": {
+                "description": "The primary key of the `comments` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ne"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Equal to one of the values.",
+            "properties": {
+              "in": {
+                "description": "Equal to one of the values.",
+                "items": {
+                  "description": "The primary key of the `comments` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "in"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Equal to none of the values.",
+            "properties": {
+              "not_in": {
+                "description": "Equal to none of the values.",
+                "items": {
+                  "description": "The primary key of the `comments` table, as a distinct type so it\ncannot be mixed up with another table's key.",
                   "format": "uuid",
                   "type": "string"
                 },
@@ -2762,6 +2951,71 @@
         ],
         "type": "object"
       },
+      "PaginatedResponse_CommentResponse": {
+        "description": "One page of a list: `{\"items\", \"page\", \"per_page\", \"total\"}`.",
+        "properties": {
+          "items": {
+            "description": "The page's rows.",
+            "items": {
+              "description": "A `comments` row as the API answers it.",
+              "properties": {
+                "body": {
+                  "description": "The `body` column.",
+                  "type": "string"
+                },
+                "document_id": {
+                  "description": "The `document_id` column.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "id": {
+                  "description": "The `id` column.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "tenant_id": {
+                  "description": "The `tenant_id` column.",
+                  "format": "uuid",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "tenant_id",
+                "document_id",
+                "body"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "page": {
+            "description": "The page, from 1.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "per_page": {
+            "description": "The most rows a page holds.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "description": "The rows on every page together.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total"
+        ],
+        "type": "object"
+      },
       "PaginatedResponse_DocumentResponse": {
         "description": "One page of a list: `{\"items\", \"page\", \"per_page\", \"total\"}`.",
         "properties": {
@@ -4166,6 +4420,62 @@
         },
         "type": "object"
       },
+      "SearchCommentsBody": {
+        "additionalProperties": false,
+        "description": "`POST /api/v1/comments/search`'s body: `filter` matches rows by column (every\ncondition must hold), `sort` and `order` sort them, and `page` and\n`per_page` page them, as the list's query does.",
+        "properties": {
+          "filter": {
+            "default": {},
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CommentSearchFilter",
+                "description": "The conditions rows must meet."
+              }
+            ]
+          },
+          "order": {
+            "default": null,
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SortOrder",
+                "description": "The order, `desc` unless given."
+              }
+            ]
+          },
+          "page": {
+            "default": null,
+            "description": "The page, from 1.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "per_page": {
+            "default": null,
+            "description": "The rows per page: 20 unless given, at most 100.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "sort": {
+            "default": null,
+            "description": "A `CommentSort` key, `id` unless given.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "SearchDocumentsBody": {
         "additionalProperties": false,
         "description": "`POST /api/v1/documents/search`'s body: `filter` matches rows by column (every\ncondition must hold), `sort` and `order` sort them, and `page` and\n`per_page` page them, as the list's query does.",
@@ -4879,6 +5189,29 @@
           "password_hash": {
             "default": null,
             "description": "The new value of the `password_hash` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "UpdateCommentDto": {
+        "description": "`PATCH /api/v1/comments/{id}`'s body, checked by the rules of `UpdateComment`.\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
+        "properties": {
+          "body": {
+            "default": null,
+            "description": "The new value of the `body` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "document_id": {
+            "default": null,
+            "description": "The new value of the `document_id` column.",
+            "format": "uuid",
             "type": [
               "string",
               "null"
@@ -6248,6 +6581,513 @@
         ]
       }
     },
+    "/api/v1/comments": {
+      "get": {
+        "operationId": "list",
+        "parameters": [
+          {
+            "description": "The page, from 1. Defaults to 1.",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The rows a page holds, 1 to 100. Defaults to 20.",
+            "in": "query",
+            "name": "per_page",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CommentSort"
+            }
+          },
+          {
+            "description": "The sort's direction. Defaults to `desc`.",
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_CommentResponse"
+                }
+              }
+            },
+            "description": "One page of rows."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`GET /api/v1/comments`: one page of rows, `200`.",
+        "tags": [
+          "comments"
+        ]
+      },
+      "post": {
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCommentDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentResponse"
+                }
+              }
+            },
+            "description": "The row, created.",
+            "headers": {
+              "Location": {
+                "description": "The created row's URL.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A unique or foreign-key violation."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body breaks a rule or a check."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`POST /api/v1/comments`: creates a row, `201` with its `Location`.",
+        "tags": [
+          "comments"
+        ]
+      }
+    },
+    "/api/v1/comments/search": {
+      "post": {
+        "operationId": "search",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchCommentsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_CommentResponse"
+                }
+              }
+            },
+            "description": "One page of the rows the filter matches."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body breaks a rule or a check."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`POST /api/v1/comments/search`: one page of the rows the body's filter matches, `200`.",
+        "tags": [
+          "comments"
+        ]
+      }
+    },
+    "/api/v1/comments/{id}": {
+      "delete": {
+        "operationId": "remove",
+        "parameters": [
+          {
+            "description": "Comment id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The row, deleted."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`DELETE /api/v1/comments/{id}`: deletes the row, `204`.",
+        "tags": [
+          "comments"
+        ]
+      },
+      "get": {
+        "operationId": "get_one",
+        "parameters": [
+          {
+            "description": "Comment id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The relationship to embed.",
+            "in": "query",
+            "name": "include",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CommentInclude"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentResponse"
+                }
+              }
+            },
+            "description": "The row, with the relationship `?include=` names embedded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The caller is not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`GET /api/v1/comments/{id}`: the row, `200`.\n`?include=` embeds a to-one relationship.",
+        "tags": [
+          "comments"
+        ]
+      },
+      "patch": {
+        "operationId": "update",
+        "parameters": [
+          {
+            "description": "Comment id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCommentDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentResponse"
+                }
+              }
+            },
+            "description": "The row, changed."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A unique or foreign-key violation."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body breaks a rule or a check."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`PATCH /api/v1/comments/{id}`: changes the row, `200` with it.",
+        "tags": [
+          "comments"
+        ]
+      }
+    },
     "/api/v1/documents": {
       "get": {
         "operationId": "list",
@@ -6767,6 +7607,16 @@
               }
             },
             "description": "No such row, or not the caller's."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A unique or foreign-key violation."
           }
         },
         "security": [
@@ -7021,6 +7871,87 @@
           }
         ],
         "summary": "`PATCH /api/v1/documents/{id}`: changes the row, `200` with it.\n`If-Match` must hold the row's current `ETag`.",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/v1/documents/{id}/comments": {
+      "get": {
+        "operationId": "list_comments",
+        "parameters": [
+          {
+            "description": "Document id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CommentResponse"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "The related rows."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The caller is not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`GET /api/v1/documents/{id}/comments`: the row's `comments`, `200` with a JSON array.",
         "tags": [
           "documents"
         ]
@@ -11284,6 +12215,9 @@
     },
     {
       "name": "gadgets"
+    },
+    {
+      "name": "comments"
     },
     {
       "name": "profiles"

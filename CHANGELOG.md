@@ -7,8 +7,40 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+### Breaking changes to the generated API
+
+- The `exists` pre-check: a create or update body's foreign key that names
+  no row the caller can see answers `422 validation_failed`, with
+  `details` keyed by the column, code `exists` and the message
+  `<column> does not refer to an existing <singular>`, instead of
+  `409 conflict` naming the constraint. A row counts as missing when it
+  doesn't exist, is soft-deleted, is in another tenant, or belongs to
+  another caller (an owned table's, when the referencing feature is owned
+  too). `null` and absent fields are skipped, and every failure is listed
+  in one answer. The generated `create_in` and `update_in` run the checks
+  on their transaction before writing; the constraint's `409` stays for a
+  row deleted in between. A reference to a tenant-scoped table from a
+  table without the tenant column, or to anything but the whole
+  single-column key, is left to the constraint.
+
 ### Added
 
+- `shared/validation.rs` has `FieldFailures`, the collector of a write's
+  pre-check failures, answered as one `422`. An owned table's
+  `db/<table>/listing.rs` has `exists_owned`, the check of a reference to
+  one of its rows.
+- A unique index whose only entry is `lower(<column>)` (any casing of
+  `lower`, the column optionally quoted) is a case-insensitive unique key
+  (`UniqueKey::case_insensitive`). The usual partial-index rule applies
+  (`WHERE deleted_at IS NULL` counts under the soft-delete convention). Its
+  lookup, `read::get_by_<col>`, compares `lower(col) = lower($1)`, and so
+  does the API's `by-<col>` route. Other expression indexes are still
+  ignored, and `ON CONFLICT (<col>)` doesn't match such a key (PostgreSQL
+  needs `ON CONFLICT (lower(<col>))`). Output changes only for schemas with
+  such an index: the actix template's `users` gains `get_by_email` (its
+  skipped `lookups` keep the route out), and its update now documents
+  `409`. The module corpus has only composite `lower()` indexes,
+  so its output is unchanged.
 - `[api.rules]`: string rules and transforms by VineJS name, by table and
   text column, in the config file and the JSON payload (`ApiConfig::rules`,
   `ApiRule`). `CreateXDto` and `UpdateXDto` check them (`validator`'s

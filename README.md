@@ -1457,7 +1457,9 @@ generated code uses.
   Renaming a key constraint's index renames the constraint.
 - `CREATE UNIQUE INDEX` on plain columns, which becomes a unique key with a
   lookup. A partial index over live rows (`WHERE deleted_at IS NULL`) counts
-  under the soft-delete convention. Expression indexes are ignored.
+  under the soft-delete convention. An index on just `lower(<col>)` is a
+  case-insensitive unique key: its lookup compares `lower(col) = lower($1)`.
+  Other expression indexes are ignored.
 - `CREATE TYPE … AS ENUM`, and `ALTER TYPE … ADD VALUE`/`RENAME VALUE`/
   `RENAME TO`. A renamed enum takes the Rust name of its new name, and the
   columns using it follow.

@@ -140,8 +140,9 @@ CREATE TABLE refunds (
 );
 
 -- Unique keys: the composite unique constraint gets
--- `get_by_organization_id_and_code`; the expression index and the partial
--- index (its condition is not a soft-delete condition) get no lookup.
+-- `get_by_organization_id_and_code`, the index on `lower(name)` gets
+-- `get_by_name` (comparing ignoring case), and the partial index (its
+-- condition is not a soft-delete condition) gets no lookup.
 CREATE TABLE app.branches (
     id BIGSERIAL PRIMARY KEY,
     organization_id UUID NOT NULL,

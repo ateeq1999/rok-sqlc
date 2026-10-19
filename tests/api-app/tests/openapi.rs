@@ -117,11 +117,12 @@ fn response_ref(operation: &Value, status: &str) -> Option<String> {
 
 /// Whether `path` needs a caller, from the fixture's access per feature
 /// (`tests/fixture_compile/api_app.rs`): `accounts` and `documents` are
-/// admin only, `tasks` keeps the default (`user`), and the rest are public.
+/// admin only, `tasks` and `comments` keep the default (`user`), and the rest
+/// are public.
 /// A relationship route needs what the stricter of its two features needs.
 fn needs_caller(path: &str) -> bool {
     path.split('/')
-        .any(|segment| matches!(segment, "accounts" | "documents" | "tasks"))
+        .any(|segment| matches!(segment, "accounts" | "comments" | "documents" | "tasks"))
 }
 
 #[actix_web::test]

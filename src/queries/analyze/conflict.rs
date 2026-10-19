@@ -151,7 +151,7 @@ pub(super) fn check_conflict_target(
     let partial: Vec<&String> = table
         .unique_keys
         .iter()
-        .filter(|key| same_columns(&key.columns))
+        .filter(|key| !key.case_insensitive && same_columns(&key.columns))
         .filter_map(|key| key.predicate.as_ref())
         .collect();
     if let Some(predicate) = predicate {

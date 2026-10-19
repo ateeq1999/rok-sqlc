@@ -12,7 +12,8 @@ const UNIQUE_KEYS_SCHEMA: &str = "CREATE TABLE products (\n\
      UNIQUE (organization_id, code)\n\
      );\n\
      CREATE UNIQUE INDEX products_lower_name ON products (lower(name));\n\
-     CREATE UNIQUE INDEX products_barcode_set ON products (barcode) WHERE barcode <> '';\n";
+     CREATE UNIQUE INDEX products_barcode_set ON products (barcode) WHERE barcode <> '';\n\
+     CREATE UNIQUE INDEX products_upper_barcode ON products (upper(barcode));\n";
 
 #[test]
 fn on_conflict_target_must_match_a_unique_key() -> Result<()> {
@@ -270,7 +271,7 @@ fn default_constraint_names_avoid_indexes_sequences_and_views() -> Result<()> {
 }
 
 #[test]
-fn unique_keys_get_lookups_but_expression_and_partial_indexes_do_not() -> Result<()> {
+fn unique_keys_get_lookups_but_other_expression_and_partial_indexes_do_not() -> Result<()> {
     let dir = TempDir::new()?;
     let schema = dir.path().join("schema.sql");
     fs::write(&schema, UNIQUE_KEYS_SCHEMA)?;
@@ -302,7 +303,20 @@ fn unique_keys_get_lookups_but_expression_and_partial_indexes_do_not() -> Result
         "{read}"
     );
     assert!(read.contains("    .bind(organization_id)\n    .bind(code)\n"));
-    assert!(!read.contains("get_by_name"), "expression index: {read}");
-    assert!(!read.contains("get_by_barcode"), "partial index: {read}");
+    // A unique index on `lower(name)` is a case-insensitive key.
+    assert!(
+        read.contains(
+            "pub async fn get_by_name<'e, E>(executor: E, name: &str) -> Result<Option<Product>, sqlx::Error>"
+        ),
+        "{read}"
+    );
+    assert!(
+        read.contains("        WHERE lower(name) = lower($1)\n"),
+        "{read}"
+    );
+    assert!(
+        !read.contains("get_by_barcode"),
+        "partial and `upper` indexes: {read}"
+    );
     Ok(())
 }

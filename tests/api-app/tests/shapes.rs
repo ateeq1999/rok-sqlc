@@ -50,7 +50,7 @@ async fn composite_keys_go_in_the_path_in_order() {
     );
     assert_error(&get(&db, &uri).await, StatusCode::NOT_FOUND, "not_found");
 
-    // A foreign key to no row is a conflict naming the constraint.
+    // A foreign key to no row fails validation (`tests/references.rs`).
     let answer = call(
         &db,
         Method::POST,
@@ -58,9 +58,8 @@ async fn composite_keys_go_in_the_path_in_order() {
         Some(json!({"team": "x", "note_id": uuid::Uuid::now_v7()})),
     )
     .await;
-    assert_error(&answer, StatusCode::CONFLICT, "conflict");
-    let message = answer.body["error"]["message"].as_str().unwrap_or_default();
-    assert!(message.contains("members_note_id_fkey"), "{message}");
+    assert_error(&answer, StatusCode::UNPROCESSABLE_ENTITY, "validation_failed");
+    assert_eq!(answer.body["error"]["details"]["note_id"][0]["code"], "exists");
     // A malformed second key segment.
     let answer = get(&db, &format!("{MEMBERS}/team/not-a-uuid")).await;
     assert_error(&answer, StatusCode::BAD_REQUEST, "bad_request");
