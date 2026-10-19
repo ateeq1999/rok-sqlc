@@ -22,13 +22,29 @@ the *generated* API count as breaking (see ADR 0012).
   row deleted in between. A reference to a tenant-scoped table from a
   table without the tenant column, or to anything but the whole
   single-column key, is left to the constraint.
+- The `unique` pre-check: a create or update body holding a value a unique
+  key of the table already has answers `422 validation_failed`, with
+  `details` keyed by the column, code `unique` and the message
+  `<column> is already taken`, instead of `409 conflict` naming the
+  constraint. A composite key is reported against its last column, as
+  `<col a> and <col b> are already taken together`. The check runs on the
+  write's transaction with the `exists` checks, so one `422` lists both
+  kinds; it stays in the caller's tenant, never counts the row being
+  updated, counts only live rows for a partial index on
+  `<soft-delete column> IS NULL`, and compares ignoring case for a key on
+  `lower(<column>)`. Only keys whose columns the body holds (present and
+  not `null`) are checked; a key with the owner column is left to the
+  constraint, whose `409` also stays for a race. To opt out, override
+  `create_in` or `update_in` in the feature's `service.rs`.
 
 ### Added
 
 - `shared/validation.rs` has `FieldFailures`, the collector of a write's
-  pre-check failures, answered as one `422`. An owned table's
-  `db/<table>/listing.rs` has `exists_owned`, the check of a reference to
-  one of its rows.
+  pre-check failures, answered as one `422` (`missing`, `taken` and
+  `taken_together` add the `exists` and `unique` failures). An owned
+  table's `db/<table>/listing.rs` has `exists_owned`, the check of a
+  reference to one of its rows, and a table whose feature checks a unique
+  key has `<columns>_taken(executor, [tenant], values.., except)`.
 - A unique index whose only entry is `lower(<column>)` (any casing of
   `lower`, the column optionally quoted) is a case-insensitive unique key
   (`UniqueKey::case_insensitive`). The usual partial-index rule applies

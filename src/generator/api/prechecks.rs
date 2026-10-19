@@ -1,7 +1,8 @@
 //! The checks a generated write runs on its transaction before it writes,
 //! each failure a field's: [`Reference`], a foreign key of the create or
-//! update body, which must name a row the caller can see (`exists`). The
-//! failures collect in `shared/validation.rs`'s `FieldFailures`, answered
+//! update body, which must name a row the caller can see (`exists`), then
+//! the body's unique keys, which no other row may hold ([`super::unique`]).
+//! The failures collect in `shared/validation.rs`'s `FieldFailures`, answered
 //! as one `422 validation_failed`; the database's constraint stays the
 //! race's fallback (`409`).
 
@@ -122,7 +123,7 @@ fn checked<'f, 'a>(feature: &'f Feature<'a>, endpoint: Endpoint) -> Vec<&'f Refe
 /// collector, and each referenced table's data layer module.
 pub fn import(uses: &mut Uses, feature: &Feature<'_>, endpoint: Endpoint) {
     let checked = checked(feature, endpoint);
-    if !checked.is_empty() {
+    if !checked.is_empty() || super::unique::checked(feature, endpoint) {
         uses.add(FIELD_FAILURES);
     }
     for reference in checked {
@@ -135,17 +136,18 @@ pub fn import(uses: &mut Uses, feature: &Feature<'_>, endpoint: Endpoint) {
 
 /// The checks `endpoint`'s `<write>_in` runs before it writes, on `conn`:
 /// each reference of its body that is present and not `null` must name a
-/// row the caller can see, and every failure is answered at once. Nothing
-/// when the body has no reference.
+/// row the caller can see, each unique key it holds must be free, and
+/// every failure is answered at once. Nothing when the body has neither.
 pub fn push_checks(output: &mut String, feature: &Feature<'_>, endpoint: Endpoint) {
     let checked = checked(feature, endpoint);
-    if checked.is_empty() {
+    if checked.is_empty() && !super::unique::checked(feature, endpoint) {
         return;
     }
     output.push_str("        let mut failures = FieldFailures::default();\n");
     for reference in checked {
         push_reference(output, endpoint, reference);
     }
+    super::unique::push_checks(output, feature, endpoint);
     output.push_str("        failures.into_result()?;\n");
 }
 

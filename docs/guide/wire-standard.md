@@ -102,10 +102,10 @@ field.
 | `unauthorized` | 401 | no bearer token, or one that is invalid or expired |
 | `forbidden` | 403 | an `admin` route called with a token whose role isn't `admin` |
 | `not_found` | 404 | no row has the key, or it is another caller's (`[api.owner]`) |
-| `conflict` | 409 | a unique or foreign-key violation, naming the constraint (a referenced row deleted after the `exists` check, for one) |
+| `conflict` | 409 | a unique or foreign-key violation, naming the constraint (a race the `exists` or `unique` check missed, for one) |
 | `version_conflict` | 412 | `If-Match` holds a stale version, or none |
 | `payload_too_large` | 413 | the body is over actix-web's JSON limit (2 MiB unless you set a `JsonConfig`) |
-| `validation_failed` | 422 | JSON that doesn't fit the body (a wrong type, a missing field), a body breaking its rules, a foreign key naming no row the caller can see (`exists`), or a check constraint violation |
+| `validation_failed` | 422 | JSON that doesn't fit the body (a wrong type, a missing field), a body breaking its rules, a foreign key naming no row the caller can see (`exists`), a value a unique key already holds (`unique`), or a check constraint violation |
 | `precondition_required` | 428 | `PATCH` on a versioned table without `If-Match` |
 | `internal_error` | 500 | anything else, such as a lost database connection |
 
@@ -192,7 +192,9 @@ content-type: application/json
 ```
 
 That is a project deleted while tasks still reference it. A unique
-violation reads ``the value is already taken (constraint `<name>`)``. Name
+violation reads ``the value is already taken (constraint `<name>`)``; the
+generated writes check unique keys first (`unique`, below), so it is the
+answer of a race between two writes, or of a key the check leaves out. Name
 your constraints in the migrations if clients branch on them.
 
 ### 422: validation
@@ -238,6 +240,27 @@ key, which answers `409`. A reference the check can't scope (a
 tenant-scoped table referenced from a table without the tenant column, or
 a key that isn't the referenced table's whole single-column key) is left
 to the constraint too.
+
+A value a unique key of the table already holds fails too, under the code
+`unique`, in the same answer as the `exists` misses. Every single-column
+unique key the body holds is checked, and so is every composite one whose
+columns the body holds together; a composite key is reported against its
+last column:
+
+```http
+HTTP/1.1 422 Unprocessable Entity
+content-type: application/json
+
+{"error":{"code":"validation_failed","message":"the request failed validation","details":{"email":[{"code":"unique","message":"email is already taken","params":{}}],"seat":[{"code":"unique","message":"region and seat are already taken together","params":{}}]}}}
+```
+
+The check counts the rows the key does: only live ones for a partial
+index on `<soft-delete column> IS NULL`, and only the caller's tenant's.
+An update never counts the row it changes, so sending a row's own value
+back passes. A key on `lower(<column>)` compares ignoring case. A key with
+the owner column, or a patch holding only some of a composite key's
+columns, is left to the constraint, as is a duplicate written between the
+check and the write: `409 conflict`, naming the constraint.
 
 JSON that doesn't fit the body answers serde's message, without details:
 

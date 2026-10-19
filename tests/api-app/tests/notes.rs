@@ -69,7 +69,7 @@ async fn create_failures() {
     };
     note(&db, "taken", "Taken", None).await;
 
-    // A unique violation is a conflict naming the constraint.
+    // A taken unique value is the field's failure (`tests/unique.rs`).
     let answer = call(
         &db,
         Method::POST,
@@ -77,9 +77,8 @@ async fn create_failures() {
         Some(json!({"slug": "taken", "title": "Again"})),
     )
     .await;
-    assert_error(&answer, StatusCode::CONFLICT, "conflict");
-    let message = answer.body["error"]["message"].as_str().unwrap_or_default();
-    assert!(message.contains("notes_slug_key"), "{message}");
+    assert_error(&answer, StatusCode::UNPROCESSABLE_ENTITY, "validation_failed");
+    assert_eq!(answer.body["error"]["details"]["slug"][0]["code"], "unique");
 
     // Broken rules are a validation failure, field by field.
     let answer = call(
@@ -159,7 +158,7 @@ async fn update_failures() {
     assert_eq!(answer.status, StatusCode::UNPROCESSABLE_ENTITY, "{answer:?}");
     assert_eq!(answer.code(), "validation_failed");
     let answer = call(&db, Method::PATCH, &uri, Some(json!({"slug": "two"}))).await;
-    assert_error(&answer, StatusCode::CONFLICT, "conflict");
+    assert_error(&answer, StatusCode::UNPROCESSABLE_ENTITY, "validation_failed");
     let answer = call_raw(&db, Method::PATCH, &uri, "{\"title\"").await;
     assert_error(&answer, StatusCode::BAD_REQUEST, "bad_request");
     let answer = call(

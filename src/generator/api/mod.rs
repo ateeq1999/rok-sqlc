@@ -1,8 +1,8 @@
 //! Everything `api.output` generates (ADR 0016): the infrastructure beside
 //! the features ([`shared`]), each table's API feature under
 //! `api.output/<module>/`, the root `generated.rs` and `README.md`, and the
-//! data layer's `listing.rs` that a feature's reads and relationship writes
-//! go through.
+//! data layer's `listing.rs` that a feature's reads, `unique` checks and
+//! relationship writes go through.
 //!
 //! [`Feature`] is the model the renderers share: its endpoints, lookups and
 //! relations decide the routes, handlers, and service methods.
@@ -27,6 +27,7 @@ mod search;
 mod service;
 pub mod shared;
 mod shared_validation;
+mod unique;
 
 use std::path::PathBuf;
 
@@ -58,11 +59,13 @@ pub fn features<'a>(tables: &'a [Table], api: &'a ApiConfig) -> Result<Vec<Featu
     Ok(features)
 }
 
-/// Whether `feature` needs the data layer's `listing.rs`.
+/// Whether `feature` needs the data layer's `listing.rs`: its list, search,
+/// owned reads, `unique` checks or relationship writes.
 pub fn has_listing(feature: &Feature<'_>) -> bool {
     feature.serves(Endpoint::List)
         || feature.serves(Endpoint::Search)
         || feature.reads_owned_rows()
+        || !unique::checks(feature).is_empty()
         || feature
             .relations
             .iter()

@@ -17,9 +17,9 @@
 
 **Blocked by:** 01, 03
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `tests/api-app` against PostgreSQL covers:
+- [x] `tests/api-app` against PostgreSQL covers:
   - a duplicate on create and on update;
   - a case-insensitive duplicate;
   - a soft-deleted duplicate allowed;
@@ -27,4 +27,18 @@
   - a composite duplicate;
   - updating a row to its own value allowed;
   - several failures in one 422.
-- [ ] The race fallback stays 409 (documented and unit-tested at the error-mapping level).
+- [x] The race fallback stays 409 (documented and unit-tested at the error-mapping level).
+
+## Comments
+
+Resolved on branch `rok-sqlc-0-5-02`.
+
+- **Generator:** `src/generator/api/unique.rs`. `unique::checks(feature)` picks the keys from `Table::lookup_unique_keys` (primary key included), less the tenant column. A key is checked on create or update when that body holds every one of its columns. The data layer's `listing.rs` gets `<cols>_taken(executor, [tenant], values.., except: Option<Key>)`, which excludes the row with `IS DISTINCT FROM`. `prechecks::push_checks` renders the checks after the `exists` ones, before `into_result()?`. `FieldFailures` gains `taken(field)` and `taken_together(&[fields])`.
+- **Fixture:** `tests/api-app/migrations/0006_handles.sql` (`handles`: tenant-scoped, soft-deleted, `lower(email)`, `(tenant_id, nickname)`, `(tenant_id, region, seat)`, all partial on `deleted_at IS NULL`). The tests are in `tests/api-app/tests/unique.rs`, including the race fallback (`AppError::from` a real unique violation is a `409`). `notes.rs` now expects 422 for a duplicate slug.
+- **Deviations:**
+  - Soft-deleted rows are left out only for a key that is partial on the soft-delete column. A full constraint counts them too, as the database does, so its duplicate is a 422 rather than a 409.
+  - Not checked; these keep the 409:
+    - a key including the owner column;
+    - a patch holding only some of a composite key's columns;
+    - a column bound neither by value nor by borrow.
+  - The template's `users.email` gets no check. `create` is skipped and `email` is immutable, so neither body holds it. Only the template's `shared/validation.rs` changes.

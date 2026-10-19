@@ -396,6 +396,35 @@
         ],
         "type": "object"
       },
+      "CreateHandleDto": {
+        "description": "`POST /api/v1/handles`'s body, checked by the rules of `NewHandle`.\nA field for a defaulted column may be left out.",
+        "properties": {
+          "email": {
+            "description": "The `email` column.",
+            "type": "string"
+          },
+          "nickname": {
+            "description": "The `nickname` column.",
+            "type": "string"
+          },
+          "region": {
+            "description": "The `region` column.",
+            "type": "string"
+          },
+          "seat": {
+            "description": "The `seat` column.",
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "email",
+          "nickname",
+          "region",
+          "seat"
+        ],
+        "type": "object"
+      },
       "CreateLabelDto": {
         "description": "`POST /api/v1/labels`'s body, checked by the rules of `NewLabel`.\nA field for a defaulted column may be left out.",
         "properties": {
@@ -1307,6 +1336,75 @@
           }
         ]
       },
+      "Equality_HandleId": {
+        "description": "A condition on a boolean or UUID column.",
+        "oneOf": [
+          {
+            "description": "Equal to the value.",
+            "properties": {
+              "eq": {
+                "description": "The primary key of the `handles` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "eq"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Not equal to the value.",
+            "properties": {
+              "ne": {
+                "description": "The primary key of the `handles` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ne"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Equal to one of the values.",
+            "properties": {
+              "in": {
+                "description": "Equal to one of the values.",
+                "items": {
+                  "description": "The primary key of the `handles` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "in"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Equal to none of the values.",
+            "properties": {
+              "not_in": {
+                "description": "Equal to none of the values.",
+                "items": {
+                  "description": "The primary key of the `handles` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "not_in"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Equality_NoteId": {
         "description": "A condition on a boolean or UUID column.",
         "oneOf": [
@@ -1759,6 +1857,125 @@
       },
       "GadgetSort": {
         "description": "The columns `GET /api/v1/gadgets?sort=` takes, in `snake_case`.",
+        "enum": [
+          "id"
+        ],
+        "type": "string"
+      },
+      "HandleResponse": {
+        "description": "A `handles` row as the API answers it.",
+        "properties": {
+          "deleted_at": {
+            "description": "The `deleted_at` column.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "description": "The `email` column.",
+            "type": "string"
+          },
+          "id": {
+            "description": "The `id` column.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "nickname": {
+            "description": "The `nickname` column.",
+            "type": "string"
+          },
+          "region": {
+            "description": "The `region` column.",
+            "type": "string"
+          },
+          "seat": {
+            "description": "The `seat` column.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "tenant_id": {
+            "description": "The `tenant_id` column.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "email",
+          "nickname",
+          "region",
+          "seat"
+        ],
+        "type": "object"
+      },
+      "HandleSearchFilter": {
+        "additionalProperties": false,
+        "description": "The search body's conditions by column: `HandleFilter` without its\nrelationship filters. A hidden column can't be named.",
+        "properties": {
+          "deleted_at": {
+            "default": [],
+            "description": "Conditions on the `deleted_at` column.",
+            "items": {
+              "$ref": "#/components/schemas/Ordered_String"
+            },
+            "type": "array"
+          },
+          "deleted_at_is_null": {
+            "default": null,
+            "description": "Whether the `deleted_at` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "email": {
+            "default": [],
+            "description": "Conditions on the `email` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "id": {
+            "default": [],
+            "description": "Conditions on the `id` column.",
+            "items": {
+              "$ref": "#/components/schemas/Equality_HandleId"
+            },
+            "type": "array"
+          },
+          "nickname": {
+            "default": [],
+            "description": "Conditions on the `nickname` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "region": {
+            "default": [],
+            "description": "Conditions on the `region` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "seat": {
+            "default": [],
+            "description": "Conditions on the `seat` column.",
+            "items": {
+              "$ref": "#/components/schemas/Ordered_i32"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "HandleSort": {
+        "description": "The columns `GET /api/v1/handles?sort=` takes, in `snake_case`.",
         "enum": [
           "id"
         ],
@@ -3006,6 +3223,89 @@
         ],
         "type": "object"
       },
+      "PaginatedResponse_HandleResponse": {
+        "description": "One page of a list: `{\"items\", \"page\", \"per_page\", \"total\"}`.",
+        "properties": {
+          "items": {
+            "description": "The page's rows.",
+            "items": {
+              "description": "A `handles` row as the API answers it.",
+              "properties": {
+                "deleted_at": {
+                  "description": "The `deleted_at` column.",
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "email": {
+                  "description": "The `email` column.",
+                  "type": "string"
+                },
+                "id": {
+                  "description": "The `id` column.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "nickname": {
+                  "description": "The `nickname` column.",
+                  "type": "string"
+                },
+                "region": {
+                  "description": "The `region` column.",
+                  "type": "string"
+                },
+                "seat": {
+                  "description": "The `seat` column.",
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "tenant_id": {
+                  "description": "The `tenant_id` column.",
+                  "format": "uuid",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "tenant_id",
+                "email",
+                "nickname",
+                "region",
+                "seat"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "page": {
+            "description": "The page, from 1.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "per_page": {
+            "description": "The most rows a page holds.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "description": "The rows on every page together.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total"
+        ],
+        "type": "object"
+      },
       "PaginatedResponse_LabelResponse": {
         "description": "One page of a list: `{\"items\", \"page\", \"per_page\", \"total\"}`.",
         "properties": {
@@ -3592,6 +3892,62 @@
           "sort": {
             "default": null,
             "description": "A `GadgetSort` key, `id` unless given.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "SearchHandlesBody": {
+        "additionalProperties": false,
+        "description": "`POST /api/v1/handles/search`'s body: `filter` matches rows by column (every\ncondition must hold), `sort` and `order` sort them, and `page` and\n`per_page` page them, as the list's query does.",
+        "properties": {
+          "filter": {
+            "default": {},
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HandleSearchFilter",
+                "description": "The conditions rows must meet."
+              }
+            ]
+          },
+          "order": {
+            "default": null,
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SortOrder",
+                "description": "The order, `desc` unless given."
+              }
+            ]
+          },
+          "page": {
+            "default": null,
+            "description": "The page, from 1.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "per_page": {
+            "default": null,
+            "description": "The rows per page: 20 unless given, at most 100.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "sort": {
+            "default": null,
+            "description": "A `HandleSort` key, `id` unless given.",
             "type": [
               "string",
               "null"
@@ -4245,6 +4601,45 @@
           },
           "specs": {
             "description": "The new value of the `specs` column."
+          }
+        },
+        "type": "object"
+      },
+      "UpdateHandleDto": {
+        "description": "`PATCH /api/v1/handles/{id}`'s body, checked by the rules of `UpdateHandle`.\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
+        "properties": {
+          "email": {
+            "default": null,
+            "description": "The new value of the `email` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nickname": {
+            "default": null,
+            "description": "The new value of the `nickname` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "region": {
+            "default": null,
+            "description": "The new value of the `region` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seat": {
+            "default": null,
+            "description": "The new value of the `seat` column.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "type": "object"
@@ -7522,6 +7917,695 @@
         ]
       }
     },
+    "/api/v1/handles": {
+      "get": {
+        "operationId": "list",
+        "parameters": [
+          {
+            "description": "The page, from 1. Defaults to 1.",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The rows a page holds, 1 to 100. Defaults to 20.",
+            "in": "query",
+            "name": "per_page",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/HandleSort"
+            }
+          },
+          {
+            "description": "The sort's direction. Defaults to `desc`.",
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_HandleResponse"
+                }
+              }
+            },
+            "description": "One page of rows."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`GET /api/v1/handles`: one page of rows, `200`.",
+        "tags": [
+          "handles"
+        ]
+      },
+      "post": {
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateHandleDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandleResponse"
+                }
+              }
+            },
+            "description": "The row, created.",
+            "headers": {
+              "Location": {
+                "description": "The created row's URL.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A unique or foreign-key violation."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body breaks a rule or a check."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`POST /api/v1/handles`: creates a row, `201` with its `Location`.",
+        "tags": [
+          "handles"
+        ]
+      }
+    },
+    "/api/v1/handles/by-email/{value}": {
+      "get": {
+        "operationId": "get_by_email",
+        "parameters": [
+          {
+            "description": "Handle email",
+            "in": "path",
+            "name": "value",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandleResponse"
+                }
+              }
+            },
+            "description": "The row."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`GET /api/v1/handles/by-email/{value}`: the row whose `email` is the value, `200`.",
+        "tags": [
+          "handles"
+        ]
+      }
+    },
+    "/api/v1/handles/by-nickname/{value}": {
+      "get": {
+        "operationId": "get_by_nickname",
+        "parameters": [
+          {
+            "description": "Handle nickname",
+            "in": "path",
+            "name": "value",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandleResponse"
+                }
+              }
+            },
+            "description": "The row."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`GET /api/v1/handles/by-nickname/{value}`: the row whose `nickname` is the value, `200`.",
+        "tags": [
+          "handles"
+        ]
+      }
+    },
+    "/api/v1/handles/search": {
+      "post": {
+        "operationId": "search",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchHandlesBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_HandleResponse"
+                }
+              }
+            },
+            "description": "One page of the rows the filter matches."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body breaks a rule or a check."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`POST /api/v1/handles/search`: one page of the rows the body's filter matches, `200`.",
+        "tags": [
+          "handles"
+        ]
+      }
+    },
+    "/api/v1/handles/{id}": {
+      "delete": {
+        "operationId": "remove",
+        "parameters": [
+          {
+            "description": "Handle id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Whether to delete the row for good rather than soft-delete it.",
+            "in": "query",
+            "name": "permanent",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The row, soft-deleted (deleted with `?permanent=true`)."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`DELETE /api/v1/handles/{id}`: soft-deletes the row (deletes it with `?permanent=true`), `204`.",
+        "tags": [
+          "handles"
+        ]
+      },
+      "get": {
+        "operationId": "get_one",
+        "parameters": [
+          {
+            "description": "Handle id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandleResponse"
+                }
+              }
+            },
+            "description": "The row."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`GET /api/v1/handles/{id}`: the row, `200`.",
+        "tags": [
+          "handles"
+        ]
+      },
+      "patch": {
+        "operationId": "update",
+        "parameters": [
+          {
+            "description": "Handle id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateHandleDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandleResponse"
+                }
+              }
+            },
+            "description": "The row, changed."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A unique or foreign-key violation."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body breaks a rule or a check."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`PATCH /api/v1/handles/{id}`: changes the row, `200` with it.",
+        "tags": [
+          "handles"
+        ]
+      }
+    },
+    "/api/v1/handles/{id}/restore": {
+      "post": {
+        "operationId": "restore",
+        "parameters": [
+          {
+            "description": "Handle id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandleResponse"
+                }
+              }
+            },
+            "description": "The row, restored."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A unique or foreign-key violation."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`POST /api/v1/handles/{id}/restore`: restores the soft-deleted row, `200` with it.",
+        "tags": [
+          "handles"
+        ]
+      }
+    },
     "/api/v1/labels": {
       "get": {
         "operationId": "list",
@@ -10523,6 +11607,9 @@
     },
     {
       "name": "comments"
+    },
+    {
+      "name": "handles"
     }
   ]
 }

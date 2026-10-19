@@ -403,8 +403,9 @@ fn digest(text: &str) -> u64 {
 /// health's handlers, renamed `liveness` and `readiness` (milestone 2), and
 /// the milestone 2 review: plain backticks for doc links an OpenAPI
 /// description would show, and `PageQuery`, without `q`, for the lists of
-/// tables with no search columns; and 0.5's `exists` checks, with the
-/// fixture's `comments` table they are tested on. To rewrite it after
+/// tables with no search columns; and 0.5's `exists` and `unique` checks,
+/// with the fixture's `comments` and `handles` tables they are tested on.
+/// To rewrite it after
 /// another such change, run
 /// `ROK_SQLC_UPDATE_EXPECTED=1 cargo test --test api_openapi`, and diff the
 /// output against that commit's binary to check nothing else moved.

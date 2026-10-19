@@ -415,3 +415,21 @@ Without it, a key column with a database default is optional in the create
 body (left out, the database makes it), and one without a default is
 required: the caller supplies the key. An identity or serial key is never
 in the body.
+
+## Checks from the schema: `unique` and `exists`
+
+Two checks need no key: the schema decides them. Before a create or update
+writes, its `create_in` or `update_in` checks, on the write's transaction,
+that every foreign key in the body names a row the caller can see
+(`exists`) and that no other row already holds a unique key's values
+(`unique`), and answers every failure in one `422 validation_failed`
+([the wire standard](wire-standard.md#422-validation) has the details). A unique
+index on `lower(<column>)` is checked ignoring case, and a partial one on
+`<soft-delete column> IS NULL` counts live rows only. The data layer's
+`db/<table>/listing.rs` holds each key's read, `<columns>_taken`.
+
+The database's constraints stay, so a race the checks miss still answers
+`409 conflict`. To drop or change a check, override `create_in` or
+`update_in` in the feature's `service.rs`: the override replaces the
+generated default, checks included, and can call the same `repo::` reads
+and `FieldFailures` (`shared/validation.rs`).

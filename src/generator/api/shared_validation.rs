@@ -1,7 +1,7 @@
 //! The template of `shared/validation.rs`, one of the shared tools
 //! [`super::shared`] renders: reading a request, and `FieldFailures`, which
-//! collects the field failures of a write's database checks (`exists`) into
-//! one `422`.
+//! collects the field failures of a write's database checks (`exists`,
+//! `unique`) into one `422`.
 
 pub(super) const VALIDATION: &str = r#"//! Reading a request: validated JSON bodies, the wire standard's `400` for a
 //! malformed path or query, a versioned row's `If-Match`, and a
@@ -90,7 +90,8 @@ pub struct IdList<T> {
 }
 
 /// The field failures a write's database checks find, such as a foreign
-/// key naming no row the caller can see (`exists`). A generated `create_in`
+/// key naming no row the caller can see (`exists`) or a value another row
+/// already has (`unique`). A generated `create_in`
 /// or `update_in` runs every check on its transaction, adding each failure
 /// here, then calls [`into_result`](Self::into_result) before it writes, so
 /// one `422 validation_failed` lists them all, in the `details` shape of
@@ -110,6 +111,26 @@ impl FieldFailures {
     pub fn missing(&mut self, field: &'static str, singular: &str) {
         let message = format!("{field} does not refer to an existing {singular}");
         self.add(field, "exists", message);
+    }
+
+    /// Adds the `unique` failure of `field`, whose value another row
+    /// already has.
+    pub fn taken(&mut self, field: &'static str) {
+        self.add(field, "unique", format!("{field} is already taken"));
+    }
+
+    /// Adds the `unique` failure of a composite key, whose values together
+    /// another row already has, against its last field.
+    pub fn taken_together(&mut self, fields: &[&'static str]) {
+        if let [init @ .., last] = fields {
+            let names = if init.is_empty() {
+                (*last).to_owned()
+            } else {
+                format!("{} and {last}", init.join(", "))
+            };
+            let message = format!("{names} are already taken together");
+            self.add(last, "unique", message);
+        }
     }
 
     /// Whether no failure was added.

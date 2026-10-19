@@ -3,9 +3,10 @@
 //! Generated for a table whose feature serves `list` (the `XSort` keys
 //! `sort` takes, and a page of rows matching `q`, with its count) or
 //! `search`, has an owner (every read scoped to the caller: the list's,
-//! `get_owned`, `lock_owned` and `exists_owned`), or writes a many-to-many relationship
-//! (its join table's writes, which a feature may only call through its own
-//! table's module).
+//! `get_owned`, `lock_owned` and `exists_owned`), checks a unique key of a
+//! create or update body (`<columns>_taken`, see [`super::unique`]), or
+//! writes a many-to-many relationship (its join table's writes, which a
+//! feature may only call through its own table's module).
 
 use super::feature::{Endpoint, Feature};
 use super::layout::push_signature;
@@ -19,6 +20,7 @@ use crate::generator::{
     HEADER, StaticQuery, doc_name, keys, param_name, param_type, push_doc, push_fn_head,
     push_let_call, types_import, use_paths,
 };
+use crate::schema::Column;
 
 /// The `search.rs` helper the listing matches `q` with, appended to
 /// `db/search.rs` when `api.output` is set.
@@ -77,6 +79,13 @@ pub fn render(feature: &Feature<'_>) -> String {
             "//! The reads of one row the caller owns: another caller's row is none.\n".to_owned(),
         );
     }
+    let checks = super::unique::checks(feature);
+    if !checks.is_empty() {
+        docs.push(
+            "//! The `unique` checks of a create or update body: whether another row\n//! already has its values.\n"
+                .to_owned(),
+        );
+    }
     if !pairs.is_empty() {
         docs.push(
             "//! The many-to-many relationships' writes, through their join tables.\n".to_owned(),
@@ -99,10 +108,24 @@ pub fn render(feature: &Feature<'_>) -> String {
         paths.push(format!("super::filter::{}", feature.db_filter()));
     }
     let mut models = vec![feature.row().to_owned()];
-    if owned {
+    if owned || !checks.is_empty() {
         models.extend(keys::key_items(table));
         paths.extend(keys::id_imports(table, keys::param_columns(table), true));
-        if !types_import("super::super", [keys::key_type(table).as_str()]).is_empty() {
+        let checked = || {
+            checks
+                .iter()
+                .flat_map(|check| check.columns.iter().copied())
+        };
+        paths.extend(keys::id_imports(table, checked(), true));
+        models.extend(
+            checked()
+                .filter_map(|column| column.typed_id.as_ref())
+                .filter(|id| id.module == table.module_name)
+                .map(|id| id.name.clone()),
+        );
+        let key_type = keys::key_type(table);
+        let types = checked().map(Column::value_type).chain([key_type.as_str()]);
+        if !types_import("super::super", types).is_empty() {
             paths.push("super::super::types".to_owned());
         }
     }
@@ -142,6 +165,7 @@ pub fn render(feature: &Feature<'_>) -> String {
         output.push('\n');
         render_owned(&mut output, feature);
     }
+    super::unique::render_reads(&mut output, feature, &checks);
     for relation in pairs {
         super::relation_service::render_pair_writes(&mut output, relation);
     }

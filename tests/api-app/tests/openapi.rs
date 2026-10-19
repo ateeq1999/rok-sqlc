@@ -122,7 +122,7 @@ fn response_ref(operation: &Value, status: &str) -> Option<String> {
 /// A relationship route needs what the stricter of its two features needs.
 fn needs_caller(path: &str) -> bool {
     path.split('/')
-        .any(|segment| matches!(segment, "accounts" | "comments" | "documents" | "tasks"))
+        .any(|segment| matches!(segment, "accounts" | "comments" | "documents" | "handles" | "tasks"))
 }
 
 #[actix_web::test]
