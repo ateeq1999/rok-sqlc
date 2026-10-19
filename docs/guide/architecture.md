@@ -103,12 +103,13 @@ or it belongs in a feature. Decide which.
    features' `generated.rs`, `shared/` and the data layer.
 3. `service.rs` never writes SQL. It calls the data layer's functions and
    traits from `shared/`.
-4. A feature never refers to another feature's modules. It may read another
-   table through the data layer, but never calls another table's
-   `<db_path>::<table>::write`: it writes another feature's data only
-   through a port it declares itself, inside the caller's transaction. It
-   calls its own query module, `<db_path>::queries::<feature>`, never
-   another feature's. The data layer is exempt: the schema crosses features.
+4. A feature never refers to another feature's modules. It may read any
+   table through the data layer. It writes its own table through
+   `<db_path>::<table>::write`, any table through its own query module,
+   `<db_path>::queries::<feature>`, and another feature's data through that
+   feature's service, behind a port it declares itself, inside the caller's
+   transaction. It never calls another table's `write` or another feature's
+   query module. The data layer is exempt: the schema crosses features.
 5. `shared/` never refers to the features.
 6. No `unwrap()`, `expect()`, `panic!`, `todo!`, `println!` or `dbg!`. Every
    fallible function returns `Result<_, AppError>`.

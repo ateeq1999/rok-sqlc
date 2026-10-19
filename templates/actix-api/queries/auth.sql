@@ -1,13 +1,6 @@
 -- The account flows' SQL. `rok-sqlc g` generates `src/db/queries/auth.rs`,
--- one function per query; the `auth` feature and `shared/` call them.
-
--- name: SessionState :maybe_one
--- What `AuthUser` checks on every request: the live account's token
--- version, whether it is active, and its role. A soft-deleted account has
--- none.
-SELECT token_version, is_active, role
-FROM users
-WHERE id = $1 AND deleted_at IS NULL;
+-- one function per query, which only the `auth` feature calls (the session
+-- check `shared/auth.rs` runs is in `session.sql`).
 
 -- name: FindLogin :maybe_one
 -- The live account signing in with `email`, whatever its case.
@@ -70,6 +63,14 @@ UPDATE auth_tokens
 SET used_at = now()
 WHERE token_hash = $1 AND purpose = $2 AND used_at IS NULL AND expires_at > now()
 RETURNING user_id, new_email;
+
+-- name: LiveTokenPurpose :maybe_one
+-- What the unused, unexpired token whose hash is `$1` was issued for,
+-- without spending it: a flow checks the link before its slow work (the
+-- breach check, hashing), then spends it with `ConsumeToken`.
+SELECT purpose
+FROM auth_tokens
+WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now();
 
 -- name: ResetPassword :execrows
 -- A reset (or invitation) link redeemed for the live account `$1`: its

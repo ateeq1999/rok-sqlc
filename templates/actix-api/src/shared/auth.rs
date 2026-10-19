@@ -4,7 +4,7 @@
 //!
 //! Each verifies the HS256 JWT from `Authorization: Bearer <token>` with the
 //! [`JwtKeys`] that `app.rs` registers as app data, then loads the account
-//! with one query (`db::queries::auth::session_state`, on the
+//! with one query (`db::queries::session::session_state`, on the
 //! `web::Data<PgPool>` app data): its `token_version`, whether it is active,
 //! and its role. A missing or invalid token, a soft-deleted or disabled
 //! account, or a token issued before the last `token_version` bump is a
@@ -21,7 +21,7 @@ use actix_web::{FromRequest, HttpRequest, web};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::db::queries::auth::{SessionStateRow, session_state};
+use crate::db::queries::session::{SessionStateRow, session_state};
 pub use crate::db::types::Role;
 use crate::error::AppError;
 pub use crate::shared::security::jwt::{Claims, JwtKeys};

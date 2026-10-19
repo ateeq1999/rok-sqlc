@@ -118,3 +118,21 @@ where
     .await?;
     Ok(())
 }
+
+/// Runs the `RedactMail` query (`:exec`).
+pub async fn redact_mail<'e, E>(executor: E, id: OutboundMailId) -> Result<(), sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query(
+        r#"
+        UPDATE outbound_mail
+        SET payload = payload || '{"text": "(removed: never sent)", "html": "(removed: never sent)"}'::jsonb
+        WHERE id = $1
+        "#,
+    )
+    .bind(id)
+    .execute(executor)
+    .await?;
+    Ok(())
+}

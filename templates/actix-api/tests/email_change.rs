@@ -71,7 +71,7 @@ async fn a_confirmed_change_moves_sign_in_to_the_new_address() -> TestResult {
 }
 
 #[actix_web::test]
-async fn a_change_to_a_taken_address_is_accepted_but_mails_nothing() -> TestResult {
+async fn a_change_to_a_taken_address_notifies_the_old_one_alone() -> TestResult {
     let Some(db) = Database::fresh().await? else {
         return Ok(());
     };
@@ -80,8 +80,15 @@ async fn a_change_to_a_taken_address_is_accepted_but_mails_nothing() -> TestResu
     let body = json!({"current_password": PASSWORD, "new_email": "TAKEN@example.com"});
     let answer = call(&db.pool, Some(&token), Method::POST, CHANGE, Some(body)).await?;
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.body);
+    // The old address hears of every request, free address or not, so the
+    // notice tells nobody who has an account; no link leaves.
     let mail = mailed(&db.pool).await?;
-    assert!(mail.is_empty(), "{:?}", mail);
+    let to: Vec<&str> = mail.iter().map(|mail| mail.to.as_str()).collect();
+    assert_eq!(to, ["mover@example.com"], "{mail:?}");
+    assert!(
+        mail.iter().all(|mail| mailed_token(mail).is_none()),
+        "{mail:?}"
+    );
     db.drop().await
 }
 

@@ -1,9 +1,10 @@
 // Scaffolded once by rok-sqlc; this file is yours. It is never regenerated. See docs/guide/architecture.md.
 
 //! `AuthService`: the account flows' rules. Signing up, signing in (with
-//! the lockout), and email verification. Every write goes through this
-//! feature's query module, `db::queries::auth`; mail is enqueued on the
-//! flow's own transaction and committed through the outbox.
+//! the lockout), email verification, the password flows, email change and
+//! invitations. Every write goes through this feature's query module,
+//! `db::queries::auth`, or through a port; mail is enqueued on the flow's
+//! own transaction and committed through the outbox.
 //!
 //! [`issue_token`] and [`consume_token`] are the single-use token lifecycle
 //! every mailed link shares (verification, reset, email change,
@@ -27,7 +28,7 @@ use crate::db::types::{AuthTokenPurpose, Role};
 use crate::db::users::models::{User, UserId};
 use crate::db::users::read as users;
 use crate::error::AppError;
-use crate::shared::mail::{Outbox, Templates};
+use crate::shared::mail::{Mail, Outbox, Templates};
 use crate::shared::security::breach::BreachCheck;
 use crate::shared::security::jwt::JwtKeys;
 use crate::shared::security::password;
@@ -41,6 +42,15 @@ pub const LOCK_MINUTES: i32 = 15;
 
 /// How long an email verification link stays valid, in hours.
 pub const VERIFICATION_TTL_HOURS: i64 = 24;
+
+/// How long a password reset link stays valid, in hours.
+pub const PASSWORD_RESET_TTL_HOURS: i64 = 1;
+
+/// How long an email change link stays valid, in hours.
+pub const EMAIL_CHANGE_TTL_HOURS: i64 = 1;
+
+/// How long an invitation link stays valid, in days.
+pub const INVITATION_TTL_DAYS: i64 = 7;
 
 /// The `401` of every failed sign-in: it doesn't say which part was wrong,
 /// nor whether the account exists.
@@ -67,6 +77,7 @@ pub struct AuthService {
     pub audit: Arc<dyn AuditTrail>,
 }
 
+/// Signing up, signing in and email verification.
 impl AuthService {
     /// Signs `input` up: a new `user` account with an unverified email,
     /// and a verification link mailed on the same transaction. A breached
@@ -78,22 +89,15 @@ impl AuthService {
         let mut tx = self.pool.begin().await?;
         let user = queries::create_user(&mut *tx, UserId::generate(), &input.email, Some(&hash))
             .await
-            .map_err(|err| match AppError::from(err) {
-                AppError::Conflict(_) => {
-                    AppError::Conflict("this email is already registered".to_owned())
-                }
-                other => other,
-            })?;
-        let link = issue_token(
+            .map_err(conflict_as(email_taken))?;
+        self.mail_link(
             &mut tx,
             user.id,
+            &user.email,
             AuthTokenPurpose::EmailVerification,
-            TimeDelta::hours(VERIFICATION_TTL_HOURS),
             None,
         )
         .await?;
-        let mail = self.templates.verification(&user.email, &link.raw);
-        self.outbox.enqueue(&mut tx, &mail).await?;
         self.outbox.commit(tx).await?;
         Ok(user)
     }
@@ -146,7 +150,7 @@ impl AuthService {
         let mut tx = self.pool.begin().await?;
         let spent = consume_token(&mut tx, raw, AuthTokenPurpose::EmailVerification).await?;
         if queries::mark_email_verified(&mut *tx, spent.user_id).await? == 0 {
-            return Err(AppError::InvalidToken(INVALID_TOKEN.to_owned()));
+            return Err(invalid_token());
         }
         tx.commit().await?;
         Ok(())
@@ -162,16 +166,14 @@ impl AuthService {
             return Ok(());
         }
         let mut tx = self.pool.begin().await?;
-        let link = issue_token(
+        self.mail_link(
             &mut tx,
             user.id,
+            &user.email,
             AuthTokenPurpose::EmailVerification,
-            TimeDelta::hours(VERIFICATION_TTL_HOURS),
             None,
         )
         .await?;
-        let mail = self.templates.verification(&user.email, &link.raw);
-        self.outbox.enqueue(&mut tx, &mail).await?;
         self.outbox.commit(tx).await
     }
 
@@ -183,6 +185,66 @@ impl AuthService {
             ));
         }
         Ok(())
+    }
+
+    /// Issues a `purpose` link for `user` on `conn` (the flow's
+    /// transaction), spending the older ones, and enqueues the message that
+    /// carries it to `to`. The caller commits through the outbox.
+    async fn mail_link(
+        &self,
+        conn: &mut PgConnection,
+        user: UserId,
+        to: &str,
+        purpose: AuthTokenPurpose,
+        new_email: Option<String>,
+    ) -> Result<(), AppError> {
+        let (ttl, render) = link_kind(purpose);
+        let link = issue_token(&mut *conn, user, purpose, ttl, new_email).await?;
+        let mail = render(&self.templates, to, &link.raw);
+        self.outbox.enqueue(conn, &mail).await
+    }
+}
+
+/// Renders the message carrying a link: `(templates, to, raw token)`.
+type RenderLink = fn(&Templates, &str, &str) -> Mail;
+
+/// How long a `purpose` link lasts, and the message that carries it.
+fn link_kind(purpose: AuthTokenPurpose) -> (TimeDelta, RenderLink) {
+    match purpose {
+        AuthTokenPurpose::EmailVerification => (
+            TimeDelta::hours(VERIFICATION_TTL_HOURS),
+            Templates::verification,
+        ),
+        AuthTokenPurpose::PasswordReset => (
+            TimeDelta::hours(PASSWORD_RESET_TTL_HOURS),
+            Templates::password_reset,
+        ),
+        AuthTokenPurpose::EmailChange => (
+            TimeDelta::hours(EMAIL_CHANGE_TTL_HOURS),
+            Templates::email_change,
+        ),
+        AuthTokenPurpose::Invitation => {
+            (TimeDelta::days(INVITATION_TTL_DAYS), Templates::invitation)
+        }
+    }
+}
+
+/// The `400 invalid_token` of a link that can't be used.
+fn invalid_token() -> AppError {
+    AppError::InvalidToken(INVALID_TOKEN.to_owned())
+}
+
+/// The `409` of an email a live account already uses.
+fn email_taken() -> AppError {
+    AppError::Conflict("this email is already registered".to_owned())
+}
+
+/// Maps an error to [`AppError`], answering `replacement` instead for a
+/// unique violation (a `409`): what a taken email means to the flow.
+fn conflict_as<E: Into<AppError>>(replacement: fn() -> AppError) -> impl FnOnce(E) -> AppError {
+    move |err| match err.into() {
+        AppError::Conflict(_) => replacement(),
+        other => other,
     }
 }
 
@@ -223,11 +285,8 @@ pub async fn consume_token(
 ) -> Result<ConsumeTokenRow, AppError> {
     queries::consume_token(conn, &token::hash(raw), purpose)
         .await?
-        .ok_or_else(|| AppError::InvalidToken(INVALID_TOKEN.to_owned()))
+        .ok_or_else(invalid_token)
 }
-
-/// How long a password reset link stays valid, in hours.
-pub const PASSWORD_RESET_TTL_HOURS: i64 = 1;
 
 /// The password flows: forgot, reset and change.
 impl AuthService {
@@ -239,40 +298,44 @@ impl AuthService {
             return Ok(());
         };
         let mut tx = self.pool.begin().await?;
-        let link = issue_token(
+        self.mail_link(
             &mut tx,
             user.id,
+            &user.email,
             AuthTokenPurpose::PasswordReset,
-            TimeDelta::hours(PASSWORD_RESET_TTL_HOURS),
             None,
         )
         .await?;
-        let mail = self.templates.password_reset(&user.email, &link.raw);
-        self.outbox.enqueue(&mut tx, &mail).await?;
         self.outbox.commit(tx).await
     }
 
     /// Redeems a password reset link, or an invitation's (whose email is
     /// then verified too): the account's password becomes `new_password`,
     /// every older session is signed out, any lock is lifted, and the
-    /// token is spent. A breached password is a `400 breached_password`;
-    /// an unknown, expired or used token a `400 invalid_token`.
+    /// token is spent.
+    ///
+    /// The link is checked first, without spending it: an unknown, expired
+    /// or used token is a `400 invalid_token` that costs no breach check
+    /// and no hash. Then a breached password is a `400 breached_password`
+    /// (the link still works). The hash is computed before the transaction
+    /// opens, which then spends the token and writes the password.
     pub async fn reset_password(&self, input: ResetPasswordDto) -> Result<(), AppError> {
+        let purpose = queries::live_token_purpose(&self.pool, &token::hash(&input.token))
+            .await?
+            .filter(|purpose| {
+                matches!(
+                    purpose,
+                    AuthTokenPurpose::PasswordReset | AuthTokenPurpose::Invitation
+                )
+            })
+            .ok_or_else(invalid_token)?;
         self.reject_breached(&input.new_password).await?;
-        let mut tx = self.pool.begin().await?;
-        let (spent, invited) =
-            match consume_token(&mut tx, &input.token, AuthTokenPurpose::PasswordReset).await {
-                Ok(spent) => (spent, false),
-                Err(AppError::InvalidToken(_)) => {
-                    let spent =
-                        consume_token(&mut tx, &input.token, AuthTokenPurpose::Invitation).await?;
-                    (spent, true)
-                }
-                Err(other) => return Err(other),
-            };
         let hash = password::hash(input.new_password).await?;
+        let invited = purpose == AuthTokenPurpose::Invitation;
+        let mut tx = self.pool.begin().await?;
+        let spent = consume_token(&mut tx, &input.token, purpose).await?;
         if queries::reset_password(&mut *tx, spent.user_id, Some(&hash), invited).await? == 0 {
-            return Err(AppError::InvalidToken(INVALID_TOKEN.to_owned()));
+            return Err(invalid_token());
         }
         tx.commit().await?;
         Ok(())
@@ -291,9 +354,7 @@ impl AuthService {
             .await?
             .ok_or_else(|| AppError::Unauthorized("the account no longer exists".to_owned()))?;
         if !password::verify(input.current_password, user.password_hash).await? {
-            return Err(AppError::WrongPassword(
-                "the current password is wrong".to_owned(),
-            ));
+            return Err(wrong_password());
         }
         self.reject_breached(&input.new_password).await?;
         let hash = password::hash(input.new_password).await?;
@@ -309,16 +370,19 @@ impl AuthService {
     }
 }
 
-/// How long an email change link stays valid, in hours.
-pub const EMAIL_CHANGE_TTL_HOURS: i64 = 1;
+/// The `400 wrong_password` of a wrong current password.
+fn wrong_password() -> AppError {
+    AppError::WrongPassword("the current password is wrong".to_owned())
+}
 
+/// Email change: request and confirm.
 impl AuthService {
-    /// Starts moving the account `id` to `input.new_email`: with the right
-    /// current password (otherwise a `400 wrong_password`), a confirmation
-    /// link is mailed to the new address and a notice to the old one, on
-    /// one transaction, spending older links. When a live account already
-    /// uses the new address, nothing is sent, and the answer is the same,
-    /// so it doesn't tell who has an account.
+    /// Starts moving the account `id` to `input.new_email`. With the right
+    /// current password (otherwise a `400 wrong_password`), a notice goes
+    /// to the old address and, when no live account uses the new one, a
+    /// confirmation link to it, on one transaction, spending older links.
+    /// A taken address gets nothing, but the notice goes all the same and
+    /// the answer is the same, so neither tells who has an account.
     pub async fn request_email_change(
         &self,
         id: UserId,
@@ -328,31 +392,27 @@ impl AuthService {
             .await?
             .ok_or_else(|| AppError::NotFound("no such account".to_owned()))?;
         if !password::verify(input.current_password, user.password_hash).await? {
-            return Err(AppError::WrongPassword(
-                "the current password is wrong".to_owned(),
-            ));
+            return Err(wrong_password());
         }
-        if queries::find_login(&self.pool, &input.new_email)
+        let taken = queries::find_login(&self.pool, &input.new_email)
             .await?
-            .is_some()
-        {
-            return Ok(());
-        }
+            .is_some();
         let mut tx = self.pool.begin().await?;
-        let link = issue_token(
-            &mut tx,
-            user.id,
-            AuthTokenPurpose::EmailChange,
-            TimeDelta::hours(EMAIL_CHANGE_TTL_HOURS),
-            Some(input.new_email.clone()),
-        )
-        .await?;
-        let confirm = self.templates.email_change(&input.new_email, &link.raw);
-        self.outbox.enqueue(&mut tx, &confirm).await?;
         let notice = self
             .templates
             .email_change_notice(&user.email, &input.new_email);
         self.outbox.enqueue(&mut tx, &notice).await?;
+        if !taken {
+            let new_email = input.new_email;
+            self.mail_link(
+                &mut tx,
+                user.id,
+                &new_email,
+                AuthTokenPurpose::EmailChange,
+                Some(new_email.clone()),
+            )
+            .await?;
+        }
         self.outbox.commit(tx).await
     }
 
@@ -361,26 +421,19 @@ impl AuthService {
     /// token, or an address a live account took meanwhile (even in a race
     /// with this request), is a `400 invalid_token`.
     pub async fn confirm_email_change(&self, raw: &str) -> Result<(), AppError> {
-        let invalid = || AppError::InvalidToken(INVALID_TOKEN.to_owned());
         let mut tx = self.pool.begin().await?;
         let spent = consume_token(&mut tx, raw, AuthTokenPurpose::EmailChange).await?;
-        let new_email = spent.new_email.ok_or_else(invalid)?;
+        let new_email = spent.new_email.ok_or_else(invalid_token)?;
         let changed = queries::change_email(&mut *tx, spent.user_id, &new_email)
             .await
-            .map_err(|err| match AppError::from(err) {
-                AppError::Conflict(_) => invalid(),
-                other => other,
-            })?;
+            .map_err(conflict_as(invalid_token))?;
         if changed == 0 {
-            return Err(invalid());
+            return Err(invalid_token());
         }
         tx.commit().await?;
         Ok(())
     }
 }
-
-/// How long an invitation link stays valid, in days.
-pub const INVITATION_TTL_DAYS: i64 = 7;
 
 /// One entry for the audit log: who did what to whom.
 #[derive(Debug, Clone, PartialEq)]
@@ -402,12 +455,13 @@ pub trait AuditTrail: Send + Sync {
     async fn record_in(&self, conn: &mut PgConnection, entry: AuditEntry) -> Result<(), AppError>;
 }
 
+/// Invitations.
 impl AuthService {
     /// Invites someone on behalf of the admin `actor`: an account with
     /// `input`'s email, display name and role (`user` by default), no
-    /// password and an unverified email; an `invitation` link mailed to it
-    /// (redeemed through the password reset); and a `user.invited` audit
-    /// entry, all on one transaction. A live account with the same email
+    /// password and an unverified email; a `user.invited` audit entry; and
+    /// an `invitation` link mailed to it (redeemed through the password
+    /// reset), all on one transaction. A live account with the same email
     /// is a `409`.
     pub async fn invite(&self, actor: UserId, input: InviteUserDto) -> Result<User, AppError> {
         let mut tx = self.pool.begin().await?;
@@ -417,23 +471,9 @@ impl AuthService {
             display_name: input.display_name,
             role: input.role.unwrap_or(Role::User),
         };
-        let user =
-            queries::invite_user(&mut *tx, params)
-                .await
-                .map_err(|err| match AppError::from(err) {
-                    AppError::Conflict(_) => {
-                        AppError::Conflict("this email is already registered".to_owned())
-                    }
-                    other => other,
-                })?;
-        let link = issue_token(
-            &mut tx,
-            user.id,
-            AuthTokenPurpose::Invitation,
-            TimeDelta::days(INVITATION_TTL_DAYS),
-            None,
-        )
-        .await?;
+        let user = queries::invite_user(&mut *tx, params)
+            .await
+            .map_err(conflict_as(email_taken))?;
         self.audit
             .record_in(
                 &mut tx,
@@ -444,8 +484,14 @@ impl AuthService {
                 },
             )
             .await?;
-        let mail = self.templates.invitation(&user.email, &link.raw);
-        self.outbox.enqueue(&mut tx, &mail).await?;
+        self.mail_link(
+            &mut tx,
+            user.id,
+            &user.email,
+            AuthTokenPurpose::Invitation,
+            None,
+        )
+        .await?;
         self.outbox.commit(tx).await?;
         Ok(user)
     }

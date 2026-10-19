@@ -458,7 +458,7 @@ async fn served_document() -> Result<Value, Box<dyn std::error::Error>> {
     let pool = sqlx::PgPool::connect_lazy("postgres://localhost/unused")?;
     let config = Config::from_vars(|name| match name {
         "DATABASE_URL" => Some("postgres://localhost/unused".to_owned()),
-        "JWT_SECRET" => Some("unused".to_owned()),
+        "JWT_SECRET" => Some("unused, but at least 32 bytes long".to_owned()),
         _ => None,
     })?;
     let state = AppState::new(pool, &config);

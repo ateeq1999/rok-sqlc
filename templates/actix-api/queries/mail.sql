@@ -32,3 +32,11 @@ UPDATE outbound_mail
 SET attempts = $2, last_error = $3, status = $4,
     next_attempt_at = now() + make_interval(secs => $5)
 WHERE id = $1;
+
+-- name: RedactMail :exec
+-- A dead row: its bodies are dropped, since a link they carry must not
+-- outlive the attempt to send it. The address, the subject and the
+-- `last_error` stay, to say what never left.
+UPDATE outbound_mail
+SET payload = payload || '{"text": "(removed: never sent)", "html": "(removed: never sent)"}'::jsonb
+WHERE id = $1;

@@ -25,8 +25,8 @@ use crate::error::AppError;
 /// Rows one pass claims, and holds locked while it sends them.
 const BATCH: i64 = 10;
 
-/// Failed attempts after which a row is `dead`: kept with its
-/// `last_error`, never tried again.
+/// Failed attempts after which a row is `dead`: kept with its address,
+/// subject and `last_error` (its bodies are dropped), never tried again.
 pub const MAX_ATTEMPTS: i32 = 5;
 
 /// How often the sender looks for due rows when nothing wakes it.
@@ -171,7 +171,8 @@ impl Sender {
     }
 
     /// Counts the failed attempt on `row`: a retry after the backoff, or
-    /// `dead` after [`MAX_ATTEMPTS`].
+    /// `dead` after [`MAX_ATTEMPTS`], when its bodies (and the link they
+    /// may carry) are dropped.
     async fn record_failure(
         &self,
         conn: &mut PgConnection,
@@ -188,7 +189,7 @@ impl Sender {
         };
         let retry_in = self.backoff * 2u32.pow(u32::try_from(attempts - 1).unwrap_or(0));
         queries::record_failed_mail(
-            conn,
+            &mut *conn,
             RecordFailedMailParams {
                 id: row.id,
                 attempts,
@@ -198,6 +199,9 @@ impl Sender {
             },
         )
         .await?;
+        if status == OutboundMailStatus::Dead {
+            queries::redact_mail(conn, row.id).await?;
+        }
         Ok(())
     }
 }

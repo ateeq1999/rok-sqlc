@@ -8,7 +8,7 @@
 //! |---|---|---|
 //! | `DATABASE_URL` | required | the PostgreSQL URL |
 //! | `BIND_ADDR` | `0.0.0.0:8080` | where the server listens |
-//! | `JWT_SECRET` | required | the HS256 key tokens are signed with |
+//! | `JWT_SECRET` | required | the HS256 key tokens are signed with, at least 32 bytes |
 //! | `JWT_TTL` | 3600 | seconds an issued token lasts |
 //! | `REQUIRE_VERIFIED_EMAIL` | `true` | sign-in needs a verified email |
 //! | `APP_URL` | `http://localhost:8080` | the base of the links mails carry |
@@ -42,6 +42,10 @@ const DEFAULT_LOG_FILTER: &str = "info";
 
 /// How long a token lasts when `JWT_TTL` is not set: an hour.
 const DEFAULT_JWT_TTL_SECS: u64 = 3600;
+
+/// The shortest `JWT_SECRET` accepted, in bytes: an HS256 key shorter than
+/// the hash (32 bytes) is easier to guess than the signature is to forge.
+pub const MIN_JWT_SECRET_BYTES: usize = 32;
 
 /// The link base when `APP_URL` is not set.
 const DEFAULT_APP_URL: &str = "http://localhost:8080";
@@ -108,6 +112,18 @@ pub enum ConfigError {
     /// A required variable is not set.
     #[error("environment variable `{0}` is not set")]
     Missing(&'static str),
+    /// A key is too short to resist guessing.
+    #[error(
+        "environment variable `{name}` is {len} bytes long; it needs at least {min} (try `openssl rand -base64 48`)"
+    )]
+    TooShort {
+        /// The variable.
+        name: &'static str,
+        /// Its length, in bytes.
+        len: usize,
+        /// The least it may be.
+        min: usize,
+    },
     /// A variable is not a whole number.
     #[error("environment variable `{name}` is `{value}`, which is not a whole number")]
     NotANumber {
@@ -172,7 +188,7 @@ impl Config {
         Ok(Config {
             database_url: vars.required("DATABASE_URL")?,
             bind_addr: var("BIND_ADDR").unwrap_or_else(|| DEFAULT_BIND_ADDR.to_owned()),
-            jwt_secret: vars.required("JWT_SECRET")?,
+            jwt_secret: vars.secret("JWT_SECRET", MIN_JWT_SECRET_BYTES)?,
             jwt_ttl: Duration::from_secs(vars.number("JWT_TTL")?.unwrap_or(DEFAULT_JWT_TTL_SECS)),
             require_verified_email: vars.flag("REQUIRE_VERIFIED_EMAIL")?.unwrap_or(true),
             app_url: var("APP_URL").unwrap_or_else(|| DEFAULT_APP_URL.to_owned()),
@@ -196,6 +212,19 @@ impl Vars<'_> {
     /// A variable that must be set.
     fn required(&self, name: &'static str) -> Result<String, ConfigError> {
         (self.0)(name).ok_or(ConfigError::Missing(name))
+    }
+
+    /// A key that must be set, at least `min` bytes long.
+    fn secret(&self, name: &'static str, min: usize) -> Result<String, ConfigError> {
+        let value = self.required(name)?;
+        if value.len() < min {
+            return Err(ConfigError::TooShort {
+                name,
+                len: value.len(),
+                min,
+            });
+        }
+        Ok(value)
     }
 
     /// A whole number, when the variable is set.
@@ -239,7 +268,10 @@ mod tests {
         Config::from_vars(|name| vars.get(name).cloned())
     }
 
-    const REQUIRED: &[(&str, &str)] = &[("DATABASE_URL", "postgres://db"), ("JWT_SECRET", "s")];
+    const REQUIRED: &[(&str, &str)] = &[
+        ("DATABASE_URL", "postgres://db"),
+        ("JWT_SECRET", "a test secret of at least 32 bytes"),
+    ];
 
     #[test]
     fn the_auth_settings_default_for_development() -> Result<(), ConfigError> {
@@ -284,6 +316,24 @@ mod tests {
         assert!(config.trust_proxy);
         assert_eq!(config.auth_rate_limit, 5);
         Ok(())
+    }
+
+    #[test]
+    fn a_jwt_secret_under_32_bytes_is_refused() {
+        let error = read(&[
+            ("DATABASE_URL", "postgres://db"),
+            ("JWT_SECRET", "change-me"),
+        ])
+        .err()
+        .map(|err| err.to_string());
+        assert_eq!(
+            error.as_deref(),
+            Some(
+                "environment variable `JWT_SECRET` is 9 bytes long; it needs at least 32 (try `openssl rand -base64 48`)"
+            )
+        );
+        let secret = "x".repeat(32);
+        assert!(read(&[("DATABASE_URL", "postgres://db"), ("JWT_SECRET", &secret)]).is_ok());
     }
 
     #[test]

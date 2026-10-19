@@ -306,6 +306,45 @@ async fn a_reset_refuses_a_weak_or_breached_password_and_keeps_the_link() -> Tes
     db.drop().await
 }
 
+#[actix_web::test]
+async fn a_bad_link_is_refused_before_the_new_password_is_checked() -> TestResult {
+    let Some(db) = Database::fresh().await? else {
+        return Ok(());
+    };
+    let mut state = state(&db.pool)?;
+    state.breach = Arc::new(KnowsOne);
+    // A breached password with a bad link: the link is looked at first, so
+    // the breach service is never asked and no hash is computed.
+    let garbage = "x".repeat(43);
+    let answer = call_with(&state, None, Method::POST, RESET, reset(&garbage, BREACHED)).await?;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.body);
+    assert_eq!(answer.code(), "invalid_token");
+
+    // Nor does a link issued for another purpose.
+    let (id, _) = support::account(&db.pool, Role::User).await?;
+    let mut conn = db.pool.acquire().await?;
+    let other = issue_token(
+        &mut conn,
+        id.into(),
+        AuthTokenPurpose::EmailVerification,
+        TimeDelta::hours(1),
+        None,
+    )
+    .await?;
+    drop(conn);
+    let answer = call_with(
+        &state,
+        None,
+        Method::POST,
+        RESET,
+        reset(&other.raw, BREACHED),
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.body);
+    assert_eq!(answer.code(), "invalid_token");
+    db.drop().await
+}
+
 fn change(current_password: &str, new_password: &str) -> Option<Value> {
     Some(json!({"current_password": current_password, "new_password": new_password}))
 }

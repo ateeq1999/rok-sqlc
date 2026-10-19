@@ -6,37 +6,6 @@ use super::super::auth_tokens::models::AuthTokenId;
 use super::super::types;
 use super::super::users::models::UserId;
 
-/// A row returned by `session_state`.
-#[derive(Debug, Clone, PartialEq, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
-pub struct SessionStateRow {
-    /// The `token_version` column.
-    pub token_version: i32,
-    /// The `is_active` column.
-    pub is_active: bool,
-    /// The `role` column.
-    pub role: types::Role,
-}
-
-/// Runs the `SessionState` query (`:maybe_one`).
-pub async fn session_state<'e, E>(
-    executor: E,
-    id: UserId,
-) -> Result<Option<SessionStateRow>, sqlx::Error>
-where
-    E: sqlx::PgExecutor<'e>,
-{
-    sqlx::query_as::<_, SessionStateRow>(
-        r#"
-        SELECT token_version, is_active, role
-        FROM users
-        WHERE id = $1 AND deleted_at IS NULL
-        "#,
-    )
-    .bind(id)
-    .fetch_optional(executor)
-    .await
-}
-
 /// A row returned by `find_login`.
 #[derive(Debug, Clone, PartialEq, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
 pub struct FindLoginRow {
@@ -259,6 +228,26 @@ where
     )
     .bind(token_hash)
     .bind(purpose)
+    .fetch_optional(executor)
+    .await
+}
+
+/// Runs the `LiveTokenPurpose` query (`:maybe_one`).
+pub async fn live_token_purpose<'e, E>(
+    executor: E,
+    token_hash: &str,
+) -> Result<Option<types::AuthTokenPurpose>, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query_scalar::<_, types::AuthTokenPurpose>(
+        r#"
+        SELECT purpose
+        FROM auth_tokens
+        WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()
+        "#,
+    )
+    .bind(token_hash)
     .fetch_optional(executor)
     .await
 }

@@ -115,6 +115,39 @@ async fn a_failing_transport_backs_off_then_the_row_is_dead() -> TestResult {
     db.drop().await
 }
 
+#[actix_web::test]
+async fn a_dead_row_keeps_its_address_and_subject_but_not_its_link() -> TestResult {
+    let Some(db) = Database::fresh().await? else {
+        return Ok(());
+    };
+    let outbox = Outbox::new();
+    let link = Templates::new(APP_URL).password_reset("ada@test.invalid", "the-raw-token");
+    let mut tx = db.pool.begin().await?;
+    outbox.enqueue(&mut tx, &link).await?;
+    outbox.commit(tx).await?;
+    let payload = || async {
+        sqlx::query_scalar::<_, serde_json::Value>("SELECT payload FROM outbound_mail")
+            .fetch_one(&db.pool)
+            .await
+    };
+
+    // A pending row must still carry the link it is to send.
+    let sender =
+        Sender::new(db.pool.clone(), Arc::new(Failing), &outbox).with_backoff(Duration::ZERO);
+    sender.deliver_due().await?;
+    assert!(payload().await?.to_string().contains("the-raw-token"));
+
+    for _ in 0..4 {
+        sender.deliver_due().await?;
+    }
+    assert_eq!(rows(&db.pool).await?[0].0, OutboundMailStatus::Dead);
+    let dead = payload().await?;
+    assert!(!dead.to_string().contains("the-raw-token"), "{dead}");
+    assert_eq!(dead["to"], "ada@test.invalid");
+    assert_eq!(dead["subject"], link.subject.as_str());
+    db.drop().await
+}
+
 /// A transport that takes its time, so two senders overlap.
 struct Slow(MemoryMailer);
 

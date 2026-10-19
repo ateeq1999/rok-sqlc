@@ -32,7 +32,7 @@ use uuid::Uuid;
 pub type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 /// The JWT secret the test application verifies tokens with.
-const SECRET: &str = "test secret";
+const SECRET: &str = "a test secret of at least 32 bytes";
 
 /// The `APP_URL` the test application's mailed links start with.
 pub const APP_URL: &str = "http://app.test";

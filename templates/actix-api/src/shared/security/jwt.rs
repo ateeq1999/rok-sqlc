@@ -2,9 +2,11 @@
 
 //! The session: an access-only HS256 JWT carrying `sub` (the user's id),
 //! `role`, `tv` (the user's `token_version` when it was issued) and `exp`.
-//! There is no refresh token; a password change, a reset or an admin
-//! disable bumps `users.token_version`, and `shared/auth.rs` rejects a
-//! token whose `tv` no longer matches.
+//! There is no refresh token; a password change or a reset bumps
+//! `users.token_version`, and `shared/auth.rs` rejects a token whose `tv`
+//! no longer matches. Disabling an account (`is_active = false`) bumps
+//! nothing: the same per-request check rejects every token of an inactive
+//! account, so it takes effect on the next request.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

@@ -61,13 +61,14 @@ pub(crate) fn rules() -> [String; 6] {
         "`service.rs` never writes SQL. It calls the data layer's functions and \
          traits from `shared/`."
             .to_owned(),
-        "A feature never refers to another feature's modules. It may read another \
-         table through the data layer, but never calls another table's \
-         `<db_path>::<table>::write`: it writes another feature's data only \
-         through a port it declares itself, inside the caller's transaction. \
-         It calls its own query module, `<db_path>::queries::<feature>`, never \
-         another feature's. The data layer is exempt: the schema crosses \
-         features."
+        "A feature never refers to another feature's modules. It may read any \
+         table through the data layer. It writes its own table through \
+         `<db_path>::<table>::write`, any table through its own query module, \
+         `<db_path>::queries::<feature>`, and another feature's data through \
+         that feature's service, behind a port it declares itself, inside the \
+         caller's transaction. It never calls another table's `write` or \
+         another feature's query module. The data layer is exempt: the schema \
+         crosses features."
             .to_owned(),
         "`shared/` never refers to the features.".to_owned(),
         "No `unwrap()`, `expect()`, `panic!`, `todo!`, `println!` or `dbg!`. \
