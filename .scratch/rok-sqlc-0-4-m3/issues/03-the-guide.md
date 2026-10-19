@@ -15,7 +15,19 @@ Update `index.md` (no "coming" left for these), and link the guide from the READ
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Every page exists with samples from compiled sources; drift tests pass.
-- [ ] Each page's claims match the code. Spot-check every error message quoted in the troubleshooting page against the source.
+- [x] Every page exists with samples from compiled sources; drift tests pass.
+- [x] Each page's claims match the code. Spot-check every error message quoted in the troubleshooting page against the source.
+
+## Comments
+
+Done on branch `rok-sqlc-0-4-m3-03`.
+
+- **Pages:** `docs/guide/{getting-started,configuring,customizing,wire-standard,testing,deploying,after-a-schema-change,troubleshooting}.md`. `index.md` lists every page (no "Coming" section); the README's "Generated APIs" section links them all; `architecture.md` links testing and the hand-written feature; CHANGELOG `[Unreleased]` entry.
+- **Example extended** (`docs/examples/api`): a hand-written `stats` feature (`GET /api/v1/stats`, `ProjectStats` query in `queries.sql`, `#[utoipa::path]` listed in `openapi.rs`'s `ApiDoc` with its tag, mounted in `app.rs`, declared in `features/mod.rs`); `tests/api.rs` (`actix_web::test` over `app::configure`), `tests/service.rs`, `tests/support/mod.rs`, all `#[sqlx::test]` (sqlx's default `macros`/`migrate` features; no new dependencies, lock unchanged).
+- **Tests:** `tests/readme.rs` requires all 12 guide pages, and the new `the_api_example_tests_pass` runs the example's tests when `ROK_SQLC_TEST_DATABASE_URL` is set (as `DATABASE_URL`; sqlx creates a database per test).
+- **Verification:** every quoted error was produced by the built binary on scratch projects (config, generation, `--check`, `init --template`, every `check-arch` rule) or by the example binary (start-up errors); every HTTP exchange is a real answer of the example server run against PostgreSQL.
+- **Changed samples:** `openapi.md` and the README now source the scaffolded `ApiDoc` and `configure` from `src/init/templates/` (the example's are no longer the untouched scaffold); `layout.md`'s tree shows `stats/`.
+- **Template:** pages link `templates/actix-api/` and its `README.md` by path (ticket 02 writes them) and describe `init --template actix` without quoting its next-steps text, which ticket 01 prints with a stray 19-space indent (`src/cli.rs`, template arm) — worth fixing in 02 or 04.
+- **Noticed:** the scaffolded `main.rs` installs no `tracing` subscriber, so the logs `deploying.md` mentions go nowhere until the user adds one (documented, not changed). A start-up config error prints as `Error: Custom { kind: Other, error: Missing("JWT_SECRET") }` (the `Debug` of `io::Error`); a friendlier `main.rs` would be a scaffold change.

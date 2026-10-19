@@ -34,7 +34,20 @@ fn example_dirs() -> [PathBuf; 4] {
 }
 
 /// The guide's pages, which must all exist.
-const GUIDE_PAGES: [&str; 4] = ["index.md", "architecture.md", "layout.md", "openapi.md"];
+const GUIDE_PAGES: [&str; 12] = [
+    "index.md",
+    "getting-started.md",
+    "configuring.md",
+    "architecture.md",
+    "layout.md",
+    "customizing.md",
+    "wire-standard.md",
+    "openapi.md",
+    "testing.md",
+    "deploying.md",
+    "after-a-schema-change.md",
+    "troubleshooting.md",
+];
 
 /// Every document whose samples are checked, as (repository-relative path,
 /// text): the README, then every Markdown page of `docs/guide/`.
@@ -478,5 +491,27 @@ fn the_examples_compile() -> Result<()> {
         .with_context(|| format!("failed to run cargo clippy in {}", dir.display()))?;
         ensure!(status.success(), "{} does not compile", dir.display());
     }
+    Ok(())
+}
+
+/// The API example's own tests, which the testing guide quotes, pass
+/// against PostgreSQL. `#[sqlx::test]` creates a database per test on the
+/// server `ROK_SQLC_TEST_DATABASE_URL` names.
+#[test]
+fn the_api_example_tests_pass() -> Result<()> {
+    let Some(url) = std::env::var_os("ROK_SQLC_TEST_DATABASE_URL") else {
+        eprintln!("skipping: set ROK_SQLC_TEST_DATABASE_URL to run the API example's tests");
+        return Ok(());
+    };
+    let dir = manifest_dir().join("docs/examples/api");
+    if let Some(reason) = common::generated_code_skip_reason(&dir) {
+        eprintln!("{reason}");
+        return Ok(());
+    }
+    let status = common::cargo(&dir, &["test", "--quiet"])
+        .env("DATABASE_URL", url)
+        .status()
+        .context("failed to run cargo test in docs/examples/api")?;
+    ensure!(status.success(), "docs/examples/api's tests fail");
     Ok(())
 }

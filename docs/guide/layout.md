@@ -35,7 +35,9 @@ layer, the shared tools and the features, and scaffolds each new feature's
 data layer, `api.output` for the features, and `shared/` beside
 `api.output`.
 
-The example project's features directory, after `init` and `g`:
+The example project's features directory, after `init` and `g`, with one
+hand-written feature (`stats/`, all yours: see
+[Customizing](customizing.md#a-hand-written-feature)):
 
 <!-- tree: docs/examples/api/src/features -->
 ```text
@@ -52,6 +54,12 @@ features/
 │   ├── routes.rs
 │   ├── service.rs
 │   └── service_api.rs
+├── stats/
+│   ├── dto.rs
+│   ├── handlers.rs
+│   ├── mod.rs
+│   ├── routes.rs
+│   └── service.rs
 └── tasks/
     ├── dto.rs
     ├── handlers.rs
