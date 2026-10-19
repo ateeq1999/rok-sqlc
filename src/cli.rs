@@ -161,14 +161,28 @@ where
             dir,
             template: Some(template),
         } => {
-            print_scaffolded(crate::init::init_template(&dir, &template)?);
-            println!(
-                "
-Next steps:
-                   1. add the dependencies listed at the end of rok-sqlc.toml to Cargo.toml
-                   2. run `rok-sqlc g` to generate src/db/ and src/features/ from migrations/
-                   3. set DATABASE_URL and JWT_SECRET, then `cargo run`"
-            );
+            let scaffolded = crate::init::init_template(&dir, &template)?;
+            // The template's own manifest was copied unless one was there.
+            let copied_manifest = scaffolded
+                .written
+                .iter()
+                .any(|path| path.ends_with("Cargo.toml"));
+            print_scaffolded(scaffolded);
+            let mut steps = Vec::new();
+            if !copied_manifest {
+                steps.push(
+                    "add the template's dependencies and lints (its README.md lists them) to Cargo.toml",
+                );
+            }
+            steps.extend([
+                "run `rok-sqlc g` to generate src/db/, src/shared/ and src/features/ from migrations/",
+                "set DATABASE_URL and JWT_SECRET (see .env.example) and apply migrations/",
+                "`cargo test`, then `cargo run`",
+            ]);
+            println!("\nNext steps:");
+            for (number, step) in steps.iter().enumerate() {
+                println!("  {}. {step}", number + 1);
+            }
             Ok(())
         }
         Command::Init {

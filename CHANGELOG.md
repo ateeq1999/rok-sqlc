@@ -148,6 +148,12 @@ the *generated* API count as breaking (see ADR 0012).
   only one is `actix`), each file only when absent and without its
   generated files, and prints the next steps. An unknown name lists the
   valid ones.
+- The `actix` template (`templates/actix-api/`): the `users` and
+  `audit-log` part of the axum starter's API, generated from one schema,
+  with a contract test that checks the document it serves against the
+  starter's (`tests/contract.rs`), API tests against PostgreSQL, and a
+  README. CI regenerates it and fails on drift, and runs its lint gate,
+  `check-arch` and tests.
 
 ## [0.3.0] - 2026-10-17
 

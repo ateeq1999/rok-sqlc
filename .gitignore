@@ -17,3 +17,5 @@ tests/api-app/src/features/generated.rs
 tests/api-app/src/features/README.md
 tests/api-app/src/features/*/*
 !tests/api-app/src/features/drafts/service.rs
+templates/actix-api/Cargo.toml
+templates/actix-api/target/

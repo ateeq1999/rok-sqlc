@@ -9,6 +9,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod actix_template;
 mod api_app;
 mod fixture_app;
 mod init;

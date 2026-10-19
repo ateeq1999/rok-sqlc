@@ -101,3 +101,54 @@ fn init_template_rejects_an_unknown_name_listing_the_valid_ones() -> Result<()> 
     assert!(read_tree(dir.path())?.is_empty(), "nothing written");
     Ok(())
 }
+
+/// The step lines after `Next steps:`.
+fn next_steps(stdout: &str) -> Vec<&str> {
+    stdout
+        .lines()
+        .skip_while(|line| *line != "Next steps:")
+        .skip(1)
+        .collect()
+}
+
+#[test]
+fn init_template_prints_numbered_next_steps_without_the_dependencies_it_copied() -> Result<()> {
+    let dir = TempDir::new()?;
+    let output = run_binary_in(dir.path(), &["init", "-t", "actix"]);
+    assert_success(&output);
+    assert!(dir.path().join("Cargo.toml").is_file());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let steps = next_steps(&stdout);
+    assert_eq!(
+        steps,
+        [
+            "  1. run `rok-sqlc g` to generate src/db/, src/shared/ and src/features/ from migrations/",
+            "  2. set DATABASE_URL and JWT_SECRET (see .env.example) and apply migrations/",
+            "  3. `cargo test`, then `cargo run`",
+        ],
+        "{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn init_template_into_a_package_asks_for_the_templates_dependencies() -> Result<()> {
+    let dir = TempDir::new()?;
+    fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    let output = run_binary_in(dir.path(), &["init", "-t", "actix"]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let steps = next_steps(&stdout);
+    assert_eq!(
+        steps.first().copied(),
+        Some(
+            "  1. add the template's dependencies and lints (its README.md lists them) to Cargo.toml"
+        ),
+        "{stdout}"
+    );
+    assert_eq!(steps.len(), 4, "{stdout}");
+    Ok(())
+}
