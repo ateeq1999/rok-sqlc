@@ -11,13 +11,16 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use chrono::{TimeDelta, Utc};
 use sqlx::{PgConnection, PgPool};
 
-use super::dto::{CredentialsDto, TokenResponse};
+use super::dto::{ChangeEmailDto, CredentialsDto, InviteUserDto, TokenResponse};
 use crate::db::auth_tokens::models::AuthTokenId;
-use crate::db::queries::auth::{self as queries, ConsumeTokenRow, InsertTokenParams};
-use crate::db::types::AuthTokenPurpose;
+use crate::db::queries::auth::{
+    self as queries, ConsumeTokenRow, InsertTokenParams, InviteUserParams,
+};
+use crate::db::types::{AuthTokenPurpose, Role};
 use crate::db::users::models::{User, UserId};
 use crate::db::users::read as users;
 use crate::error::AppError;
@@ -57,6 +60,8 @@ pub struct AuthService {
     pub breach: Arc<dyn BreachCheck>,
     /// `REQUIRE_VERIFIED_EMAIL`: sign-in needs a verified email.
     pub require_verified_email: bool,
+    /// Records what admins do in the audit log (the `audit_log` port).
+    pub audit: Arc<dyn AuditTrail>,
 }
 
 impl AuthService {
@@ -216,4 +221,146 @@ pub async fn consume_token(
     queries::consume_token(conn, &token::hash(raw), purpose)
         .await?
         .ok_or_else(|| AppError::InvalidToken(INVALID_TOKEN.to_owned()))
+}
+
+/// How long an email change link stays valid, in hours.
+pub const EMAIL_CHANGE_TTL_HOURS: i64 = 1;
+
+impl AuthService {
+    /// Starts moving the account `id` to `input.new_email`: with the right
+    /// current password (otherwise a `400 wrong_password`), a confirmation
+    /// link is mailed to the new address and a notice to the old one, on
+    /// one transaction, spending older links. When a live account already
+    /// uses the new address, nothing is sent, and the answer is the same,
+    /// so it doesn't tell who has an account.
+    pub async fn request_email_change(
+        &self,
+        id: UserId,
+        input: ChangeEmailDto,
+    ) -> Result<(), AppError> {
+        let user = users::get_by_id(&self.pool, id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("no such account".to_owned()))?;
+        if !password::verify(input.current_password, user.password_hash).await? {
+            return Err(AppError::WrongPassword(
+                "the current password is wrong".to_owned(),
+            ));
+        }
+        if queries::find_login(&self.pool, &input.new_email)
+            .await?
+            .is_some()
+        {
+            return Ok(());
+        }
+        let mut tx = self.pool.begin().await?;
+        let link = issue_token(
+            &mut tx,
+            user.id,
+            AuthTokenPurpose::EmailChange,
+            TimeDelta::hours(EMAIL_CHANGE_TTL_HOURS),
+            Some(input.new_email.clone()),
+        )
+        .await?;
+        let confirm = self.templates.email_change(&input.new_email, &link.raw);
+        self.outbox.enqueue(&mut tx, &confirm).await?;
+        let notice = self
+            .templates
+            .email_change_notice(&user.email, &input.new_email);
+        self.outbox.enqueue(&mut tx, &notice).await?;
+        self.outbox.commit(tx).await
+    }
+
+    /// Redeems an email change link: the account's email becomes the new
+    /// address, verified, and the token is spent. A bad, expired or used
+    /// token, or an address a live account took meanwhile (even in a race
+    /// with this request), is a `400 invalid_token`.
+    pub async fn confirm_email_change(&self, raw: &str) -> Result<(), AppError> {
+        let invalid = || AppError::InvalidToken(INVALID_TOKEN.to_owned());
+        let mut tx = self.pool.begin().await?;
+        let spent = consume_token(&mut tx, raw, AuthTokenPurpose::EmailChange).await?;
+        let new_email = spent.new_email.ok_or_else(invalid)?;
+        let changed = queries::change_email(&mut *tx, spent.user_id, &new_email)
+            .await
+            .map_err(|err| match AppError::from(err) {
+                AppError::Conflict(_) => invalid(),
+                other => other,
+            })?;
+        if changed == 0 {
+            return Err(invalid());
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+}
+
+/// How long an invitation link stays valid, in days.
+pub const INVITATION_TTL_DAYS: i64 = 7;
+
+/// One entry for the audit log: who did what to whom.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AuditEntry {
+    /// Who acted.
+    pub actor: UserId,
+    /// Whose account it was done to, if anyone's.
+    pub target: Option<UserId>,
+    /// What was done, such as `user.invited`.
+    pub action: String,
+}
+
+/// The port onto the `audit_log` feature: `auth` records what admins do
+/// through it, on the flow's own connection, so the entry commits (or rolls
+/// back) with the change it records. `app.rs` implements it.
+#[async_trait]
+pub trait AuditTrail: Send + Sync {
+    /// Records `entry` on `conn`.
+    async fn record_in(&self, conn: &mut PgConnection, entry: AuditEntry) -> Result<(), AppError>;
+}
+
+impl AuthService {
+    /// Invites someone on behalf of the admin `actor`: an account with
+    /// `input`'s email, display name and role (`user` by default), no
+    /// password and an unverified email; an `invitation` link mailed to it
+    /// (redeemed through the password reset); and a `user.invited` audit
+    /// entry, all on one transaction. A live account with the same email
+    /// is a `409`.
+    pub async fn invite(&self, actor: UserId, input: InviteUserDto) -> Result<User, AppError> {
+        let mut tx = self.pool.begin().await?;
+        let params = InviteUserParams {
+            id: UserId::generate(),
+            email: input.email,
+            display_name: input.display_name,
+            role: input.role.unwrap_or(Role::User),
+        };
+        let user =
+            queries::invite_user(&mut *tx, params)
+                .await
+                .map_err(|err| match AppError::from(err) {
+                    AppError::Conflict(_) => {
+                        AppError::Conflict("this email is already registered".to_owned())
+                    }
+                    other => other,
+                })?;
+        let link = issue_token(
+            &mut tx,
+            user.id,
+            AuthTokenPurpose::Invitation,
+            TimeDelta::days(INVITATION_TTL_DAYS),
+            None,
+        )
+        .await?;
+        self.audit
+            .record_in(
+                &mut tx,
+                AuditEntry {
+                    actor,
+                    target: Some(user.id),
+                    action: "user.invited".to_owned(),
+                },
+            )
+            .await?;
+        let mail = self.templates.invitation(&user.email, &link.raw);
+        self.outbox.enqueue(&mut tx, &mail).await?;
+        self.outbox.commit(tx).await?;
+        Ok(user)
+    }
 }

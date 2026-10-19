@@ -146,7 +146,8 @@ Change the schema with a new migration, adjust `rok-sqlc.toml`, run
 - `deleted_at` is the soft-delete column: `DELETE /users/{id}` marks the row.
 - `email` is immutable (`[api.immutable]`): set when an account is created,
   never by `PATCH /users/{id}`, which answers `422` when its body names it.
-  An email changes through the verification flow to come.
+  An email changes through `POST /api/v1/auth/email/change` and the link
+  it mails to the new address.
 - `audit_log` is generated as the `audit_log_entry` module
   (`AuditLogEntryResponse`), served at `/audit-log`, read-only.
 - `[api.search]` and `[api.sort]` give the users list its `q` and

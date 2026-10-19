@@ -131,3 +131,51 @@ where
     let email: String = serde::Deserialize::deserialize(deserializer)?;
     Ok(email.trim().to_lowercase())
 }
+
+/// `POST /auth/email/change`'s body. The new email is trimmed and
+/// lowercased before it is checked.
+#[derive(Debug, Clone, serde::Deserialize, validator::Validate, utoipa::ToSchema)]
+pub struct ChangeEmailDto {
+    /// The account's current password.
+    pub current_password: String,
+    /// The address to move the account to.
+    #[serde(deserialize_with = "normalized_email")]
+    #[validate(email(message = "new_email must be an email address"))]
+    pub new_email: String,
+}
+
+/// The longest display name an invitation sets, in characters.
+pub const DISPLAY_NAME_MAX: u64 = 100;
+
+/// `POST /auth/invitations`' body: an admin invites someone, whose account
+/// is created and a "set your password" link mailed. The email is trimmed
+/// and lowercased, the display name trimmed (an empty one is none), and
+/// the role is `user` unless given.
+#[derive(Debug, Clone, serde::Deserialize, validator::Validate, utoipa::ToSchema)]
+pub struct InviteUserDto {
+    /// The invitee's email address.
+    #[serde(deserialize_with = "normalized_email")]
+    #[validate(email(message = "email must be an email address"))]
+    pub email: String,
+    /// The invitee's display name, at most 100 characters.
+    #[serde(default, deserialize_with = "trimmed_name")]
+    #[validate(length(
+        max = DISPLAY_NAME_MAX,
+        message = "display_name must be at most 100 characters"
+    ))]
+    pub display_name: Option<String>,
+    /// The invitee's role; `user` when left out.
+    #[serde(default)]
+    pub role: Option<Role>,
+}
+
+/// Deserializes an optional name trimmed, an empty one as none.
+fn trimmed_name<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let name: Option<String> = serde::Deserialize::deserialize(deserializer)?;
+    Ok(name
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty()))
+}

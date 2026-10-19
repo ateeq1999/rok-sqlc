@@ -5,10 +5,13 @@
 
 use actix_web::{HttpResponse, web};
 
-use super::dto::{CredentialsDto, LoginResponse, MessageResponse, UserResponse, VerifyEmailDto};
+use super::dto::{
+    ChangeEmailDto, CredentialsDto, InviteUserDto, LoginResponse, MessageResponse, UserResponse,
+    VerifyEmailDto,
+};
 use super::service::AuthService;
 use crate::error::AppError;
-use crate::shared::auth::AuthUser;
+use crate::shared::auth::{AdminUser, AuthUser};
 use crate::shared::response::ErrorBody;
 use crate::shared::validation::ValidatedJson;
 
@@ -104,4 +107,86 @@ pub async fn resend(
     Ok(HttpResponse::Accepted().json(MessageResponse::new(
         "a new verification link is on its way, unless the email is already verified",
     )))
+}
+
+/// `POST /api/v1/auth/email/change`: mails a link to confirm a new email
+/// address, `202`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/email/change",
+    tag = "auth",
+    operation_id = "request_change",
+    request_body = ChangeEmailDto,
+    responses(
+        (status = 202, description = "Confirmation link sent to the new address", body = MessageResponse),
+        (status = 400, description = "The current password is wrong (`wrong_password`), or a malformed body", body = ErrorBody),
+        (status = 401, description = "No valid bearer token", body = ErrorBody),
+        (status = 422, description = "Not an email", body = ErrorBody),
+        (status = 429, description = "Too many requests from this IP", body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+)]
+pub async fn request_change(
+    service: web::Data<AuthService>,
+    caller: AuthUser,
+    body: ValidatedJson<ChangeEmailDto>,
+) -> Result<HttpResponse, AppError> {
+    service
+        .request_email_change(caller.id.into(), body.into_inner())
+        .await?;
+    Ok(HttpResponse::Accepted().json(MessageResponse::new(
+        "a confirmation link is on its way to the new address, unless it is taken",
+    )))
+}
+
+/// `POST /api/v1/auth/email/change/confirm`: moves the account to the
+/// address a link was mailed to, `200`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/email/change/confirm",
+    tag = "auth",
+    operation_id = "confirm_change",
+    request_body = VerifyEmailDto,
+    responses(
+        (status = 200, description = "Email address updated", body = MessageResponse),
+        (status = 400, description = "Link is invalid, expired or already used, or the address was taken meanwhile (`invalid_token`), or a malformed body", body = ErrorBody),
+        (status = 422, description = "An empty token", body = ErrorBody),
+        (status = 429, description = "Too many requests from this IP", body = ErrorBody),
+    ),
+)]
+pub async fn confirm_change(
+    service: web::Data<AuthService>,
+    body: ValidatedJson<VerifyEmailDto>,
+) -> Result<HttpResponse, AppError> {
+    service.confirm_email_change(&body.token).await?;
+    Ok(HttpResponse::Ok().json(MessageResponse::new("email address updated")))
+}
+
+/// `POST /api/v1/auth/invitations`: an admin invites someone, `201`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/invitations",
+    tag = "auth",
+    operation_id = "invite",
+    request_body = InviteUserDto,
+    responses(
+        (status = 201, description = "Account created; a \"set your password\" link was emailed", body = UserResponse),
+        (status = 400, description = "A malformed body", body = ErrorBody),
+        (status = 401, description = "No valid bearer token", body = ErrorBody),
+        (status = 403, description = "The caller is not an admin", body = ErrorBody),
+        (status = 409, description = "Email already registered", body = ErrorBody),
+        (status = 422, description = "Not an email, or a display name over 100 characters", body = ErrorBody),
+        (status = 429, description = "Too many requests from this IP", body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+)]
+pub async fn invite(
+    service: web::Data<AuthService>,
+    caller: AdminUser,
+    body: ValidatedJson<InviteUserDto>,
+) -> Result<HttpResponse, AppError> {
+    let user = service
+        .invite(caller.0.id.into(), body.into_inner())
+        .await?;
+    Ok(HttpResponse::Created().json(UserResponse::from(user)))
 }

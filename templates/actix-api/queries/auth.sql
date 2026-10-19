@@ -70,3 +70,20 @@ UPDATE auth_tokens
 SET used_at = now()
 WHERE token_hash = $1 AND purpose = $2 AND used_at IS NULL AND expires_at > now()
 RETURNING user_id, new_email;
+
+-- name: ChangeEmail :execrows
+-- The live account `$1` confirmed `$2` as its new email, which it now owns
+-- (verified). A live account already using it, whatever its case, is a
+-- unique violation of `users_email_key`.
+UPDATE users
+SET email = $2, email_verified = true
+WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: InviteUser :one
+-- An account an admin invites: `email`, a display name and a role, but no
+-- password and an unverified email until the invitee follows the link. A
+-- live account with the same email, whatever its case, is a unique
+-- violation of `users_email_key`.
+INSERT INTO users (id, email, display_name, role)
+VALUES ($1, $2, $3, $4)
+RETURNING *;

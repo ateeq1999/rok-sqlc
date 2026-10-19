@@ -262,3 +262,60 @@ where
     .fetch_optional(executor)
     .await
 }
+
+/// Runs the `ChangeEmail` query (`:execrows`).
+/// Returns the number of affected rows.
+pub async fn change_email<'e, E>(executor: E, id: UserId, email: &str) -> Result<u64, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    let result = sqlx::query(
+        r#"
+        UPDATE users
+        SET email = $2, email_verified = true
+        WHERE id = $1 AND deleted_at IS NULL
+        "#,
+    )
+    .bind(id)
+    .bind(email)
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// Parameters of `invite_user`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct InviteUserParams {
+    /// Bound to `$1`.
+    pub id: UserId,
+    /// Bound to `$2`.
+    pub email: String,
+    /// Bound to `$3`.
+    pub display_name: Option<String>,
+    /// Bound to `$4`.
+    pub role: types::Role,
+}
+
+/// Runs the `InviteUser` query (`:one`).
+/// Fails with `sqlx::Error::RowNotFound` when no row matches.
+pub async fn invite_user<'e, E>(
+    executor: E,
+    params: InviteUserParams,
+) -> Result<super::super::users::models::User, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query_as::<_, super::super::users::models::User>(
+        r#"
+        INSERT INTO users (id, email, display_name, role)
+        VALUES ($1, $2, $3, $4)
+        RETURNING *
+        "#,
+    )
+    .bind(params.id)
+    .bind(params.email)
+    .bind(params.display_name)
+    .bind(params.role)
+    .fetch_one(executor)
+    .await
+}

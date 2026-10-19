@@ -67,7 +67,7 @@ users = [
 ]
 
 [api.immutable]
-# An email changes only through the verification flow (a later release).
+# An email changes only through the verification flow (`POST /auth/email/change`).
 users = ["email"]
 
 # String rules (VineJS names): an email is trimmed and lowercased before it

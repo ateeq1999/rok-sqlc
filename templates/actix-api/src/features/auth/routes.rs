@@ -20,6 +20,12 @@ pub fn routes(cfg: &mut web::ServiceConfig, limit: &RateLimit) {
             .route(
                 "/email/verification/resend",
                 web::post().to(handlers::resend),
-            ),
+            )
+            .route("/email/change", web::post().to(handlers::request_change))
+            .route(
+                "/email/change/confirm",
+                web::post().to(handlers::confirm_change),
+            )
+            .route("/invitations", web::post().to(handlers::invite)),
     );
 }

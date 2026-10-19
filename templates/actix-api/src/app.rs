@@ -5,14 +5,19 @@
 //! the ports features declare for each other are implemented here too.
 
 use actix_web::{App, HttpServer, web};
-use sqlx::PgPool;
+use async_trait::async_trait;
+use sqlx::{PgConnection, PgPool};
 use utoipa_swagger_ui::SwaggerUi;
 
 use std::sync::Arc;
 
 use crate::config::Config;
+use crate::db::audit_log_entry::models::NewAuditLogEntry;
 use crate::db::pool::init_pool;
+use crate::error::AppError;
 use crate::features::account::{self, AccountService};
+use crate::features::audit_log_entry::AuditLogEntryService;
+use crate::features::auth::service::{AuditEntry, AuditTrail};
 use crate::features::auth::{self, AuthService};
 use crate::features::{configure_all, register_services};
 use crate::openapi::document;
@@ -41,6 +46,9 @@ pub struct AppState {
     pub rate_limit: RateLimit,
     /// `REQUIRE_VERIFIED_EMAIL`.
     pub require_verified_email: bool,
+    /// Where `auth` records what admins do: the `audit_log` feature, or a
+    /// test's own.
+    pub audit: Arc<dyn AuditTrail>,
 }
 
 impl AppState {
@@ -48,13 +56,14 @@ impl AppState {
     #[must_use]
     pub fn new(pool: PgPool, config: &Config) -> Self {
         AppState {
-            pool,
+            pool: pool.clone(),
             keys: web::Data::new(JwtKeys::new(&config.jwt_secret, config.jwt_ttl)),
             outbox: web::Data::new(Outbox::new()),
             templates: web::Data::new(Templates::new(&config.app_url)),
             breach: breach::from_config(config),
             rate_limit: RateLimit::per_minute(config.auth_rate_limit, config.trust_proxy),
             require_verified_email: config.require_verified_email,
+            audit: Arc::new(AuditLog(AuditLogEntryService::new(pool))),
         }
     }
 }
@@ -107,6 +116,7 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
             templates: state.templates.clone().into_inner(),
             breach: state.breach.clone(),
             require_verified_email: state.require_verified_email,
+            audit: state.audit.clone(),
         }));
     health::routes(cfg);
     cfg.service(web::redirect("/docs", "/docs/").see_other())
@@ -114,4 +124,28 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
     account::routes(cfg, &state.rate_limit);
     auth::routes(cfg, &state.rate_limit);
     configure_all(cfg);
+}
+
+/// `auth`'s [`AuditTrail`] port onto the `audit_log` feature: each entry is
+/// written by [`AuditLogEntryService::create_in`] on the flow's own
+/// connection, so it commits with the change it records.
+pub struct AuditLog(pub AuditLogEntryService);
+
+#[async_trait]
+impl AuditTrail for AuditLog {
+    async fn record_in(&self, conn: &mut PgConnection, entry: AuditEntry) -> Result<(), AppError> {
+        self.0
+            .create_in(
+                conn,
+                NewAuditLogEntry {
+                    id: None,
+                    actor_user_id: entry.actor,
+                    target_user_id: entry.target,
+                    action: entry.action,
+                    details: None,
+                },
+            )
+            .await?;
+        Ok(())
+    }
 }

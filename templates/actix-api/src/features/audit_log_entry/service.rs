@@ -5,9 +5,12 @@
 //! A port this feature needs from another feature is a trait declared here
 //! and implemented in `app.rs`.
 
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
+use super::model::{AuditLogEntry, NewAuditLogEntry};
+use super::repo;
 use super::service_api::AuditLogEntryServiceApi;
+use crate::error::AppError;
 
 /// The `audit_log` service, registered as app data by `register_services`.
 pub struct AuditLogEntryService {
@@ -21,6 +24,17 @@ impl AuditLogEntryService {
     #[must_use]
     pub fn new(pool: PgPool) -> Self {
         AuditLogEntryService { pool }
+    }
+
+    /// Records `input` on `conn`, the caller's transaction. The API has no
+    /// create (the log is read-only there): the application writes it, and
+    /// other features reach this through a port `app.rs` implements.
+    pub async fn create_in(
+        &self,
+        conn: &mut PgConnection,
+        input: NewAuditLogEntry,
+    ) -> Result<AuditLogEntry, AppError> {
+        Ok(repo::create(conn, input).await?)
     }
 }
 

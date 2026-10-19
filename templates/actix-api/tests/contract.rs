@@ -49,6 +49,9 @@ const COVERED: &[(&str, &str)] = &[
     ("patch", "/api/v1/users/me"),
     ("get", "/health/live"),
     ("get", "/health/ready"),
+    ("post", "/api/v1/auth/email/change"),
+    ("post", "/api/v1/auth/email/change/confirm"),
+    ("post", "/api/v1/auth/invitations"),
 ];
 
 /// The differences the application still has, and why.
@@ -92,6 +95,10 @@ const KNOWN: &[(&str, &str)] = &[
     (
         "GET /api/v1/audit-log: parameter `order` (query): served has it, target has not",
         "every generated list takes `order` (ADR 0016)",
+    ),
+    (
+        "POST /api/v1/auth/invitations: response 201: properties: target has `avatar_url`, served has not",
+        "`avatar_url` comes with uploads (a later release)",
     ),
 ];
 
@@ -521,6 +528,7 @@ async fn a_mismatch_breaks_the_contract_with_a_readable_list()
             "GET /api/v1/auth/me: response 200: properties.email.type: target \"string\", served \"integer\"",
             "GET /api/v1/users/me: response 200: properties.email.type: target \"string\", served \"integer\"",
             "PATCH /api/v1/users/me: response 200: properties.email.type: target \"string\", served \"integer\"",
+            "POST /api/v1/auth/invitations: response 201: properties.email.type: target \"string\", served \"integer\"",
         ]
     );
     Ok(())
