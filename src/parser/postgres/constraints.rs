@@ -3,7 +3,10 @@
 
 use std::collections::HashSet;
 
-use sqlparser::ast::{CreateIndex, IndexColumn, TableConstraint};
+use sqlparser::ast::{
+    CreateIndex, Expr, FunctionArg, FunctionArgExpr, FunctionArguments, IndexColumn,
+    TableConstraint,
+};
 
 use super::alter::column_index;
 use super::checks::{apply_range_check, range_check};
@@ -96,8 +99,9 @@ pub(super) fn add_constraint(
 }
 
 /// Records a `CREATE UNIQUE INDEX` on plain columns of a known table as a
-/// unique key, keeping a partial index's condition. Expression indexes and
-/// non-unique indexes change nothing.
+/// unique key, keeping a partial index's condition. An index whose only
+/// entry is `lower(<column>)` makes a case-insensitive key on that column.
+/// Other expression indexes and non-unique indexes change nothing.
 pub(super) fn record_unique_index(tables: &mut [Table], index: &CreateIndex) {
     if !index.unique {
         return;
@@ -105,13 +109,18 @@ pub(super) fn record_unique_index(tables: &mut [Table], index: &CreateIndex) {
     let Some(position) = find_table(tables, &index.table_name) else {
         return;
     };
-    let Some(columns) = index
+    let plain = index
         .columns
         .iter()
         .map(index_column_name)
-        .collect::<Option<Vec<String>>>()
-    else {
-        return;
+        .collect::<Option<Vec<String>>>();
+    let (columns, case_insensitive) = match (plain, index.columns.as_slice()) {
+        (Some(columns), _) => (columns, false),
+        (None, [only]) => match lowered_column(&only.column.expr) {
+            Some(column) => (vec![column], true),
+            None => return,
+        },
+        (None, _) => return,
     };
     let table = &mut tables[position];
     if columns
@@ -123,7 +132,44 @@ pub(super) fn record_unique_index(tables: &mut [Table], index: &CreateIndex) {
     table.unique_keys.push(UniqueKey {
         columns,
         predicate: index.predicate.as_ref().map(ToString::to_string),
+        case_insensitive,
     });
+}
+
+/// The column of `lower(<column>)`: `lower` in any casing unless quoted,
+/// the column optionally quoted or parenthesized.
+fn lowered_column(expr: &Expr) -> Option<String> {
+    let Expr::Function(function) = expr else {
+        return None;
+    };
+    let [name] = function.name.0.as_slice() else {
+        return None;
+    };
+    if ident_name(name.as_ident()?) != "lower"
+        || function.filter.is_some()
+        || function.over.is_some()
+        || !function.within_group.is_empty()
+        || !matches!(function.parameters, FunctionArguments::None)
+    {
+        return None;
+    }
+    let FunctionArguments::List(list) = &function.args else {
+        return None;
+    };
+    let [FunctionArg::Unnamed(FunctionArgExpr::Expr(argument))] = list.args.as_slice() else {
+        return None;
+    };
+    if list.duplicate_treatment.is_some() || !list.clauses.is_empty() {
+        return None;
+    }
+    let mut argument = argument;
+    while let Expr::Nested(inner) = argument {
+        argument = inner;
+    }
+    match argument {
+        Expr::Identifier(column) => Some(ident_name(column)),
+        _ => None,
+    }
 }
 
 /// Records a primary key or unique constraint under its declared name, or

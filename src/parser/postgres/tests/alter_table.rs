@@ -225,7 +225,6 @@ fn records_unique_indexes_on_plain_columns() {
     let table = one_table(
         "CREATE TABLE users (id BIGSERIAL PRIMARY KEY, email TEXT, deleted_at TIMESTAMPTZ);
              CREATE UNIQUE INDEX users_email_live ON users (email) WHERE deleted_at IS NULL;
-             CREATE UNIQUE INDEX users_email_lower ON users (lower(email));
              CREATE INDEX users_deleted ON users (deleted_at);",
     );
     assert_eq!(
@@ -233,6 +232,46 @@ fn records_unique_indexes_on_plain_columns() {
         [UniqueKey {
             columns: vec!["email".to_owned()],
             predicate: Some("deleted_at IS NULL".to_owned()),
+            case_insensitive: false,
         }]
     );
+}
+
+#[test]
+fn records_unique_indexes_on_lower_of_a_column_as_case_insensitive() {
+    let table = one_table(
+        r#"CREATE TABLE users (id BIGSERIAL PRIMARY KEY, email TEXT, "Handle" TEXT,
+                 nick TEXT, deleted_at TIMESTAMPTZ);
+             CREATE UNIQUE INDEX users_email_key ON users (lower(email)) WHERE deleted_at IS NULL;
+             CREATE UNIQUE INDEX users_handle_key ON users (LOWER("Handle"));
+             CREATE UNIQUE INDEX users_nick_key ON public.users (Lower((nick)));"#,
+    );
+    let key = |column: &str, predicate: Option<&str>| UniqueKey {
+        columns: vec![column.to_owned()],
+        predicate: predicate.map(str::to_owned),
+        case_insensitive: true,
+    };
+    assert_eq!(
+        table.unique_keys,
+        [
+            key("email", Some("deleted_at IS NULL")),
+            key("Handle", None),
+            key("nick", None),
+        ]
+    );
+}
+
+#[test]
+fn ignores_other_expression_unique_indexes() {
+    let table = one_table(
+        r#"CREATE TABLE users (id BIGSERIAL PRIMARY KEY, email TEXT, name TEXT, org BIGINT);
+             CREATE INDEX users_email_lower ON users (lower(email));
+             CREATE UNIQUE INDEX users_email_upper ON users (upper(email));
+             CREATE UNIQUE INDEX users_email_quoted ON users ("LOWER"(email));
+             CREATE UNIQUE INDEX users_both ON users (lower(email || name));
+             CREATE UNIQUE INDEX users_two ON users (lower(email), lower(name));
+             CREATE UNIQUE INDEX users_org_email ON users (org, lower(email));
+             CREATE UNIQUE INDEX users_missing ON users (lower(nope));"#,
+    );
+    assert_eq!(table.unique_keys, []);
 }

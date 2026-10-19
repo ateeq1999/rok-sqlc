@@ -79,6 +79,7 @@ pub async fn get_one(
         (status = 401, description = "No valid bearer token.", body = ErrorBody),
         (status = 403, description = "The caller is not an admin.", body = ErrorBody),
         (status = 404, description = "No such row, or not the caller's.", body = ErrorBody),
+        (status = 409, description = "A unique or foreign-key violation.", body = ErrorBody),
         (status = 413, description = "The body is over the limit.", body = ErrorBody),
         (status = 422, description = "The body breaks a rule or a check.", body = ErrorBody),
     ),

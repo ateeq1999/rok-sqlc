@@ -109,6 +109,22 @@ pub fn live_key_predicate(table: &Table, keys: &[&Column]) -> String {
     }
 }
 
+/// `live_key_predicate` over one column compared ignoring case, the way a
+/// unique index on `lower(<column>)` compares it: `lower(col) = lower($n)`.
+pub fn live_lowered_predicate(table: &Table, column: &Column) -> String {
+    let lowered = format!(
+        "lower({}) = lower(${})",
+        ident(&column.sql_name),
+        first_placeholder(table)
+    );
+    tenant_condition(table, None)
+        .into_iter()
+        .chain([lowered])
+        .chain(live_condition(table, None))
+        .collect::<Vec<_>>()
+        .join(" AND ")
+}
+
 /// The condition selecting every row a whole-table read sees: the tenant's
 /// rows (`$1`) that are live, or `None` when every row is visible.
 pub fn scope_condition(table: &Table) -> Option<String> {
