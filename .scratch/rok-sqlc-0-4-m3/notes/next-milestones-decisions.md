@@ -43,3 +43,5 @@ Reference: https://vinejs.dev/docs/types/string. `unique` and `exists` in VineJS
 Email change (send a code or link to the new address, then confirm) and password change (check the current password, then hash the new one) are flows, not updates. They need a mailer port, token storage and hashing, which is milestone 5's auth surface. Design `[api.verifiable]`, or whatever it ends up being called, in milestone 5's design session, with these two flows as its first requirements.
 
 Until then, a flow's column is immutable in the CRUD (`[api.immutable]`, as `email` is in the template).
+
+**Superseded (2026-10-19):** milestone 5 dropped `[api.verifiable]`. Both flows are hand-written template features (see `../../rok-sqlc-0-6/notes/m5-auth-decisions.md`, Q1).
