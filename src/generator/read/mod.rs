@@ -2,8 +2,8 @@ use crate::schema::{Column, Table};
 
 use super::search::SearchApi;
 use super::sql::{
-    column_clause, first_placeholder, ident, key_order, live_key_predicate, scope_condition,
-    str_literal, table_ref,
+    column_clause, first_placeholder, ident, key_order, live_key_predicate, live_lowered_predicate,
+    scope_condition, str_literal, table_ref,
 };
 use super::{
     HEADER, StaticQuery, keys, param_name, param_type, push_build_and_fetch, push_doc,
@@ -105,6 +105,9 @@ fn search_imports(table: &Table, api: SearchApi) -> String {
 pub(crate) struct Lookup<'a> {
     pub(crate) fn_name: String,
     pub(crate) columns: Vec<&'a Column>,
+    /// Whether the key is a unique index on `lower(<column>)`, so the lookup
+    /// compares `lower(<column>) = lower($n)`.
+    pub(crate) case_insensitive: bool,
 }
 
 /// The table's unique-key lookups, in declaration order. A partial unique
@@ -116,11 +119,12 @@ pub(crate) fn unique_lookups(table: &Table) -> Vec<Lookup<'_>> {
     let skip_primary_key = usize::from(!table.primary_key.is_empty());
     let mut names: Vec<String> = Vec::new();
     table
-        .unique_key_columns(table.soft_delete_column.as_deref())
+        .lookup_unique_keys(table.soft_delete_column.as_deref())
         .into_iter()
         .skip(skip_primary_key)
         .filter_map(|key| {
             let columns: Vec<&Column> = key
+                .columns
                 .iter()
                 .map(|name| table.columns.iter().find(|column| column.sql_name == *name))
                 .collect::<Option<Vec<_>>>()?
@@ -140,7 +144,11 @@ pub(crate) fn unique_lookups(table: &Table) -> Vec<Lookup<'_>> {
                 return None;
             }
             names.push(fn_name.clone());
-            Some(Lookup { fn_name, columns })
+            Some(Lookup {
+                fn_name,
+                columns,
+                case_insensitive: key.case_insensitive,
+            })
         })
         .collect()
 }
@@ -173,10 +181,11 @@ fn push_doc_with_note(output: &mut String, table: &Table, lines: &[&str], note: 
 fn render_unique_lookup(output: &mut String, table: &Table, lookup: &Lookup<'_>) {
     let mut sql = column_clause("SELECT", table);
     sql.push(format!("FROM {}", table_ref(table)));
-    sql.push(format!(
-        "WHERE {}",
-        live_key_predicate(table, &lookup.columns)
-    ));
+    let predicate = match lookup.columns.as_slice() {
+        [column] if lookup.case_insensitive => live_lowered_predicate(table, column),
+        _ => live_key_predicate(table, &lookup.columns),
+    };
+    sql.push(format!("WHERE {predicate}"));
 
     let described: Vec<String> = lookup
         .columns

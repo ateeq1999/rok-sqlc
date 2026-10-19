@@ -7,6 +7,21 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+### Added
+
+- A unique index whose only entry is `lower(<column>)` (any casing of
+  `lower`, the column optionally quoted) is a case-insensitive unique key
+  (`UniqueKey::case_insensitive`). The usual partial-index rule applies
+  (`WHERE deleted_at IS NULL` counts under the soft-delete convention). Its
+  lookup, `read::get_by_<col>`, compares `lower(col) = lower($1)`, and so
+  does the API's `by-<col>` route. Other expression indexes are still
+  ignored, and `ON CONFLICT (<col>)` doesn't match such a key (PostgreSQL
+  needs `ON CONFLICT (lower(<col>))`). Output changes only for schemas with
+  such an index: the actix template's `users` gains `get_by_email` (its
+  skipped `lookups` keep the route out), and its update now documents
+  `409`. The module corpus has only composite `lower()` indexes,
+  so its output is unchanged.
+
 ## [0.4.0] - 2026-10-19
 
 ### Breaking changes to the generated API

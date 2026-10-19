@@ -93,7 +93,7 @@ Removing a row from the table, as opposed to a soft delete.
 _Avoid_: hard delete, purge
 
 **Unique key**:
-A set of columns no two live rows share (the primary key, a unique constraint, or an eligible unique index); each one gets a generated lookup.
+A set of columns no two live rows share (the primary key, a unique constraint, or an eligible unique index); each one gets a generated lookup. A unique index on `lower(<column>)` makes a **case-insensitive** unique key, whose lookup compares ignoring case.
 _Avoid_: natural key, alternate key
 
 **Drift**:

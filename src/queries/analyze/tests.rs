@@ -19,6 +19,8 @@ const SCHEMA: &str = "
         CREATE TABLE nodes (id BIGSERIAL PRIMARY KEY, parent_id BIGINT REFERENCES nodes (id), label TEXT NOT NULL);
         CREATE TABLE members (id BIGSERIAL PRIMARY KEY, email TEXT NOT NULL, deleted_at TIMESTAMPTZ);
         CREATE UNIQUE INDEX members_email_live ON members (email) WHERE deleted_at IS NULL;
+        CREATE TABLE handles (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL);
+        CREATE UNIQUE INDEX handles_name_ci ON handles (lower(name));
     ";
 
 fn analyze(queries: &str) -> (Vec<AnalyzedQuery>, Vec<QueryFailure>) {
@@ -500,5 +502,17 @@ fn partial_unique_index_targets_need_their_condition() {
 fn partial_index_targets_keep_escaped_quotes() {
     one(
         "-- name: Quoted :exec\nINSERT INTO members (email) VALUES ('it''s')\nON CONFLICT (email)\n    WHERE deleted_at IS NULL\nDO UPDATE SET email = 'O''Brien';",
+    );
+}
+
+/// PostgreSQL infers a unique index on `lower(name)` only from the target
+/// `(lower(name))`, so the column target `(name)` matches no unique key.
+#[test]
+fn case_insensitive_unique_keys_are_not_column_targets() {
+    assert_eq!(
+        failure(
+            "-- name: Upsert :exec\nINSERT INTO handles (name) VALUES ($1) ON CONFLICT (name) DO NOTHING;"
+        ),
+        "ON CONFLICT (name) matches no unique key; unique keys of `handles`: (id)"
     );
 }

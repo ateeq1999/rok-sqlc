@@ -282,8 +282,9 @@ pub(super) async fn composite_keys_arrays_and_numeric(pool: &PgPool) {
 }
 
 /// Every unique key other than the primary key gets a `get_by_<cols>`
-/// lookup: `products.sku` (made unique by alter_schema.sql) and the
-/// composite `(organization_id, code)` of `app.branches`.
+/// lookup: `products.sku` (made unique by alter_schema.sql), the
+/// composite `(organization_id, code)` of `app.branches`, and its
+/// case-insensitive `lower(name)` index.
 pub(super) async fn unique_key_lookups_find_one_row_or_none(pool: &PgPool) {
     use db::branches::models::NewBranch;
     use db::categories::models::NewCategory;
@@ -362,6 +363,22 @@ pub(super) async fn unique_key_lookups_find_one_row_or_none(pool: &PgPool) {
         .await
         .unwrap();
     assert_eq!(globex_west, None);
+
+    // `lower(name)` is unique, so the lookup ignores case either way round.
+    let shouted = db::branches::read::get_by_name(pool, "ACME WEST")
+        .await
+        .unwrap();
+    assert_eq!(
+        shouted.map(|row| (row.organization_id, row.code)),
+        Some((acme, "WEST".to_owned()))
+    );
+    assert_eq!(
+        db::branches::read::get_by_name(pool, "acme west ")
+            .await
+            .unwrap(),
+        None,
+        "only case is ignored"
+    );
 }
 
 /// A text key's typed id is not `Copy`, so every generated function borrows
