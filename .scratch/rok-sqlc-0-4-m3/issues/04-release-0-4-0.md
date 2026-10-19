@@ -10,7 +10,11 @@ Do NOT tag, push the tag, or publish. The maintainer pushes `v0.4.0`, and the Re
 
 **Blocked by:** 02, 03
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Version 0.4.0 everywhere it is declared, and the CHANGELOG covers every user-visible change of milestones 1 to 3.
-- [ ] The full suite passes (Debian PostgreSQL, Rust 1.94), plus the 1.88 build and the publish dry run.
+- [x] Version 0.4.0 everywhere it is declared, and the CHANGELOG covers every user-visible change of milestones 1 to 3.
+- [x] The full suite passes (Debian PostgreSQL, Rust 1.94), plus the 1.88 build and the publish dry run.
+
+## Comments
+
+Done on `rok-sqlc-0-4-m3`: version 0.4.0 (Cargo.toml, Cargo.lock, README status and install example, install scripts, release workflow example tag), CHANGELOG `[0.4.0] - 2026-10-19` and compare links, README roadmap ("Planned"). Not tagged or published.

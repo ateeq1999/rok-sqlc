@@ -7,6 +7,8 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-19
+
 ### Breaking changes to the generated API
 
 - `extractors`: `db/http/` answers a rejected body with the wire standard
@@ -655,7 +657,8 @@ that break code written against earlier development snapshots.
   paths under the current directory relative to it (also when they come
   from `rok-sqlc.toml`).
 
-[Unreleased]: https://github.com/ateeq1999/rok-sqlc/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/ateeq1999/rok-sqlc/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/ateeq1999/rok-sqlc/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.1.0...v0.2.0
