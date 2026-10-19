@@ -125,6 +125,101 @@
         ],
         "type": "string"
       },
+      "BookmarkInclude": {
+        "description": "The to-one relationships `?include=` takes, in `snake_case`.",
+        "enum": [
+          "document"
+        ],
+        "type": "string"
+      },
+      "BookmarkResponse": {
+        "description": "A `bookmarks` row as the API answers it.",
+        "properties": {
+          "document_id": {
+            "description": "The `document_id` column.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "description": "The `id` column.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "note": {
+            "description": "The `note` column.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "document_id",
+          "note"
+        ],
+        "type": "object"
+      },
+      "BookmarkSearchFilter": {
+        "additionalProperties": false,
+        "description": "The search body's conditions by column: `BookmarkFilter` without its\nrelationship filters. A hidden column can't be named.",
+        "properties": {
+          "document_id": {
+            "default": [],
+            "description": "Conditions on the `document_id` column.",
+            "items": {
+              "$ref": "#/components/schemas/Equality_DocumentId"
+            },
+            "type": "array"
+          },
+          "id": {
+            "default": [],
+            "description": "Conditions on the `id` column.",
+            "items": {
+              "$ref": "#/components/schemas/Equality_BookmarkId"
+            },
+            "type": "array"
+          },
+          "note": {
+            "default": [],
+            "description": "Conditions on the `note` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "BookmarkSort": {
+        "description": "The columns `GET /api/v1/bookmarks?sort=` takes, in `snake_case`.",
+        "enum": [
+          "id"
+        ],
+        "type": "string"
+      },
+      "BookmarkWithDocumentResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/BookmarkResponse",
+            "description": "The row."
+          },
+          {
+            "properties": {
+              "document": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DocumentResponse",
+                    "description": "Its `document`, or `null` when there is none the caller may read."
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          }
+        ],
+        "description": "A `bookmarks` row with its `document`, as `?include=document` answers it."
+      },
       "CommentInclude": {
         "description": "The to-one relationships `?include=` takes, in `snake_case`.",
         "enum": [
@@ -272,6 +367,25 @@
         ],
         "type": "object"
       },
+      "CreateBookmarkDto": {
+        "description": "`POST /api/v1/bookmarks`'s body, checked by the rules of `NewBookmark`.\nA field for a defaulted column may be left out.",
+        "properties": {
+          "document_id": {
+            "description": "The `document_id` column.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "note": {
+            "description": "The `note` column.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "note"
+        ],
+        "type": "object"
+      },
       "CreateCommentDto": {
         "description": "`POST /api/v1/comments`'s body, checked by the rules of `NewComment`.\nA field for a defaulted column may be left out.",
         "properties": {
@@ -350,6 +464,19 @@
         },
         "required": [
           "title"
+        ],
+        "type": "object"
+      },
+      "CreateFolderDto": {
+        "description": "`POST /api/v1/folders`'s body, checked by the rules of `NewFolder`.\nA field for a defaulted column may be left out.",
+        "properties": {
+          "name": {
+            "description": "The `name` column.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
         ],
         "type": "object"
       },
@@ -594,7 +721,7 @@
             ]
           },
           "phone": {
-            "description": "The `phone` column.\n\nRules: `mobile(ar-SA)`.",
+            "description": "The `phone` column.\n\nRules: `mobile`.",
             "type": [
               "string",
               "null"
@@ -669,7 +796,6 @@
           },
           "website": {
             "description": "The `website` column.\n\nRules: `url`.",
-            "format": "uri",
             "type": [
               "string",
               "null"
@@ -685,6 +811,19 @@
         },
         "required": [
           "email"
+        ],
+        "type": "object"
+      },
+      "CreateTagDto": {
+        "description": "`POST /api/v1/tags`'s body, checked by the rules of `NewTag`.\nA field for a defaulted column may be left out.",
+        "properties": {
+          "name": {
+            "description": "The `name` column.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
         ],
         "type": "object"
       },
@@ -1081,6 +1220,75 @@
           }
         ]
       },
+      "Equality_BookmarkId": {
+        "description": "A condition on a boolean or UUID column.",
+        "oneOf": [
+          {
+            "description": "Equal to the value.",
+            "properties": {
+              "eq": {
+                "description": "The primary key of the `bookmarks` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "eq"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Not equal to the value.",
+            "properties": {
+              "ne": {
+                "description": "The primary key of the `bookmarks` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ne"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Equal to one of the values.",
+            "properties": {
+              "in": {
+                "description": "Equal to one of the values.",
+                "items": {
+                  "description": "The primary key of the `bookmarks` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "in"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Equal to none of the values.",
+            "properties": {
+              "not_in": {
+                "description": "Equal to none of the values.",
+                "items": {
+                  "description": "The primary key of the `bookmarks` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "not_in"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Equality_CommentId": {
         "description": "A condition on a boolean or UUID column.",
         "oneOf": [
@@ -1275,6 +1483,75 @@
                 "description": "Equal to none of the values.",
                 "items": {
                   "description": "The primary key of the `drafts` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "not_in"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Equality_FolderId": {
+        "description": "A condition on a boolean or UUID column.",
+        "oneOf": [
+          {
+            "description": "Equal to the value.",
+            "properties": {
+              "eq": {
+                "description": "The primary key of the `folders` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "eq"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Not equal to the value.",
+            "properties": {
+              "ne": {
+                "description": "The primary key of the `folders` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ne"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Equal to one of the values.",
+            "properties": {
+              "in": {
+                "description": "Equal to one of the values.",
+                "items": {
+                  "description": "The primary key of the `folders` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "in"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Equal to none of the values.",
+            "properties": {
+              "not_in": {
+                "description": "Equal to none of the values.",
+                "items": {
+                  "description": "The primary key of the `folders` table, as a distinct type so it\ncannot be mixed up with another table's key.",
                   "format": "uuid",
                   "type": "string"
                 },
@@ -1787,6 +2064,75 @@
           }
         ]
       },
+      "Equality_TagId": {
+        "description": "A condition on a boolean or UUID column.",
+        "oneOf": [
+          {
+            "description": "Equal to the value.",
+            "properties": {
+              "eq": {
+                "description": "The primary key of the `tags` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "eq"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Not equal to the value.",
+            "properties": {
+              "ne": {
+                "description": "The primary key of the `tags` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ne"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Equal to one of the values.",
+            "properties": {
+              "in": {
+                "description": "Equal to one of the values.",
+                "items": {
+                  "description": "The primary key of the `tags` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "in"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Equal to none of the values.",
+            "properties": {
+              "not_in": {
+                "description": "Equal to none of the values.",
+                "items": {
+                  "description": "The primary key of the `tags` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "not_in"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Equality_TaskId": {
         "description": "A condition on a boolean or UUID column.",
         "oneOf": [
@@ -1954,6 +2300,69 @@
           "message"
         ],
         "type": "object"
+      },
+      "FolderResponse": {
+        "description": "A `folders` row as the API answers it.",
+        "properties": {
+          "id": {
+            "description": "The `id` column.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "description": "The `name` column.",
+            "type": "string"
+          },
+          "owner_id": {
+            "description": "The `owner_id` column.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "owner_id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "FolderSearchFilter": {
+        "additionalProperties": false,
+        "description": "The search body's conditions by column: `FolderFilter` without its\nrelationship filters. A hidden column can't be named.",
+        "properties": {
+          "id": {
+            "default": [],
+            "description": "Conditions on the `id` column.",
+            "items": {
+              "$ref": "#/components/schemas/Equality_FolderId"
+            },
+            "type": "array"
+          },
+          "name": {
+            "default": [],
+            "description": "Conditions on the `name` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "owner_id": {
+            "default": [],
+            "description": "Conditions on the `owner_id` column.",
+            "items": {
+              "$ref": "#/components/schemas/Equality_String"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "FolderSort": {
+        "description": "The columns `GET /api/v1/folders?sort=` takes, in `snake_case`.",
+        "enum": [
+          "id"
+        ],
+        "type": "string"
       },
       "GadgetMood": {
         "description": "The `gadget_mood` enum type.",
@@ -3168,6 +3577,65 @@
         ],
         "type": "object"
       },
+      "PaginatedResponse_BookmarkResponse": {
+        "description": "One page of a list: `{\"items\", \"page\", \"per_page\", \"total\"}`.",
+        "properties": {
+          "items": {
+            "description": "The page's rows.",
+            "items": {
+              "description": "A `bookmarks` row as the API answers it.",
+              "properties": {
+                "document_id": {
+                  "description": "The `document_id` column.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "id": {
+                  "description": "The `id` column.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "note": {
+                  "description": "The `note` column.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "document_id",
+                "note"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "page": {
+            "description": "The page, from 1.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "per_page": {
+            "description": "The most rows a page holds.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "description": "The rows on every page together.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total"
+        ],
+        "type": "object"
+      },
       "PaginatedResponse_CommentResponse": {
         "description": "One page of a list: `{\"items\", \"page\", \"per_page\", \"total\"}`.",
         "properties": {
@@ -3360,6 +3828,65 @@
               "required": [
                 "title",
                 "id"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "page": {
+            "description": "The page, from 1.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "per_page": {
+            "description": "The most rows a page holds.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "description": "The rows on every page together.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total"
+        ],
+        "type": "object"
+      },
+      "PaginatedResponse_FolderResponse": {
+        "description": "One page of a list: `{\"items\", \"page\", \"per_page\", \"total\"}`.",
+        "properties": {
+          "items": {
+            "description": "The page's rows.",
+            "items": {
+              "description": "A `folders` row as the API answers it.",
+              "properties": {
+                "id": {
+                  "description": "The `id` column.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "name": {
+                  "description": "The `name` column.",
+                  "type": "string"
+                },
+                "owner_id": {
+                  "description": "The `owner_id` column.",
+                  "format": "uuid",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "owner_id",
+                "name"
               ],
               "type": "object"
             },
@@ -3928,6 +4455,65 @@
               "required": [
                 "id",
                 "email"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "page": {
+            "description": "The page, from 1.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "per_page": {
+            "description": "The most rows a page holds.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "description": "The rows on every page together.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total"
+        ],
+        "type": "object"
+      },
+      "PaginatedResponse_TagResponse": {
+        "description": "One page of a list: `{\"items\", \"page\", \"per_page\", \"total\"}`.",
+        "properties": {
+          "items": {
+            "description": "The page's rows.",
+            "items": {
+              "description": "A `tags` row as the API answers it.",
+              "properties": {
+                "id": {
+                  "description": "The `id` column.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "name": {
+                  "description": "The `name` column.",
+                  "type": "string"
+                },
+                "tenant_id": {
+                  "description": "The `tenant_id` column.",
+                  "format": "uuid",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "tenant_id",
+                "name"
               ],
               "type": "object"
             },
@@ -4720,6 +5306,62 @@
         },
         "type": "object"
       },
+      "SearchBookmarksBody": {
+        "additionalProperties": false,
+        "description": "`POST /api/v1/bookmarks/search`'s body: `filter` matches rows by column (every\ncondition must hold), `sort` and `order` sort them, and `page` and\n`per_page` page them, as the list's query does.",
+        "properties": {
+          "filter": {
+            "default": {},
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BookmarkSearchFilter",
+                "description": "The conditions rows must meet."
+              }
+            ]
+          },
+          "order": {
+            "default": null,
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SortOrder",
+                "description": "The order, `desc` unless given."
+              }
+            ]
+          },
+          "page": {
+            "default": null,
+            "description": "The page, from 1.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "per_page": {
+            "default": null,
+            "description": "The rows per page: 20 unless given, at most 100.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "sort": {
+            "default": null,
+            "description": "A `BookmarkSort` key, `id` unless given.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "SearchCommentsBody": {
         "additionalProperties": false,
         "description": "`POST /api/v1/comments/search`'s body: `filter` matches rows by column (every\ncondition must hold), `sort` and `order` sort them, and `page` and\n`per_page` page them, as the list's query does.",
@@ -4880,6 +5522,62 @@
           "sort": {
             "default": null,
             "description": "A `DraftSort` key, `id` unless given.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "SearchFoldersBody": {
+        "additionalProperties": false,
+        "description": "`POST /api/v1/folders/search`'s body: `filter` matches rows by column (every\ncondition must hold), `sort` and `order` sort them, and `page` and\n`per_page` page them, as the list's query does.",
+        "properties": {
+          "filter": {
+            "default": {},
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FolderSearchFilter",
+                "description": "The conditions rows must meet."
+              }
+            ]
+          },
+          "order": {
+            "default": null,
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SortOrder",
+                "description": "The order, `desc` unless given."
+              }
+            ]
+          },
+          "page": {
+            "default": null,
+            "description": "The page, from 1.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "per_page": {
+            "default": null,
+            "description": "The rows per page: 20 unless given, at most 100.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "sort": {
+            "default": null,
+            "description": "A `FolderSort` key, `id` unless given.",
             "type": [
               "string",
               "null"
@@ -5224,6 +5922,62 @@
         },
         "type": "object"
       },
+      "SearchTagsBody": {
+        "additionalProperties": false,
+        "description": "`POST /api/v1/tags/search`'s body: `filter` matches rows by column (every\ncondition must hold), `sort` and `order` sort them, and `page` and\n`per_page` page them, as the list's query does.",
+        "properties": {
+          "filter": {
+            "default": {},
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TagSearchFilter",
+                "description": "The conditions rows must meet."
+              }
+            ]
+          },
+          "order": {
+            "default": null,
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SortOrder",
+                "description": "The order, `desc` unless given."
+              }
+            ]
+          },
+          "page": {
+            "default": null,
+            "description": "The page, from 1.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "per_page": {
+            "default": null,
+            "description": "The rows per page: 20 unless given, at most 100.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "sort": {
+            "default": null,
+            "description": "A `TagSort` key, `id` unless given.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "SearchTasksBody": {
         "additionalProperties": false,
         "description": "`POST /api/v1/tasks/search`'s body: `filter` matches rows by column (every\ncondition must hold), `sort` and `order` sort them, and `page` and\n`per_page` page them, as the list's query does.",
@@ -5285,6 +6039,61 @@
         "enum": [
           "asc",
           "desc"
+        ],
+        "type": "string"
+      },
+      "TagResponse": {
+        "description": "A `tags` row as the API answers it.",
+        "properties": {
+          "id": {
+            "description": "The `id` column.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "description": "The `name` column.",
+            "type": "string"
+          },
+          "tenant_id": {
+            "description": "The `tenant_id` column.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "TagSearchFilter": {
+        "additionalProperties": false,
+        "description": "The search body's conditions by column: `TagFilter` without its\nrelationship filters. A hidden column can't be named.",
+        "properties": {
+          "id": {
+            "default": [],
+            "description": "Conditions on the `id` column.",
+            "items": {
+              "$ref": "#/components/schemas/Equality_TagId"
+            },
+            "type": "array"
+          },
+          "name": {
+            "default": [],
+            "description": "Conditions on the `name` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "TagSort": {
+        "description": "The columns `GET /api/v1/tags?sort=` takes, in `snake_case`.",
+        "enum": [
+          "id"
         ],
         "type": "string"
       },
@@ -5553,6 +6362,29 @@
         },
         "type": "object"
       },
+      "UpdateBookmarkDto": {
+        "description": "`PATCH /api/v1/bookmarks/{id}`'s body, checked by the rules of `UpdateBookmark`.\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
+        "properties": {
+          "document_id": {
+            "default": null,
+            "description": "The new value of the `document_id` column.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "note": {
+            "default": null,
+            "description": "The new value of the `note` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "UpdateCommentDto": {
         "description": "`PATCH /api/v1/comments/{id}`'s body, checked by the rules of `UpdateComment`.\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
         "properties": {
@@ -5639,6 +6471,20 @@
           "title": {
             "default": null,
             "description": "The new value of the `title` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "UpdateFolderDto": {
+        "description": "`PATCH /api/v1/folders/{id}`'s body, checked by the rules of `UpdateFolder`.\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
+        "properties": {
+          "name": {
+            "default": null,
+            "description": "The new value of the `name` column.",
             "type": [
               "string",
               "null"
@@ -5925,7 +6771,7 @@
           },
           "phone": {
             "default": null,
-            "description": "The new value of the `phone` column.\n\nRules: `mobile(ar-SA)`.",
+            "description": "The new value of the `phone` column.\n\nRules: `mobile`.",
             "type": [
               "string",
               "null"
@@ -6010,7 +6856,6 @@
           "website": {
             "default": null,
             "description": "The new value of the `website` column.\n\nRules: `url`.",
-            "format": "uri",
             "type": [
               "string",
               "null"
@@ -6019,6 +6864,20 @@
           "zip": {
             "default": null,
             "description": "The new value of the `zip` column.\n\nRules: `postalCode(SA)`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "UpdateTagDto": {
+        "description": "`PATCH /api/v1/tags/{id}`'s body, checked by the rules of `UpdateTag`.\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
+        "properties": {
+          "name": {
+            "default": null,
+            "description": "The new value of the `name` column.",
             "type": [
               "string",
               "null"
@@ -6973,6 +7832,513 @@
         "summary": "`POST /api/v1/audit-log/search`: one page of the rows the body's filter matches, `200`.",
         "tags": [
           "audit-log"
+        ]
+      }
+    },
+    "/api/v1/bookmarks": {
+      "get": {
+        "operationId": "list",
+        "parameters": [
+          {
+            "description": "The page, from 1. Defaults to 1.",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The rows a page holds, 1 to 100. Defaults to 20.",
+            "in": "query",
+            "name": "per_page",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/BookmarkSort"
+            }
+          },
+          {
+            "description": "The sort's direction. Defaults to `desc`.",
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_BookmarkResponse"
+                }
+              }
+            },
+            "description": "One page of rows."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`GET /api/v1/bookmarks`: one page of rows, `200`.",
+        "tags": [
+          "bookmarks"
+        ]
+      },
+      "post": {
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBookmarkDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookmarkResponse"
+                }
+              }
+            },
+            "description": "The row, created.",
+            "headers": {
+              "Location": {
+                "description": "The created row's URL.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A unique or foreign-key violation."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body breaks a rule or a check."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`POST /api/v1/bookmarks`: creates a row, `201` with its `Location`.",
+        "tags": [
+          "bookmarks"
+        ]
+      }
+    },
+    "/api/v1/bookmarks/search": {
+      "post": {
+        "operationId": "search",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchBookmarksBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_BookmarkResponse"
+                }
+              }
+            },
+            "description": "One page of the rows the filter matches."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body breaks a rule or a check."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`POST /api/v1/bookmarks/search`: one page of the rows the body's filter matches, `200`.",
+        "tags": [
+          "bookmarks"
+        ]
+      }
+    },
+    "/api/v1/bookmarks/{id}": {
+      "delete": {
+        "operationId": "remove",
+        "parameters": [
+          {
+            "description": "Bookmark id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The row, deleted."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`DELETE /api/v1/bookmarks/{id}`: deletes the row, `204`.",
+        "tags": [
+          "bookmarks"
+        ]
+      },
+      "get": {
+        "operationId": "get_one",
+        "parameters": [
+          {
+            "description": "Bookmark id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The relationship to embed.",
+            "in": "query",
+            "name": "include",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/BookmarkInclude"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookmarkResponse"
+                }
+              }
+            },
+            "description": "The row, with the relationship `?include=` names embedded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The caller is not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`GET /api/v1/bookmarks/{id}`: the row, `200`.\n`?include=` embeds a to-one relationship.",
+        "tags": [
+          "bookmarks"
+        ]
+      },
+      "patch": {
+        "operationId": "update",
+        "parameters": [
+          {
+            "description": "Bookmark id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateBookmarkDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookmarkResponse"
+                }
+              }
+            },
+            "description": "The row, changed."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A unique or foreign-key violation."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body breaks a rule or a check."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`PATCH /api/v1/bookmarks/{id}`: changes the row, `200` with it.",
+        "tags": [
+          "bookmarks"
         ]
       }
     },
@@ -8271,6 +9637,87 @@
         ]
       }
     },
+    "/api/v1/documents/{id}/bookmarks": {
+      "get": {
+        "operationId": "list_bookmarks",
+        "parameters": [
+          {
+            "description": "Document id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BookmarkResponse"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "The related rows."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The caller is not an admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`GET /api/v1/documents/{id}/bookmarks`: the row's `bookmarks`, `200` with a JSON array.",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
     "/api/v1/documents/{id}/comments": {
       "get": {
         "operationId": "list_comments",
@@ -8833,6 +10280,494 @@
         "summary": "`PATCH /api/v1/drafts/{id}`: changes the row, `200` with it.",
         "tags": [
           "drafts"
+        ]
+      }
+    },
+    "/api/v1/folders": {
+      "get": {
+        "operationId": "list",
+        "parameters": [
+          {
+            "description": "The page, from 1. Defaults to 1.",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The rows a page holds, 1 to 100. Defaults to 20.",
+            "in": "query",
+            "name": "per_page",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/FolderSort"
+            }
+          },
+          {
+            "description": "The sort's direction. Defaults to `desc`.",
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_FolderResponse"
+                }
+              }
+            },
+            "description": "One page of rows."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`GET /api/v1/folders`: one page of rows, `200`.",
+        "tags": [
+          "folders"
+        ]
+      },
+      "post": {
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateFolderDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderResponse"
+                }
+              }
+            },
+            "description": "The row, created.",
+            "headers": {
+              "Location": {
+                "description": "The created row's URL.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A unique or foreign-key violation."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body breaks a rule or a check."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`POST /api/v1/folders`: creates a row, `201` with its `Location`.",
+        "tags": [
+          "folders"
+        ]
+      }
+    },
+    "/api/v1/folders/search": {
+      "post": {
+        "operationId": "search",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchFoldersBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_FolderResponse"
+                }
+              }
+            },
+            "description": "One page of the rows the filter matches."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body breaks a rule or a check."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`POST /api/v1/folders/search`: one page of the rows the body's filter matches, `200`.",
+        "tags": [
+          "folders"
+        ]
+      }
+    },
+    "/api/v1/folders/{id}": {
+      "delete": {
+        "operationId": "remove",
+        "parameters": [
+          {
+            "description": "Folder id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The row, deleted."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`DELETE /api/v1/folders/{id}`: deletes the row, `204`.",
+        "tags": [
+          "folders"
+        ]
+      },
+      "get": {
+        "operationId": "get_one",
+        "parameters": [
+          {
+            "description": "Folder id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderResponse"
+                }
+              }
+            },
+            "description": "The row."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`GET /api/v1/folders/{id}`: the row, `200`.",
+        "tags": [
+          "folders"
+        ]
+      },
+      "patch": {
+        "operationId": "update",
+        "parameters": [
+          {
+            "description": "Folder id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateFolderDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderResponse"
+                }
+              }
+            },
+            "description": "The row, changed."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A unique or foreign-key violation."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body breaks a rule or a check."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`PATCH /api/v1/folders/{id}`: changes the row, `200` with it.",
+        "tags": [
+          "folders"
         ]
       }
     },
@@ -12393,6 +14328,551 @@
         ]
       }
     },
+    "/api/v1/tags": {
+      "get": {
+        "operationId": "list",
+        "parameters": [
+          {
+            "description": "The page, from 1. Defaults to 1.",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The rows a page holds, 1 to 100. Defaults to 20.",
+            "in": "query",
+            "name": "per_page",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TagSort"
+            }
+          },
+          {
+            "description": "The sort's direction. Defaults to `desc`.",
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_TagResponse"
+                }
+              }
+            },
+            "description": "One page of rows."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`GET /api/v1/tags`: one page of rows, `200`.",
+        "tags": [
+          "tags"
+        ]
+      },
+      "post": {
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTagDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagResponse"
+                }
+              }
+            },
+            "description": "The row, created.",
+            "headers": {
+              "Location": {
+                "description": "The created row's URL.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A unique or foreign-key violation."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body breaks a rule or a check."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`POST /api/v1/tags`: creates a row, `201` with its `Location`.",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
+    "/api/v1/tags/by-name/{value}": {
+      "get": {
+        "operationId": "get_by_name",
+        "parameters": [
+          {
+            "description": "Tag name",
+            "in": "path",
+            "name": "value",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagResponse"
+                }
+              }
+            },
+            "description": "The row."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`GET /api/v1/tags/by-name/{value}`: the row whose `name` is the value, `200`.",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
+    "/api/v1/tags/search": {
+      "post": {
+        "operationId": "search",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchTagsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_TagResponse"
+                }
+              }
+            },
+            "description": "One page of the rows the filter matches."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body breaks a rule or a check."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`POST /api/v1/tags/search`: one page of the rows the body's filter matches, `200`.",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
+    "/api/v1/tags/{id}": {
+      "delete": {
+        "operationId": "remove",
+        "parameters": [
+          {
+            "description": "Tag id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The row, deleted."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`DELETE /api/v1/tags/{id}`: deletes the row, `204`.",
+        "tags": [
+          "tags"
+        ]
+      },
+      "get": {
+        "operationId": "get_one",
+        "parameters": [
+          {
+            "description": "Tag id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagResponse"
+                }
+              }
+            },
+            "description": "The row."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`GET /api/v1/tags/{id}`: the row, `200`.",
+        "tags": [
+          "tags"
+        ]
+      },
+      "patch": {
+        "operationId": "update",
+        "parameters": [
+          {
+            "description": "Tag id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTagDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagResponse"
+                }
+              }
+            },
+            "description": "The row, changed."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No valid bearer token."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A unique or foreign-key violation."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body breaks a rule or a check."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "summary": "`PATCH /api/v1/tags/{id}`: changes the row, `200` with it.",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
     "/api/v1/tasks": {
       "get": {
         "operationId": "list",
@@ -13308,6 +15788,15 @@
     },
     {
       "name": "handles"
+    },
+    {
+      "name": "bookmarks"
+    },
+    {
+      "name": "folders"
+    },
+    {
+      "name": "tags"
     }
   ]
 }

@@ -101,7 +101,7 @@ fn bad_rules_fail_clearly() -> Result<()> {
         ),
         (
             "[api.rules.users]\nemail = [\"mobile(xx-XX)\"]",
-            "`api.rules.users.email` in the configuration has `mobile(xx-XX)`, but `mobile` takes one or more locales, such as `mobile(ar-SA)`, and `strictMode`; the locales are `ar-AE`",
+            "`api.rules.users.email` in the configuration has `mobile(xx-XX)`, but `mobile` takes locales, such as `mobile(ar-SA)`, or none for any, and `strictMode`; the locales are `ar-AE`",
         ),
         (
             "[api.rules.users]\nemail = [{ regex = \"(\" }]",

@@ -167,7 +167,7 @@ impl Table {
     /// each unique constraint or index that [counts](UniqueKey::counts), in
     /// declaration order. A key over the same columns as an earlier one (in
     /// any order) is left out, and so is a
-    /// [case-insensitive](UniqueKey::case_insensitive) key, whose columns'
+    /// [case-insensitive](UniqueKey::lowered) key, whose columns'
     /// values are not unique as `=` compares them.
     pub fn unique_key_columns(&self, soft_delete_column: Option<&str>) -> Vec<Vec<String>> {
         self.unique_keys_with(soft_delete_column, false)
@@ -193,7 +193,7 @@ impl Table {
             keys.push(UniqueKey::new(self.primary_key.clone()));
         }
         let declared = self.unique_keys.iter().filter(|key| {
-            key.counts(soft_delete_column) && (case_insensitive || !key.case_insensitive)
+            key.counts(soft_delete_column) && (case_insensitive || !key.is_case_insensitive())
         });
         for key in declared {
             let same = |other: &UniqueKey| {
@@ -500,8 +500,8 @@ pub struct KeyConstraint {
 }
 
 /// Columns no two rows share, from a unique constraint, a unique index on
-/// plain columns, or a unique index on `lower(<column>)` (a case-insensitive
-/// key), as declared. Whether a partial index makes a unique key is decided
+/// plain columns, or a unique index on plain columns and one `lower(<column>)`
+/// entry (a case-insensitive key), as declared. Whether a partial index makes a unique key is decided
 /// by [`UniqueKey::counts`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UniqueKey {
@@ -510,10 +510,10 @@ pub struct UniqueKey {
     /// The `WHERE` condition of a partial unique index, as SQL text; `None`
     /// for a constraint or a full index.
     pub predicate: Option<String>,
-    /// Whether the key is a unique index on `lower(<column>)`: its single
-    /// column's values are unique ignoring case, so a lookup compares
-    /// `lower(<column>) = lower($1)`.
-    pub case_insensitive: bool,
+    /// The column of the key's `lower(<column>)` entry, when it has one: that
+    /// column's values are compared ignoring case, so a lookup compares
+    /// `lower(<column>) = lower($n)`, and the others as they are.
+    pub lowered: Option<String>,
 }
 
 impl UniqueKey {
@@ -522,8 +522,14 @@ impl UniqueKey {
         Self {
             columns,
             predicate: None,
-            case_insensitive: false,
+            lowered: None,
         }
+    }
+
+    /// Whether the key compares a column ignoring case (see
+    /// [`lowered`](Self::lowered)).
+    pub fn is_case_insensitive(&self) -> bool {
+        self.lowered.is_some()
     }
 
     /// Whether the declaration makes a unique key: a constraint or a full
@@ -562,7 +568,7 @@ mod tests {
         UniqueKey {
             columns: vec!["sku".to_owned()],
             predicate: Some(predicate.to_owned()),
-            case_insensitive: false,
+            lowered: None,
         }
     }
 

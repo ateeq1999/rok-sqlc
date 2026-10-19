@@ -16,6 +16,7 @@ use uuid::Uuid;
 const DOCUMENTS: &str = "/api/v1/documents";
 const COMMENTS: &str = "/api/v1/comments";
 const TASKS: &str = "/api/v1/tasks";
+const BOOKMARKS: &str = "/api/v1/bookmarks";
 
 /// An admin in `tenant` with an account, so their tasks can be created.
 async fn admin(db: &Database, tenant: Uuid) -> With {
@@ -179,5 +180,54 @@ async fn a_null_reference_is_allowed() {
     let updated = call_with(&db, &at_first_version(&alice), Method::PATCH, &one, patch).await;
     assert_eq!(updated.status, StatusCode::OK, "{updated:?}");
     assert!(updated.body["task_id"].is_null(), "{updated:?}");
+    db.drop().await;
+}
+
+#[actix_web::test]
+async fn a_feature_without_an_owner_sees_only_the_callers_rows() {
+    let Some(db) = Database::fresh().await else {
+        return;
+    };
+    // `bookmarks` has neither an owner nor a tenant column, but its caller
+    // is signed in: another owner's document is missing too.
+    let tenant = Uuid::now_v7();
+    let alice = admin(&db, tenant).await;
+    let bob = admin(&db, tenant).await;
+    let body = |code: &str| json!({"code": code, "title": "A"});
+    let theirs = id(&post(&db, &bob, DOCUMENTS, body("b")).await);
+    let mine = id(&post(&db, &alice, DOCUMENTS, body("a")).await);
+
+    let bookmark = |document: &str| json!({"document_id": document, "note": "Read"});
+    let answer = post(&db, &alice, BOOKMARKS, bookmark(&theirs)).await;
+    assert_missing(&answer, "document_id", "document");
+    let one = format!(
+        "{BOOKMARKS}/{}",
+        id(&post(&db, &alice, BOOKMARKS, bookmark(&mine)).await)
+    );
+    let patch = Some(json!({"document_id": theirs}));
+    let answer = call_with(&db, &alice, Method::PATCH, &one, patch).await;
+    assert_missing(&answer, "document_id", "document");
+    db.drop().await;
+}
+
+#[actix_web::test]
+async fn a_feature_without_a_tenant_sees_only_the_callers_tenant() {
+    let Some(db) = Database::fresh().await else {
+        return;
+    };
+    // The same caller's document, in another tenant.
+    let alice = admin(&db, Uuid::now_v7()).await;
+    let elsewhere = With {
+        tenant: Some(Uuid::now_v7()),
+        ..alice.clone()
+    };
+    let body = json!({"code": "a", "title": "A"});
+    let document = id(&post(&db, &elsewhere, DOCUMENTS, body).await);
+
+    let bookmark = json!({"document_id": document, "note": "Read"});
+    let answer = post(&db, &alice, BOOKMARKS, bookmark.clone()).await;
+    assert_missing(&answer, "document_id", "document");
+    let created = post(&db, &elsewhere, BOOKMARKS, bookmark).await;
+    assert_eq!(created.body["document_id"], document, "{created:?}");
     db.drop().await;
 }

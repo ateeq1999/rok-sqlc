@@ -17,6 +17,8 @@ use uuid::Uuid;
 
 const HANDLES: &str = "/api/v1/handles";
 const NOTES: &str = "/api/v1/notes";
+const FOLDERS: &str = "/api/v1/folders";
+const TAGS: &str = "/api/v1/tags";
 
 /// A signed-in caller in a tenant of their own.
 fn tenant() -> With {
@@ -166,6 +168,41 @@ async fn every_taken_value_is_in_one_answer() {
     assert_taken_as(&answer, "seat", "region and seat are already taken together");
     let listed = call_with(&db, &with, Method::GET, HANDLES, None).await;
     assert_eq!(listed.body["total"], 1, "{listed:?}");
+    db.drop().await;
+}
+
+#[actix_web::test]
+async fn a_key_with_the_owner_column_is_checked_per_owner() {
+    let Some(db) = Database::fresh().await else {
+        return;
+    };
+    // `folders`' `(owner_id, name)`: the owner comes from the caller, and
+    // the failure is reported against `name`.
+    let alice = tenant();
+    let bob = tenant();
+    let inbox = json!({"name": "Inbox"});
+    created(FOLDERS, &post(&db, &alice, FOLDERS, inbox.clone()).await);
+    created(FOLDERS, &post(&db, &bob, FOLDERS, inbox.clone()).await);
+    assert_taken(&post(&db, &alice, FOLDERS, inbox).await, "name");
+
+    let other = json!({"name": "Other"});
+    let one = created(FOLDERS, &post(&db, &alice, FOLDERS, other).await);
+    let patch = Some(json!({"name": "Inbox"}));
+    let answer = call_with(&db, &alice, Method::PATCH, &one, patch).await;
+    assert_taken(&answer, "name");
+    db.drop().await;
+}
+
+#[actix_web::test]
+async fn a_composite_key_with_a_lowered_column_ignores_its_case() {
+    let Some(db) = Database::fresh().await else {
+        return;
+    };
+    // `tags`' `(tenant_id, lower(name))`.
+    let ours = tenant();
+    created(TAGS, &post(&db, &ours, TAGS, json!({"name": "Red"})).await);
+    created(TAGS, &post(&db, &tenant(), TAGS, json!({"name": "red"})).await);
+    assert_taken(&post(&db, &ours, TAGS, json!({"name": "RED"})).await, "name");
     db.drop().await;
 }
 

@@ -109,17 +109,29 @@ pub fn live_key_predicate(table: &Table, keys: &[&Column]) -> String {
     }
 }
 
-/// `live_key_predicate` over one column compared ignoring case, the way a
-/// unique index on `lower(<column>)` compares it: `lower(col) = lower($n)`.
-pub fn live_lowered_predicate(table: &Table, column: &Column) -> String {
-    let lowered = format!(
-        "lower({}) = lower(${})",
-        ident(&column.sql_name),
-        first_placeholder(table)
-    );
+/// `column` compared with the value bound at `$placeholder`: `col = $n`, or,
+/// when `lowered`, ignoring case, the way a unique index's
+/// `lower(<column>)` entry compares it: `lower(col) = lower($n)`.
+pub fn equals(column: &Column, placeholder: usize, lowered: bool) -> String {
+    let name = ident(&column.sql_name);
+    if lowered {
+        format!("lower({name}) = lower(${placeholder})")
+    } else {
+        format!("{name} = ${placeholder}")
+    }
+}
+
+/// `live_key_predicate` over a unique key's `columns`, the one named
+/// `lowered` (a case-insensitive key's) compared ignoring case.
+pub fn live_lookup_predicate(table: &Table, columns: &[&Column], lowered: Option<&str>) -> String {
+    let first = first_placeholder(table);
+    let compared = columns.iter().enumerate().map(|(index, column)| {
+        let ignoring_case = lowered == Some(column.sql_name.as_str());
+        equals(column, first + index, ignoring_case)
+    });
     tenant_condition(table, None)
         .into_iter()
-        .chain([lowered])
+        .chain(compared)
         .chain(live_condition(table, None))
         .collect::<Vec<_>>()
         .join(" AND ")

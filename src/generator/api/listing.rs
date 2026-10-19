@@ -79,7 +79,7 @@ pub fn render(feature: &Feature<'_>) -> String {
             "//! The reads of one row the caller owns: another caller's row is none.\n".to_owned(),
         );
     }
-    let checks = super::unique::checks(feature);
+    let checks = &feature.unique_checks;
     if !checks.is_empty() {
         docs.push(
             "//! The `unique` checks of a create or update body: whether another row\n//! already has its values.\n"
@@ -165,7 +165,7 @@ pub fn render(feature: &Feature<'_>) -> String {
         output.push('\n');
         render_owned(&mut output, feature);
     }
-    super::unique::render_reads(&mut output, feature, &checks);
+    super::unique::render_reads(&mut output, feature, checks);
     for relation in pairs {
         super::relation_service::render_pair_writes(&mut output, relation);
     }

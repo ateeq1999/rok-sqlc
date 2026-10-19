@@ -232,7 +232,7 @@ fn records_unique_indexes_on_plain_columns() {
         [UniqueKey {
             columns: vec!["email".to_owned()],
             predicate: Some("deleted_at IS NULL".to_owned()),
-            case_insensitive: false,
+            lowered: None,
         }]
     );
 }
@@ -249,7 +249,7 @@ fn records_unique_indexes_on_lower_of_a_column_as_case_insensitive() {
     let key = |column: &str, predicate: Option<&str>| UniqueKey {
         columns: vec![column.to_owned()],
         predicate: predicate.map(str::to_owned),
-        case_insensitive: true,
+        lowered: Some(column.to_owned()),
     };
     assert_eq!(
         table.unique_keys,
@@ -270,8 +270,25 @@ fn ignores_other_expression_unique_indexes() {
              CREATE UNIQUE INDEX users_email_quoted ON users ("LOWER"(email));
              CREATE UNIQUE INDEX users_both ON users (lower(email || name));
              CREATE UNIQUE INDEX users_two ON users (lower(email), lower(name));
-             CREATE UNIQUE INDEX users_org_email ON users (org, lower(email));
+             CREATE UNIQUE INDEX users_org_email ON users (lower(email), org, lower(name));
+             CREATE UNIQUE INDEX users_org_text ON users (org, lower(email || name));
              CREATE UNIQUE INDEX users_missing ON users (lower(nope));"#,
     );
     assert_eq!(table.unique_keys, []);
+}
+
+#[test]
+fn records_plain_columns_with_one_lowered_entry_as_a_case_insensitive_key() {
+    let table = one_table(
+        "CREATE TABLE tags (id BIGSERIAL PRIMARY KEY, org BIGINT, name TEXT, deleted_at TIMESTAMPTZ);
+             CREATE UNIQUE INDEX tags_name_key ON tags (org, lower(name)) WHERE deleted_at IS NULL;",
+    );
+    assert_eq!(
+        table.unique_keys,
+        [UniqueKey {
+            columns: vec!["org".to_owned(), "name".to_owned()],
+            predicate: Some("deleted_at IS NULL".to_owned()),
+            lowered: Some("name".to_owned()),
+        }]
+    );
 }

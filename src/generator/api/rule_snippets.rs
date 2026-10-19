@@ -1,11 +1,14 @@
 //! The helpers the generated checks and transforms of string rules call,
-//! written once into each `dto.rs` that needs them, laid out as rustfmt
-//! lays them out. Each starts with a newline, the blank line before it.
+//! written once into `shared/validation.rs` when any feature's rules need
+//! them, laid out as rustfmt lays them out. The ones a `dto.rs` calls are
+//! public; the data tables some of them read are in
+//! [`super::rule_tables`]. Each starts with a newline, the blank line
+//! before it.
 
 /// The `check` helper.
 pub const CHECK: &str = r#"
 /// `Ok` when `valid`, otherwise the error `code`.
-fn check(valid: bool, code: &'static str) -> Result<(), validator::ValidationError> {
+pub fn check(valid: bool, code: &'static str) -> Result<(), validator::ValidationError> {
     if valid {
         Ok(())
     } else {
@@ -17,7 +20,8 @@ fn check(valid: bool, code: &'static str) -> Result<(), validator::ValidationErr
 /// The `matches_regex` helper.
 pub const MATCHES_REGEX: &str = r#"
 /// Whether `value` matches `regex`, compiled from a pattern rok-sqlc checked.
-fn matches_regex(value: &str, regex: Option<&regex::Regex>) -> bool {
+#[must_use]
+pub fn matches_regex(value: &str, regex: Option<&regex::Regex>) -> bool {
     regex.is_some_and(|regex| regex.is_match(value))
 }
 "#;
@@ -26,7 +30,8 @@ fn matches_regex(value: &str, regex: Option<&regex::Regex>) -> bool {
 pub const LETTERS: &str = r#"
 /// The `alpha` and `alphaNumeric` rules: one or more ASCII letters (and
 /// digits, with `digits`), and whitespace, `-` or `_` where allowed.
-fn letters(value: &str, digits: bool, spaces: bool, dashes: bool, underscores: bool) -> bool {
+#[must_use]
+pub fn letters(value: &str, digits: bool, spaces: bool, dashes: bool, underscores: bool) -> bool {
     !value.is_empty()
         && value.chars().all(|c| {
             c.is_ascii_alphabetic()
@@ -43,7 +48,8 @@ pub const IS_UUID: &str = r#"
 /// validator.js's `isUUID`: hex digits in the 8-4-4-4-12 shape, with the
 /// RFC 9562 variant and one of `versions`; with none, any version from 1 to
 /// 8, or the nil or max UUID.
-fn is_uuid(value: &str, versions: &[u8]) -> bool {
+#[must_use]
+pub fn is_uuid(value: &str, versions: &[u8]) -> bool {
     let bytes = value.as_bytes();
     let shaped = bytes.len() == 36
         && bytes.iter().enumerate().all(|(index, byte)| {
@@ -76,7 +82,8 @@ fn is_uuid(value: &str, versions: &[u8]) -> bool {
 /// The `is_ulid` helper.
 pub const IS_ULID: &str = r#"
 /// The `ulid` rule: 26 Crockford base32 characters, the first at most `7`.
-fn is_ulid(value: &str) -> bool {
+#[must_use]
+pub fn is_ulid(value: &str) -> bool {
     value.len() == 26
         && value.starts_with(|c: char| ('0'..='7').contains(&c))
         && value.chars().all(|c| {
@@ -88,7 +95,8 @@ fn is_ulid(value: &str) -> bool {
 /// The `is_hex_code` helper.
 pub const IS_HEX_CODE: &str = r#"
 /// The `hexCode` rule: `#` and 3, 4, 6 or 8 hex digits.
-fn is_hex_code(value: &str) -> bool {
+#[must_use]
+pub fn is_hex_code(value: &str) -> bool {
     value.strip_prefix('#').is_some_and(|hex| {
         matches!(hex.len(), 3 | 4 | 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit())
     })
@@ -99,7 +107,8 @@ fn is_hex_code(value: &str) -> bool {
 pub const IS_JWT: &str = r#"
 /// validator.js's `isJWT`: three parts joined by `.`, each URL-safe base64
 /// without padding (or empty, as validator.js allows).
-fn is_jwt(value: &str) -> bool {
+#[must_use]
+pub fn is_jwt(value: &str) -> bool {
     let parts: Vec<&str> = value.split('.').collect();
     parts.len() == 3
         && parts.iter().all(|part| {
@@ -114,7 +123,8 @@ pub const IS_IBAN: &str = r#"
 /// validator.js's `isIBAN`: whitespace and `-` removed and the rest
 /// uppercased, a country's format from [`IBAN_FORMATS`], and the mod-97
 /// check.
-fn is_iban(value: &str) -> bool {
+#[must_use]
+pub fn is_iban(value: &str) -> bool {
     let iban: String = value
         .chars()
         .filter(|c| !c.is_whitespace() && *c != '-')
@@ -168,7 +178,8 @@ pub const IS_COORDINATES: &str = r#"
 /// validator.js's `isLatLong`: `latitude,longitude` in decimal degrees,
 /// optionally in parentheses. As in validator.js, text after a second comma
 /// is not read.
-fn is_coordinates(value: &str) -> bool {
+#[must_use]
+pub fn is_coordinates(value: &str) -> bool {
     let mut parts = value.split(',');
     let (Some(latitude), Some(longitude)) = (parts.next(), parts.next()) else {
         return false;
@@ -216,7 +227,8 @@ fn degrees(text: &str, max: u32) -> bool {
 pub const IS_CREDIT_CARD: &str = r#"
 /// validator.js's `isCreditCard`: spaces and dashes removed, a number of one
 /// of `providers` (of any, when none), passing the Luhn check.
-fn is_credit_card(value: &str, providers: &[&str]) -> bool {
+#[must_use]
+pub fn is_credit_card(value: &str, providers: &[&str]) -> bool {
     let number: String = value.chars().filter(|c| *c != ' ' && *c != '-').collect();
     if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
         return false;
@@ -280,7 +292,8 @@ pub const NORMALIZE_EMAIL: &str = r#"
 /// without a `+` subaddress; for Yahoo, without a `-` subaddress; for
 /// Yandex, the domain made `yandex.ru`. A value without `@`, or whose local
 /// part would be left empty, is kept as given.
-fn normalize_email(value: &str) -> String {
+#[must_use]
+pub fn normalize_email(value: &str) -> String {
     let Some((user, domain)) = value.rsplit_once('@') else {
         return value.to_owned();
     };
@@ -334,7 +347,7 @@ fn remove_single_dots(user: &str) -> String {
 pub const TRANSFORMED: &str = r#"
 /// A body field a column's transforms apply to: text, optional text, or
 /// nullable text, where `null` is `Some(None)`.
-trait Transformed<'de>: Sized {
+pub trait Transformed<'de>: Sized {
     /// Deserializes the field, transformed by `transform`.
     fn transformed<D>(deserializer: D, transform: fn(&str) -> String) -> Result<Self, D::Error>
     where
@@ -371,220 +384,106 @@ impl<'de> Transformed<'de> for Option<Option<String>> {
 }
 "#;
 
-/// The domains `normalize_email` knows.
-pub const EMAIL_DOMAINS: &str = r#"
-/// iCloud's domains, as validator.js's `normalizeEmail` lists them.
-const ICLOUD: &[&str] = &["icloud.com", "me.com"];
+/// The `is_url` helper, with the `url_port` and `is_domain` it calls.
+pub const IS_URL: &str = r#"
+/// The `url` rule: validator.js's `isURL` with its default options. An
+/// optional `http`, `https` or `ftp` scheme, optional credentials, a host
+/// that is an IP address or a domain with a top-level domain, an optional
+/// port, then any path, query and fragment.
+#[must_use]
+pub fn is_url(value: &str) -> bool {
+    let unsafe_char = |c: char| c.is_whitespace() || matches!(c, '<' | '>' | '\u{feff}');
+    if value.is_empty()
+        || value.encode_utf16().count() > 2084
+        || value.starts_with("mailto:")
+        || value.chars().any(unsafe_char)
+    {
+        return false;
+    }
+    let value = value.split(['#', '?']).next().unwrap_or_default();
+    let rest = match value.split_once("://") {
+        Some((scheme, rest)) => {
+            let scheme = scheme.to_lowercase();
+            if !matches!(scheme.as_str(), "http" | "https" | "ftp") {
+                return false;
+            }
+            rest
+        }
+        None if value.starts_with("//") => return false,
+        None => value,
+    };
+    let authority = rest.split('/').next().unwrap_or_default();
+    let host = match authority.split_once('@') {
+        Some((credentials, host)) => {
+            let colons = credentials.matches(':').count();
+            if credentials.is_empty() || credentials == ":" || colons > 1 {
+                return false;
+            }
+            host
+        }
+        None => authority,
+    };
+    if let Some(bracketed) = host.strip_prefix('[') {
+        let Some((address, after)) = bracketed.split_once(']') else {
+            return false;
+        };
+        let port = match after.strip_prefix(':') {
+            Some(port) if !port.is_empty() => port,
+            None if after.is_empty() => "",
+            _ => return false,
+        };
+        let (address, zone) = address.split_once('%').unwrap_or((address, "a"));
+        let zone_valid = !zone.is_empty()
+            && zone
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | ':'));
+        return url_port(port) && zone_valid && address.parse::<std::net::Ipv6Addr>().is_ok();
+    }
+    let (name, port) = host.split_once(':').unwrap_or((host, ""));
+    url_port(port) && (name.parse::<std::net::Ipv4Addr>().is_ok() || is_domain(name))
+}
 
-/// Outlook.com's domains, as validator.js's `normalizeEmail` lists them.
-const OUTLOOK: &[&str] = &[
-    "hotmail.at",
-    "hotmail.be",
-    "hotmail.ca",
-    "hotmail.cl",
-    "hotmail.co.il",
-    "hotmail.co.nz",
-    "hotmail.co.th",
-    "hotmail.co.uk",
-    "hotmail.com",
-    "hotmail.com.ar",
-    "hotmail.com.au",
-    "hotmail.com.br",
-    "hotmail.com.gr",
-    "hotmail.com.mx",
-    "hotmail.com.pe",
-    "hotmail.com.tr",
-    "hotmail.com.vn",
-    "hotmail.cz",
-    "hotmail.de",
-    "hotmail.dk",
-    "hotmail.es",
-    "hotmail.fr",
-    "hotmail.hu",
-    "hotmail.id",
-    "hotmail.ie",
-    "hotmail.in",
-    "hotmail.it",
-    "hotmail.jp",
-    "hotmail.kr",
-    "hotmail.lv",
-    "hotmail.my",
-    "hotmail.ph",
-    "hotmail.pt",
-    "hotmail.sa",
-    "hotmail.sg",
-    "hotmail.sk",
-    "live.be",
-    "live.co.uk",
-    "live.com",
-    "live.com.ar",
-    "live.com.mx",
-    "live.de",
-    "live.es",
-    "live.eu",
-    "live.fr",
-    "live.it",
-    "live.nl",
-    "msn.com",
-    "outlook.at",
-    "outlook.be",
-    "outlook.cl",
-    "outlook.co.il",
-    "outlook.co.nz",
-    "outlook.co.th",
-    "outlook.com",
-    "outlook.com.ar",
-    "outlook.com.au",
-    "outlook.com.br",
-    "outlook.com.gr",
-    "outlook.com.pe",
-    "outlook.com.tr",
-    "outlook.com.vn",
-    "outlook.cz",
-    "outlook.de",
-    "outlook.dk",
-    "outlook.es",
-    "outlook.fr",
-    "outlook.hu",
-    "outlook.id",
-    "outlook.ie",
-    "outlook.in",
-    "outlook.it",
-    "outlook.jp",
-    "outlook.kr",
-    "outlook.lv",
-    "outlook.my",
-    "outlook.ph",
-    "outlook.pt",
-    "outlook.sa",
-    "outlook.sg",
-    "outlook.sk",
-    "passport.com",
-];
+/// A URL's port: none, or a number from 1 to 65535.
+fn url_port(port: &str) -> bool {
+    port.is_empty()
+        || (port.bytes().all(|b| b.is_ascii_digit())
+            && port
+                .parse::<u32>()
+                .is_ok_and(|port| (1..=65535).contains(&port)))
+}
 
-/// Yahoo's domains, as validator.js's `normalizeEmail` lists them.
-const YAHOO: &[&str] = &[
-    "rocketmail.com",
-    "yahoo.ca",
-    "yahoo.co.uk",
-    "yahoo.com",
-    "yahoo.de",
-    "yahoo.fr",
-    "yahoo.in",
-    "yahoo.it",
-    "ymail.com",
-];
-
-/// Yandex's domains, as validator.js's `normalizeEmail` lists them.
-const YANDEX: &[&str] = &[
-    "yandex.ru",
-    "yandex.ua",
-    "yandex.kz",
-    "yandex.com",
-    "yandex.by",
-    "ya.ru",
-];
-"#;
-
-/// The providers `is_credit_card` knows.
-pub const CARD_PROVIDER_LIST: &str = r#"
-/// The card providers validator.js's `isCreditCard` knows.
-const CARD_PROVIDERS: &[&str] = &[
-    "amex",
-    "dinersclub",
-    "discover",
-    "jcb",
-    "mastercard",
-    "unionpay",
-    "visa",
-];
-"#;
-
-/// The formats `is_iban` knows.
-pub const IBAN_FORMAT_LIST: &str = r#"
-/// Each country's IBAN format after its code, as validator.js's `isIBAN`
-/// checks it: counts of digits (`n`), uppercase letters (`a`) or either
-/// (`c`).
-const IBAN_FORMATS: &[(&str, &str)] = &[
-    ("AD", "2n8n12c"),
-    ("AE", "2n3n16n"),
-    ("AL", "2n8n16c"),
-    ("AT", "2n16n"),
-    ("AZ", "2n4c20n"),
-    ("BA", "2n16n"),
-    ("BE", "2n12n"),
-    ("BG", "2n4a6n8c"),
-    ("BH", "2n4a14c"),
-    ("BR", "2n23n1a1c"),
-    ("BY", "2n4c20n"),
-    ("CH", "2n5n12c"),
-    ("CR", "2n18n"),
-    ("CY", "2n8n16c"),
-    ("CZ", "2n20n"),
-    ("DE", "2n18n"),
-    ("DK", "2n14n"),
-    ("DO", "2n4a20n"),
-    ("DZ", "24n"),
-    ("EE", "2n16n"),
-    ("EG", "2n25n"),
-    ("ES", "2n20n"),
-    ("FI", "2n14n"),
-    ("FO", "2n14n"),
-    ("FR", "2n10n11c2n"),
-    ("GB", "2n4a14n"),
-    ("GE", "2n2c16n"),
-    ("GI", "2n4a15c"),
-    ("GL", "2n14n"),
-    ("GR", "2n7n16c"),
-    ("GT", "2n4c20c"),
-    ("HR", "2n17n"),
-    ("HU", "2n24n"),
-    ("IE", "2n4a14n"),
-    ("IL", "2n19n"),
-    ("IQ", "2n4a15n"),
-    ("IR", "2n22n"),
-    ("IS", "2n22n"),
-    ("IT", "2n1a10n12c"),
-    ("JO", "2n4a22n"),
-    ("KW", "2n4a22c"),
-    ("KZ", "2n3n13c"),
-    ("LB", "2n4n20c"),
-    ("LC", "2n4a24c"),
-    ("LI", "2n5n12c"),
-    ("LT", "2n16n"),
-    ("LU", "2n3n13c"),
-    ("LV", "2n4a13c"),
-    ("MA", "26n"),
-    ("MC", "2n10n11c2n"),
-    ("MD", "2n20c"),
-    ("ME", "2n18n"),
-    ("MK", "2n3n10c2n"),
-    ("MR", "2n23n"),
-    ("MT", "2n4a5n18c"),
-    ("MU", "2n4a19n3a"),
-    ("MZ", "2n21n"),
-    ("NL", "2n4a10n"),
-    ("NO", "2n11n"),
-    ("PK", "2n4c16n"),
-    ("PL", "2n24n"),
-    ("PS", "2n4a21c"),
-    ("PT", "2n21n"),
-    ("QA", "2n4a21c"),
-    ("RO", "2n4a16c"),
-    ("RS", "2n18n"),
-    ("SA", "2n2n18c"),
-    ("SC", "2n4a20n3a"),
-    ("SE", "2n20n"),
-    ("SI", "2n15n"),
-    ("SK", "2n20n"),
-    ("SM", "2n1a10n12c"),
-    ("SV", "2n4c20n"),
-    ("TL", "2n19n"),
-    ("TN", "2n20n"),
-    ("TR", "2n5n17c"),
-    ("UA", "2n6n19c"),
-    ("VA", "2n18n"),
-    ("VG", "2n4a16n"),
-    ("XK", "2n16n"),
-];
+/// validator.js's `isFQDN` as `isURL` calls it: two or more labels of
+/// letters, digits and `-` (not first or last), at most 63 long, the last a
+/// top-level domain of two or more letters or an `xn--` name.
+fn is_domain(name: &str) -> bool {
+    let labels: Vec<&str> = name.split('.').collect();
+    let Some(tld) = labels.last().filter(|_| labels.len() > 1) else {
+        return false;
+    };
+    // A letter of validator.js's pattern, `[a-z¡-¨ª-퟿
+    // 豈-﷏ﷰ-￯]` ignoring case: no surrogate is a `char`.
+    let letter = |c: char| {
+        c.is_ascii_alphabetic()
+            || (('\u{a1}'..='\u{ffef}').contains(&c)
+                && !matches!(c, '\u{a9}' | '\u{e000}'..='\u{f8ff}' | '\u{fdd0}'..='\u{fdef}'))
+    };
+    let punycode = tld.len() >= 4
+        && tld
+            .get(..2)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("xn"))
+        && tld.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    let named = tld.chars().count() >= 2 && tld.chars().all(letter);
+    (named || punycode)
+        && labels.iter().all(|label| {
+            !label.is_empty()
+                && label.encode_utf16().count() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label.chars().all(|c| {
+                    c.is_ascii_alphanumeric()
+                        || c == '-'
+                        || (c >= '\u{a1}' && !('\u{ff01}'..='\u{ff5e}').contains(&c))
+                })
+        })
+}
 "#;

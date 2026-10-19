@@ -164,7 +164,7 @@ fn case_insensitive_unique_keys_look_up_ignoring_case() {
     users.unique_keys.push(crate::schema::UniqueKey {
         columns: vec!["email".to_owned()],
         predicate: Some("deleted_at IS NULL".to_owned()),
-        case_insensitive: true,
+        lowered: Some("email".to_owned()),
     });
     let rendered = render_alone(&users);
     assert!(
@@ -173,6 +173,30 @@ fn case_insensitive_unique_keys_look_up_ignoring_case() {
     );
     assert!(
         rendered.contains("        WHERE lower(email) = lower($1) AND deleted_at IS NULL\n"),
+        "{rendered}"
+    );
+}
+
+/// A unique index on `(org, lower(name))` makes `get_by_org_and_name`,
+/// comparing `org` as it is and `name` ignoring case.
+#[test]
+fn composite_keys_with_a_lowered_column_look_it_up_ignoring_case() {
+    let mut tags = table(
+        vec![
+            column("id", "i64"),
+            column("org", "i64"),
+            column("name", "String"),
+        ],
+        &["id"],
+    );
+    tags.unique_keys.push(crate::schema::UniqueKey {
+        columns: vec!["org".to_owned(), "name".to_owned()],
+        predicate: None,
+        lowered: Some("name".to_owned()),
+    });
+    let rendered = render_alone(&tags);
+    assert!(
+        rendered.contains("WHERE org = $1 AND lower(name) = lower($2)\n"),
         "{rendered}"
     );
 }

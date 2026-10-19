@@ -132,7 +132,17 @@ where
         ),
         "{dto}"
     );
-    assert!(dto.contains("trait Transformed<'de>: Sized {"), "{dto}");
+    // The trait the transforms read through is in `shared/validation.rs`.
+    assert!(
+        dto.contains("use crate::shared::validation::Transformed;\n"),
+        "{dto}"
+    );
+    assert!(!dto.contains("trait Transformed"), "{dto}");
+    let shared = project.read("src/shared/validation.rs")?;
+    assert!(
+        shared.contains("\npub trait Transformed<'de>: Sized {"),
+        "{shared}"
+    );
     Ok(())
 }
 
@@ -192,9 +202,16 @@ fn handle_min_length(value: &str) -> Result<(), validator::ValidationError> {
         dto.contains("    check(letters(value, true, false, true, false), \"alphaNumeric\")"),
         "{dto}"
     );
-    // Each function once, though both bodies use the rules.
-    assert_eq!(dto.matches("\nfn check(").count(), 1, "{dto}");
+    // Each function once, though both bodies use the rules; the helpers
+    // they call are in `shared/validation.rs`.
     assert_eq!(dto.matches("\nfn handle_min_length(").count(), 1, "{dto}");
+    assert!(
+        dto.contains("use crate::shared::validation::{check, letters};\n"),
+        "{dto}"
+    );
+    assert!(!dto.contains("fn check("), "{dto}");
+    let shared = project.read("src/shared/validation.rs")?;
+    assert_eq!(shared.matches("\npub fn check(").count(), 1, "{shared}");
     // No regular expression, so no `regex` hint.
     let db_mod = project.read("src/db/mod.rs")?;
     assert!(!db_mod.contains("regex"), "{db_mod}");
@@ -264,9 +281,10 @@ fn transforms_keep_null_and_defaults() -> Result<()> {
         dto.contains("    let value = value.trim();\n    normalize_email(value)\n}"),
         "{dto}"
     );
+    let shared = project.read("src/shared/validation.rs")?;
     assert!(
-        dto.contains("\nfn normalize_email(value: &str) -> String {"),
-        "{dto}"
+        shared.contains("\npub fn normalize_email(value: &str) -> String {"),
+        "{shared}"
     );
     Ok(())
 }
@@ -361,6 +379,58 @@ fn every_rule_is_rustfmt_clean() -> Result<()> {
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stdout)
+    );
+    Ok(())
+}
+
+/// The helpers are in `shared/validation.rs` once, however many features'
+/// rules call them, and only the ones some rule calls.
+#[test]
+fn helpers_are_shared_once() -> Result<()> {
+    let project = Project::new(
+        "CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);
+         CREATE TABLE teams (id UUID PRIMARY KEY, name TEXT NOT NULL);",
+    )?;
+    let mut config = project.config(&[("email", &["trim"])]);
+    let api = config.api.as_mut().expect("the API");
+    let trim = BTreeMap::from([("name".to_owned(), vec![ApiRule::from("trim")])]);
+    api.rules.insert("teams".into(), trim);
+    rok_sqlc::generate(&config)?;
+    let shared = project.read("src/shared/validation.rs")?;
+    assert_eq!(
+        shared.matches("pub trait Transformed").count(),
+        1,
+        "{shared}"
+    );
+    assert!(!shared.contains("pub fn check("), "{shared}");
+    for dto in ["src/features/users/dto.rs", "src/features/teams/dto.rs"] {
+        let dto = project.read(dto)?;
+        assert!(!dto.contains("trait Transformed"), "{dto}");
+        assert!(
+            dto.contains("use crate::shared::validation::Transformed;"),
+            "{dto}"
+        );
+    }
+    Ok(())
+}
+
+/// `url` is VineJS's (validator.js's `isURL`), not `validator`'s, which
+/// needs a scheme: a generated check, with no `uri` format.
+#[test]
+fn url_is_a_generated_check() -> Result<()> {
+    let project = Project::new(SCHEMA)?;
+    let config = project.config(&[("nickname", &["url"])]);
+    let dto = project.dto(&config)?;
+    assert!(
+        dto.contains("fn nickname_url(value: &str) -> Result<(), validator::ValidationError> {\n    check(is_url(value), \"url\")\n}"),
+        "{dto}"
+    );
+    assert!(!dto.contains("format = \"uri\""), "{dto}");
+    assert!(!dto.contains("url(code"), "{dto}");
+    let shared = project.read("src/shared/validation.rs")?;
+    assert!(
+        shared.contains("\npub fn is_url(value: &str) -> bool {"),
+        "{shared}"
     );
     Ok(())
 }

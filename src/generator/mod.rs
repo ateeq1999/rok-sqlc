@@ -262,7 +262,7 @@ pub fn plan_files_with_queries(
     }
     files.extend(http::render(output, &config.extractors, derives));
     if let Some(api) = &config.api {
-        files.extend(api::shared::render(output, api));
+        files.extend(api::shared::render(output, api, &features));
         files.extend(api::render(&features, api));
     }
     if !enums.is_empty() {

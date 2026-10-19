@@ -1,15 +1,15 @@
-//! The checks a generated write runs on its transaction before it writes,
-//! each failure a field's: [`Reference`], a foreign key of the create or
-//! update body, which must name a row the caller can see (`exists`), then
-//! the body's unique keys, which no other row may hold ([`super::unique`]).
-//! The failures collect in `shared/validation.rs`'s `FieldFailures`, answered
-//! as one `422 validation_failed`; the database's constraint stays the
-//! race's fallback (`409`).
+//! The pre-checks a generated write runs on its transaction before it
+//! writes, each failure a field's: [`Reference`], a foreign key of the
+//! create or update body, which must name a row the caller can see
+//! (`exists`), then the body's unique keys, which no other row may hold
+//! ([`super::unique`]). The failures collect in `shared/validation.rs`'s
+//! `FieldFailures`, answered as one `422 validation_failed`; the
+//! database's constraint stays the race's fallback (`409`).
 
 use heck::ToSnakeCase;
 
 use super::dto::{create_columns, update_columns};
-use super::feature::{Endpoint, Feature};
+use super::feature::{Bodies, Endpoint, Feature};
 use super::layout::{Uses, push_call};
 use crate::generator::keys::referenced_table;
 use crate::generator::{insert_field_type, param_type};
@@ -31,10 +31,8 @@ pub struct Reference<'a> {
     /// Whether the check is the target feature's `exists_owned`, scoped to
     /// the caller (`user.id`); otherwise the data layer's `exists_by_id`.
     pub owned: bool,
-    /// Whether the create body holds the column.
-    pub on_create: bool,
-    /// Whether the update body holds the column.
-    pub on_update: bool,
+    /// Which bodies hold the column.
+    pub bodies: Bodies,
 }
 
 impl Reference<'_> {
@@ -45,20 +43,35 @@ impl Reference<'_> {
     }
 }
 
+/// Which of `feature`'s bodies hold every one of `columns`.
+pub fn bodies_holding(feature: &Feature<'_>, columns: &[&Column]) -> Bodies {
+    let holds = |body: &[&Column]| {
+        columns
+            .iter()
+            .all(|column| body.iter().any(|c| c.sql_name == column.sql_name))
+    };
+    Bodies {
+        create: feature.serves(Endpoint::Create) && holds(&create_columns(feature)),
+        update: feature.serves(Endpoint::Update)
+            && !feature.table.key_columns().is_empty()
+            && holds(&update_columns(feature)),
+    }
+}
+
 /// The references of `feature`'s bodies to tables among `tables`, checked
 /// as `features` scope them. Only a foreign key to a whole single-column
-/// key, of the key's own type, is checked; and a reference to a
-/// tenant-scoped table only from a tenant-scoped feature, which knows the
-/// tenant. Others keep the constraint's `409`.
+/// key, of the key's own type, is checked. A reference to a tenant-scoped
+/// table takes the caller's tenant: the feature's, or, from a feature
+/// without a tenant column, the `Tenant` the request carries (the first
+/// such table's type; one of another type isn't checked). A reference to
+/// an owned table takes the caller when the caller is known (see
+/// [`Feature::knows_caller`]). Others keep the constraint's `409`.
 pub fn references<'a>(
     feature: &Feature<'a>,
     features: &[Feature<'a>],
     tables: &'a [Table],
 ) -> Vec<Reference<'a>> {
-    let creates = feature.serves(Endpoint::Create);
-    let updates = feature.serves(Endpoint::Update);
-    let create = create_columns(feature);
-    let update = update_columns(feature);
+    let mut tenant: Option<&Column> = feature.tenant;
     let mut references = Vec::new();
     for foreign_key in &feature.table.foreign_keys {
         let Some(column) = feature
@@ -79,18 +92,19 @@ pub fn references<'a>(
         let typed = key.sql_name == foreign_key.referenced_column
             && key.value_type() == column.value_type()
             && (column.is_copy() || param_type(column).starts_with('&'));
-        let tenant = match (target.tenant(), feature.tenant) {
-            (None, _) => true,
-            (Some(theirs), Some(ours)) => theirs.value_type() == ours.value_type(),
-            (Some(_), None) => false,
-        };
-        let has = |columns: &[&Column]| columns.iter().any(|c| c.sql_name == column.sql_name);
-        let on_create = creates && has(&create);
-        let on_update = updates && has(&update);
-        if !typed || !tenant || !(on_create || on_update) {
+        let bodies = bodies_holding(feature, &[column]);
+        if !typed || !bodies.any() {
             continue;
         }
-        let owned = feature.owner.is_some()
+        if let Some(theirs) = target.tenant() {
+            match tenant {
+                Some(ours) if ours.value_type() != theirs.value_type() => continue,
+                Some(_) => {}
+                None if theirs.is_copy() => tenant = Some(theirs),
+                None => continue,
+            }
+        }
+        let owned = feature.knows_caller()
             && features
                 .iter()
                 .any(|other| std::ptr::eq(other.table, target) && other.reads_owned_rows());
@@ -98,8 +112,7 @@ pub fn references<'a>(
             column,
             target,
             owned,
-            on_create,
-            on_update,
+            bodies,
         });
     }
     references
@@ -111,22 +124,26 @@ fn checked<'f, 'a>(feature: &'f Feature<'a>, endpoint: Endpoint) -> Vec<&'f Refe
     feature
         .references
         .iter()
-        .filter(|reference| match endpoint {
-            Endpoint::Create => reference.on_create,
-            Endpoint::Update => reference.on_update,
-            _ => false,
-        })
+        .filter(|reference| reference.bodies.holds(endpoint))
         .collect()
+}
+
+/// Whether `endpoint`'s `<write>_in` runs any pre-check.
+fn runs_any(feature: &Feature<'_>, endpoint: Endpoint) -> bool {
+    !checked(feature, endpoint).is_empty()
+        || feature
+            .unique_checks
+            .iter()
+            .any(|check| check.bodies.holds(endpoint))
 }
 
 /// Imports what [`push_checks`] renders for `endpoint` names: the
 /// collector, and each referenced table's data layer module.
 pub fn import(uses: &mut Uses, feature: &Feature<'_>, endpoint: Endpoint) {
-    let checked = checked(feature, endpoint);
-    if !checked.is_empty() || super::unique::checked(feature, endpoint) {
+    if runs_any(feature, endpoint) {
         uses.add(FIELD_FAILURES);
     }
-    for reference in checked {
+    for reference in checked(feature, endpoint) {
         uses.add(&format!(
             "{}::{}",
             feature.db_path, reference.target.module_name
@@ -134,49 +151,79 @@ pub fn import(uses: &mut Uses, feature: &Feature<'_>, endpoint: Endpoint) {
     }
 }
 
-/// The checks `endpoint`'s `<write>_in` runs before it writes, on `conn`:
-/// each reference of its body that is present and not `null` must name a
-/// row the caller can see, each unique key it holds must be free, and
-/// every failure is answered at once. Nothing when the body has neither.
+/// The pre-checks `endpoint`'s `<write>_in` runs before it writes, on
+/// `conn`: each reference of its body that is present and not `null` must
+/// name a row the caller can see, each unique key it holds must be free,
+/// and every failure is answered at once. Nothing when the body has
+/// neither.
 pub fn push_checks(output: &mut String, feature: &Feature<'_>, endpoint: Endpoint) {
-    let checked = checked(feature, endpoint);
-    if checked.is_empty() && !super::unique::checked(feature, endpoint) {
+    if !runs_any(feature, endpoint) {
         return;
     }
     output.push_str("        let mut failures = FieldFailures::default();\n");
-    for reference in checked {
+    for reference in checked(feature, endpoint) {
         push_reference(output, endpoint, reference);
     }
     super::unique::push_checks(output, feature, endpoint);
     output.push_str("        failures.into_result()?;\n");
 }
 
+/// How a pre-check reads a column of a create or update body.
+pub struct BodyField {
+    /// The field, borrowed when the data layer takes it by reference:
+    /// `input.title`, `&input.slug`.
+    pub expr: String,
+    /// How many `Option`s wrap it: none for a required create field, one
+    /// for a field that may be absent, two for one that may also be `null`.
+    pub options: usize,
+}
+
+impl BodyField {
+    /// `column` of `endpoint`'s body.
+    pub fn of(column: &Column, endpoint: Endpoint) -> Self {
+        let options = if endpoint == Endpoint::Create {
+            insert_field_type(column).matches("Option<").count()
+        } else {
+            1 + usize::from(column.nullable)
+        };
+        let borrow = if param_type(column).starts_with('&') {
+            "&"
+        } else {
+            ""
+        };
+        BodyField {
+            expr: format!("{borrow}input.{}", column.rust_name),
+            options,
+        }
+    }
+
+    /// The `let` binding the value to `binding` when the field is present
+    /// and not `null`: `let Some(Some(value)) = input.x`.
+    pub fn binding(&self, binding: &str) -> String {
+        format!(
+            "let {}{binding}{} = {}",
+            "Some(".repeat(self.options),
+            ")".repeat(self.options),
+            self.expr
+        )
+    }
+}
+
 /// One reference's check: `if let Some(value) = input.<column> { ... }`
 /// around it for a field that may be absent or `null`.
 fn push_reference(output: &mut String, endpoint: Endpoint, reference: &Reference<'_>) {
     let column = reference.column;
-    let options = if endpoint == Endpoint::Create {
-        insert_field_type(column).matches("Option<").count()
-    } else {
-        1 + usize::from(column.nullable)
-    };
-    let borrow = if param_type(column).starts_with('&') {
-        "&"
-    } else {
-        ""
-    };
-    let field = format!("{borrow}input.{}", column.rust_name);
+    let field = BodyField::of(column, endpoint);
     let module = &reference.target.module_name;
     let mut args = vec!["&mut *conn".to_owned()];
     if reference.target.tenant().is_some() {
         args.push("tenant".to_owned());
     }
-    let indent = if options == 0 {
-        args.push(field);
+    let indent = if field.options == 0 {
+        args.push(field.expr.clone());
         8
     } else {
-        let pattern = format!("{}value{}", "Some(".repeat(options), ")".repeat(options));
-        output.push_str(&format!("        if let {pattern} = {field} {{\n"));
+        output.push_str(&format!("        if {} {{\n", field.binding("value")));
         args.push("value".to_owned());
         12
     };
@@ -195,7 +242,7 @@ fn push_reference(output: &mut String, endpoint: Endpoint, reference: &Reference
     ];
     push_call(output, indent + 4, "", "failures.missing", &missing, ";");
     output.push_str(&format!("{pad}}}\n"));
-    if options > 0 {
+    if field.options > 0 {
         output.push_str("        }\n");
     }
 }

@@ -99,9 +99,11 @@ pub(super) fn add_constraint(
 }
 
 /// Records a `CREATE UNIQUE INDEX` on plain columns of a known table as a
-/// unique key, keeping a partial index's condition. An index whose only
-/// entry is `lower(<column>)` makes a case-insensitive key on that column.
-/// Other expression indexes and non-unique indexes change nothing.
+/// unique key, keeping a partial index's condition. An index of plain
+/// columns and exactly one `lower(<column>)` entry, such as
+/// `(tenant_id, lower(name))`, makes a case-insensitive key comparing that
+/// column ignoring case. Other expression indexes and non-unique indexes
+/// change nothing.
 pub(super) fn record_unique_index(tables: &mut [Table], index: &CreateIndex) {
     if !index.unique {
         return;
@@ -109,19 +111,20 @@ pub(super) fn record_unique_index(tables: &mut [Table], index: &CreateIndex) {
     let Some(position) = find_table(tables, &index.table_name) else {
         return;
     };
-    let plain = index
-        .columns
-        .iter()
-        .map(index_column_name)
-        .collect::<Option<Vec<String>>>();
-    let (columns, case_insensitive) = match (plain, index.columns.as_slice()) {
-        (Some(columns), _) => (columns, false),
-        (None, [only]) => match lowered_column(&only.column.expr) {
-            Some(column) => (vec![column], true),
-            None => return,
-        },
-        (None, _) => return,
-    };
+    let mut columns = Vec::new();
+    let mut lowered = None;
+    for entry in &index.columns {
+        if let Some(column) = index_column_name(entry) {
+            columns.push(column);
+        } else if let Some(column) = lowered_column(&entry.column.expr)
+            && lowered.is_none()
+        {
+            lowered = Some(column.clone());
+            columns.push(column);
+        } else {
+            return;
+        }
+    }
     let table = &mut tables[position];
     if columns
         .iter()
@@ -132,7 +135,7 @@ pub(super) fn record_unique_index(tables: &mut [Table], index: &CreateIndex) {
     table.unique_keys.push(UniqueKey {
         columns,
         predicate: index.predicate.as_ref().map(ToString::to_string),
-        case_insensitive,
+        lowered,
     });
 }
 

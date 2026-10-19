@@ -2,7 +2,7 @@
 //! doc lines, its transforms (applied while the body is read, through
 //! `deserialize_with`), the OpenAPI keywords utoipa can carry, and its
 //! checks, as `validator`'s own rules where they mean what VineJS's do
-//! (`email`, `url`, `ip`), otherwise as `custom` rules calling a generated
+//! (`email`, `ip`), otherwise as `custom` rules calling a generated
 //! function. The error code of every check is its VineJS name.
 
 use heck::ToSnakeCase;
@@ -86,7 +86,8 @@ pub fn push_transformed(
 }
 
 /// `#[schema(...)]` with the OpenAPI keywords utoipa can carry: a format
-/// (`email`, `uri`, `ipv4`, `ipv6`, `uuid`), a `pattern`, and lengths.
+/// (`email`, `ipv4`, `ipv6`, `uuid`; not `uri` for `url`, which
+/// takes a value without a scheme), a `pattern`, and lengths.
 /// The first of each keyword wins.
 pub fn push_schema(output: &mut String, openapi: bool, rules: &[Rule]) {
     if !openapi {
@@ -99,9 +100,6 @@ pub fn push_schema(output: &mut String, openapi: bool, rules: &[Rule]) {
         match rule {
             Rule::Email => {
                 format.get_or_insert("email");
-            }
-            Rule::Url => {
-                format.get_or_insert("uri");
             }
             Rule::IpAddress(Some(4)) => {
                 format.get_or_insert("ipv4");
@@ -153,7 +151,6 @@ pub fn push_checks(output: &mut String, column: &Column, rules: &[Rule]) {
         let mut args = Vec::new();
         let kind = match rule {
             Rule::Email => "email",
-            Rule::Url => "url",
             Rule::IpAddress(version) => {
                 if let Some(version) = version {
                     args.push(format!("v{version}"));

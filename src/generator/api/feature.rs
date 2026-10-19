@@ -8,107 +8,17 @@ use std::collections::BTreeMap;
 
 use heck::{ToKebabCase, ToUpperCamelCase};
 
+pub use super::endpoint::{Bodies, Endpoint};
 use super::prechecks::Reference;
 use super::relations::Relation;
 use super::scope::Caller;
+use super::unique::UniqueCheck;
 use crate::api_rules::Rule;
 use crate::generator::relationships::join_pair;
 use crate::generator::search::{SearchApi, filter_relationships};
 use crate::generator::write::{has_versioned_update, version_column};
 use crate::schema::{BaseType, Column, FilterKind, Table};
 use crate::{ApiAccess, ApiConfig, ApiEndpoint};
-
-/// One endpoint of a feature, in the order the files list them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Endpoint {
-    /// `GET /`: a page of rows.
-    List,
-    /// `POST /search`: a page of rows matching per-field filters.
-    Search,
-    /// `POST /`: create a row.
-    Create,
-    /// `GET /{key}`: one row.
-    GetOne,
-    /// `PATCH /{key}`: update a row.
-    Update,
-    /// `DELETE /{key}`: delete a row (soft-delete it, on a soft-delete
-    /// table, which also takes `?permanent=true`).
-    Remove,
-    /// `POST /{key}/restore`: undo a soft delete.
-    Restore,
-}
-
-impl Endpoint {
-    /// Every endpoint, in order.
-    const ALL: [Endpoint; 7] = [
-        Endpoint::List,
-        Endpoint::Search,
-        Endpoint::Create,
-        Endpoint::GetOne,
-        Endpoint::Update,
-        Endpoint::Remove,
-        Endpoint::Restore,
-    ];
-
-    /// The handler's name, which is also the service method's.
-    pub fn name(self) -> &'static str {
-        match self {
-            Endpoint::List => "list",
-            Endpoint::Search => "search",
-            Endpoint::Create => "create",
-            Endpoint::GetOne => "get_one",
-            Endpoint::Update => "update",
-            Endpoint::Remove => "remove",
-            Endpoint::Restore => "restore",
-        }
-    }
-
-    /// The `[api.skip]` name of the endpoint.
-    fn config(self) -> ApiEndpoint {
-        match self {
-            Endpoint::List => ApiEndpoint::List,
-            Endpoint::Search => ApiEndpoint::Search,
-            Endpoint::Create => ApiEndpoint::Create,
-            Endpoint::GetOne => ApiEndpoint::GetOne,
-            Endpoint::Update => ApiEndpoint::Update,
-            Endpoint::Remove => ApiEndpoint::Remove,
-            Endpoint::Restore => ApiEndpoint::Restore,
-        }
-    }
-
-    /// The actix-web method guard, such as `get`.
-    pub fn method(self) -> &'static str {
-        match self {
-            Endpoint::List | Endpoint::GetOne => "get",
-            Endpoint::Create | Endpoint::Search | Endpoint::Restore => "post",
-            Endpoint::Update => "patch",
-            Endpoint::Remove => "delete",
-        }
-    }
-
-    /// The HTTP method, such as `GET`.
-    pub fn http_method(self) -> String {
-        self.method().to_uppercase()
-    }
-
-    /// Whether the endpoint addresses one row by its key.
-    pub fn takes_key(self) -> bool {
-        matches!(
-            self,
-            Endpoint::GetOne | Endpoint::Update | Endpoint::Remove | Endpoint::Restore
-        )
-    }
-
-    /// The path under the feature's URL, given the key's path.
-    pub fn path(self, key_path: &str) -> String {
-        match self {
-            Endpoint::List | Endpoint::Create => String::new(),
-            Endpoint::Search => "/search".to_owned(),
-            Endpoint::GetOne | Endpoint::Update | Endpoint::Remove => key_path.to_owned(),
-            Endpoint::Restore => format!("{key_path}/restore"),
-        }
-    }
-}
 
 /// A `GET /by-<column>/{value}` route: the data layer's lookup over a
 /// single-column unique key that isn't hidden.
@@ -189,6 +99,10 @@ pub struct Feature<'a> {
     /// check name a row the caller can see, filled by [`super::features`]
     /// with the relations.
     pub references: Vec<Reference<'a>>,
+    /// The unique keys the create and update bodies hold whole, checked
+    /// free before the write, filled by [`super::features`] with the
+    /// references.
+    pub unique_checks: Vec<UniqueCheck<'a>>,
     /// Whether the data layer's filter can fail (it has relationship
     /// fields), so pushing its `WHERE` clause takes a `?`.
     pub filter_fallible: bool,
@@ -285,6 +199,7 @@ impl<'a> Feature<'a> {
             lookups,
             relations: Vec::new(),
             references: Vec::new(),
+            unique_checks: Vec::new(),
             filter_fallible: !filter_relationships(table, tables).is_empty(),
             openapi: api.openapi,
         }))
@@ -348,10 +263,52 @@ impl<'a> Feature<'a> {
         params
     }
 
-    /// Whether an endpoint's service method takes the caller (an owned
-    /// feature's); a relation's may too ([`Relation::caller`]).
+    /// Whether an endpoint's or a lookup's service method takes the caller
+    /// (see [`Feature::takes_caller`]); a relation's may too
+    /// ([`Relation::caller`]).
     pub fn takes_user(&self) -> bool {
-        self.owner.is_some() && !(self.endpoints.is_empty() && self.lookups.is_empty())
+        (self.owner.is_some() && !self.lookups.is_empty())
+            || self
+                .endpoints
+                .iter()
+                .any(|endpoint| self.takes_caller(*endpoint))
+    }
+
+    /// Whether the caller is known: the feature's rows are owned, or its
+    /// routes need a signed-in caller.
+    pub fn knows_caller(&self) -> bool {
+        self.owner.is_some() || self.access != ApiAccess::Public
+    }
+
+    /// Whether `endpoint`'s service method takes the caller: the feature's
+    /// rows are owned, or the body is checked for a reference to a row the
+    /// caller must own.
+    pub fn takes_caller(&self, endpoint: Endpoint) -> bool {
+        self.owner.is_some()
+            || self
+                .references
+                .iter()
+                .any(|reference| reference.owned && reference.bodies.holds(endpoint))
+    }
+
+    /// The tenant `endpoint`'s service method takes: the feature's, or, for
+    /// a body checked for a reference to a tenant-scoped table, that table's.
+    pub fn tenant_of(&self, endpoint: Endpoint) -> Option<&'a Column> {
+        self.tenant.or_else(|| {
+            self.references
+                .iter()
+                .filter(|reference| reference.bodies.holds(endpoint))
+                .find_map(|reference| reference.target.tenant())
+        })
+    }
+
+    /// Who `endpoint`'s handler acts for: the feature's access, and the
+    /// caller's id when its service method [takes it](Self::takes_caller).
+    pub fn caller_of(&self, endpoint: Endpoint) -> Caller {
+        Caller {
+            access: self.access,
+            user: self.takes_caller(endpoint),
+        }
     }
 
     /// Who the feature's own handlers act for: its access, and the caller's

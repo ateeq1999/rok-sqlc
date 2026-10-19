@@ -142,3 +142,54 @@ async fn each_rule_rejects_with_its_code() {
     assert_eq!(answer.body["error"]["details"]["country"][0]["code"], "in");
     db.drop().await;
 }
+
+/// `url` checks as VineJS's default does (validator.js's `isURL`): the
+/// scheme may be left out, but must be `http`, `https` or `ftp` when given,
+/// and the host needs a top-level domain unless it is an IP address.
+#[actix_web::test]
+async fn url_checks_as_vinejs_does() {
+    let Some(db) = Database::fresh().await else {
+        return;
+    };
+    let accepted = [
+        "example.com",
+        "www.example.com/a/b?q=1#top",
+        "https://example.com:8080/path",
+        "ftp://user:secret@files.example.org",
+        "http://192.168.0.1/admin",
+        "http://[::1]:3000",
+        "https://مثال.السعودية",
+    ];
+    for url in accepted {
+        let mut body = valid();
+        body["website"] = json!(url);
+        let answer = call(&db, Method::POST, PROFILES, Some(body)).await;
+        assert_eq!(answer.status, StatusCode::CREATED, "{url}: {answer:?}");
+    }
+    let rejected = [
+        "http://localhost",
+        "mailto:ada@example.com",
+        "javascript:alert(1)",
+        "file:///etc/passwd",
+        "https://exa_mple.com",
+        "https://-example.com",
+        "https://example.com:0",
+        "https://example.com:65536",
+        "//example.com",
+        "https://example.123",
+        "https://example .com",
+        "https://",
+    ];
+    for url in rejected {
+        let mut body = valid();
+        body["website"] = json!(url);
+        let answer = call(&db, Method::POST, PROFILES, Some(body)).await;
+        assert_eq!(
+            answer.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{url}: {answer:?}"
+        );
+        assert_eq!(answer.body["error"]["details"]["website"][0]["code"], "url");
+    }
+    db.drop().await;
+}

@@ -2,7 +2,7 @@ use crate::schema::{Column, Table};
 
 use super::search::SearchApi;
 use super::sql::{
-    column_clause, first_placeholder, ident, key_order, live_key_predicate, live_lowered_predicate,
+    column_clause, first_placeholder, ident, key_order, live_key_predicate, live_lookup_predicate,
     scope_condition, str_literal, table_ref,
 };
 use super::{
@@ -105,9 +105,10 @@ fn search_imports(table: &Table, api: SearchApi) -> String {
 pub(crate) struct Lookup<'a> {
     pub(crate) fn_name: String,
     pub(crate) columns: Vec<&'a Column>,
-    /// Whether the key is a unique index on `lower(<column>)`, so the lookup
-    /// compares `lower(<column>) = lower($n)`.
-    pub(crate) case_insensitive: bool,
+    /// The column a case-insensitive key compares ignoring case (its
+    /// `lower(<column>)` entry), so the lookup compares
+    /// `lower(<column>) = lower($n)`.
+    pub(crate) lowered: Option<String>,
 }
 
 /// The table's unique-key lookups, in declaration order. A partial unique
@@ -147,7 +148,7 @@ pub(crate) fn unique_lookups(table: &Table) -> Vec<Lookup<'_>> {
             Some(Lookup {
                 fn_name,
                 columns,
-                case_insensitive: key.case_insensitive,
+                lowered: key.lowered,
             })
         })
         .collect()
@@ -181,10 +182,7 @@ fn push_doc_with_note(output: &mut String, table: &Table, lines: &[&str], note: 
 fn render_unique_lookup(output: &mut String, table: &Table, lookup: &Lookup<'_>) {
     let mut sql = column_clause("SELECT", table);
     sql.push(format!("FROM {}", table_ref(table)));
-    let predicate = match lookup.columns.as_slice() {
-        [column] if lookup.case_insensitive => live_lowered_predicate(table, column),
-        _ => live_key_predicate(table, &lookup.columns),
-    };
+    let predicate = live_lookup_predicate(table, &lookup.columns, lookup.lowered.as_deref());
     sql.push(format!("WHERE {predicate}"));
 
     let described: Vec<String> = lookup

@@ -3,7 +3,7 @@
 //! Reading a request: validated JSON bodies, the wire standard's `400` for a
 //! malformed path or query, a versioned row's `If-Match`, and a
 //! many-to-many sync's list of keys; and [`FieldFailures`], the failures of
-//! a write's database checks.
+//! a write's pre-checks.
 //!
 //! A handler takes [`ValidatedJson`], which checks the body's rules and
 //! answers a bad body with a [`BodyRejection`] in the wire standard's error
@@ -88,13 +88,13 @@ pub struct IdList<T> {
     pub ids: Vec<T>,
 }
 
-/// The field failures a write's database checks find, such as a foreign
-/// key naming no row the caller can see (`exists`) or a value another row
-/// already has (`unique`). A generated `create_in`
-/// or `update_in` runs every check on its transaction, adding each failure
-/// here, then calls [`into_result`](Self::into_result) before it writes, so
-/// one `422 validation_failed` lists them all, in the `details` shape of
-/// the body's rules.
+/// The field failures a write's pre-checks find, such as a foreign key
+/// naming no row the caller can see (`exists`) or a value another row
+/// already has (`unique`). A generated `create_in` or `update_in` runs
+/// every pre-check on its transaction, adding each failure here, then
+/// calls [`into_result`](Self::into_result) before it writes, so one
+/// `422 validation_failed` lists them all, in the `details` shape of the
+/// body's rules.
 #[derive(Debug, Default)]
 pub struct FieldFailures(ValidationErrors);
 
@@ -132,12 +132,6 @@ impl FieldFailures {
         }
     }
 
-    /// Whether no failure was added.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
     /// `Ok` when no failure was added.
     ///
     /// # Errors
@@ -149,5 +143,43 @@ impl FieldFailures {
         } else {
             Err(AppError::from(self.0))
         }
+    }
+}
+
+/// A body field a column's transforms apply to: text, optional text, or
+/// nullable text, where `null` is `Some(None)`.
+pub trait Transformed<'de>: Sized {
+    /// Deserializes the field, transformed by `transform`.
+    fn transformed<D>(deserializer: D, transform: fn(&str) -> String) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>;
+}
+
+impl<'de> Transformed<'de> for String {
+    fn transformed<D>(deserializer: D, transform: fn(&str) -> String) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        serde::Deserialize::deserialize(deserializer).map(|value: String| transform(&value))
+    }
+}
+
+impl<'de> Transformed<'de> for Option<String> {
+    fn transformed<D>(deserializer: D, transform: fn(&str) -> String) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        serde::Deserialize::deserialize(deserializer)
+            .map(|value: Option<String>| value.map(|value| transform(&value)))
+    }
+}
+
+impl<'de> Transformed<'de> for Option<Option<String>> {
+    fn transformed<D>(deserializer: D, transform: fn(&str) -> String) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        serde::Deserialize::deserialize(deserializer)
+            .map(|value: Option<String>| Some(value.map(|value| transform(&value))))
     }
 }

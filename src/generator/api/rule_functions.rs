@@ -1,17 +1,20 @@
-//! The functions string rules generate into `dto.rs`: each column's
-//! checks (`custom` rules) and transforms, then the helpers they call,
-//! each once.
+//! The functions string rules generate into `dto.rs`, each column's checks
+//! (`custom` rules) and transforms, and the helpers they call, which
+//! `shared/validation.rs` holds once for every feature
+//! ([`super::rule_snippets`]).
 
+use std::collections::BTreeSet;
+
+use super::dto::body_columns;
 use super::feature::Feature;
-use super::rule_helpers as helpers;
+use super::layout::{Uses, push_call, push_signature, push_signature_where};
+use super::rule_snippets as snippets;
+use super::rule_tables;
 use super::rules::function_name;
 use crate::api_rules::Rule;
 use crate::generator::sql::str_literal;
 use crate::generator::{MAX_WIDTH, doc_name, push_doc};
 use crate::schema::Column;
-
-/// rustfmt's default `fn_call_width`.
-const FN_CALL_WIDTH: usize = 60;
 
 /// rustfmt's default `array_width`.
 const ARRAY_WIDTH: usize = 60;
@@ -19,104 +22,120 @@ const ARRAY_WIDTH: usize = 60;
 /// rustfmt's default `short_array_element_width_threshold`.
 const SHORT_ELEMENT: usize = 10;
 
-/// The helpers the rendered functions call.
-#[derive(Debug, Default)]
-struct Needs {
-    check: bool,
-    regex: bool,
-    letters: bool,
-    uuid: bool,
-    ulid: bool,
-    hex_code: bool,
-    jwt: bool,
-    iban: bool,
-    coordinates: bool,
-    credit_card: bool,
-    normalize_email: bool,
-    transformed: bool,
+/// A helper the rendered functions call, in `shared/validation.rs`, in the
+/// order that file holds them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Helper {
+    Check,
+    MatchesRegex,
+    Letters,
+    Uuid,
+    Ulid,
+    HexCode,
+    Jwt,
+    Iban,
+    Coordinates,
+    CreditCard,
+    Url,
+    NormalizeEmail,
+    Transformed,
 }
 
-/// Appends the functions checking and transforming the fields of
-/// `columns` (the create and update bodies' columns), each column once,
-/// then the helpers they call.
-pub fn push_functions<'a>(
-    output: &mut String,
-    feature: &Feature<'_>,
-    columns: impl IntoIterator<Item = &'a Column>,
-) {
+impl Helper {
+    /// The name a `dto.rs` imports it by.
+    fn name(self) -> &'static str {
+        match self {
+            Helper::Check => "check",
+            Helper::MatchesRegex => "matches_regex",
+            Helper::Letters => "letters",
+            Helper::Uuid => "is_uuid",
+            Helper::Ulid => "is_ulid",
+            Helper::HexCode => "is_hex_code",
+            Helper::Jwt => "is_jwt",
+            Helper::Iban => "is_iban",
+            Helper::Coordinates => "is_coordinates",
+            Helper::CreditCard => "is_credit_card",
+            Helper::Url => "is_url",
+            Helper::NormalizeEmail => "normalize_email",
+            Helper::Transformed => "Transformed",
+        }
+    }
+
+    /// Its snippets, with what it calls.
+    fn snippets(self) -> &'static [&'static str] {
+        match self {
+            Helper::Check => &[snippets::CHECK],
+            Helper::MatchesRegex => &[snippets::MATCHES_REGEX],
+            Helper::Letters => &[snippets::LETTERS],
+            Helper::Uuid => &[snippets::IS_UUID],
+            Helper::Ulid => &[snippets::IS_ULID],
+            Helper::HexCode => &[snippets::IS_HEX_CODE],
+            Helper::Jwt => &[snippets::IS_JWT],
+            Helper::Iban => &[snippets::IS_IBAN, rule_tables::IBAN_FORMAT_LIST],
+            Helper::Coordinates => &[snippets::IS_COORDINATES, snippets::DEGREES],
+            Helper::CreditCard => &[
+                snippets::IS_CREDIT_CARD,
+                snippets::LUHN,
+                rule_tables::CARD_PROVIDER_LIST,
+            ],
+            Helper::Url => &[snippets::IS_URL],
+            Helper::NormalizeEmail => &[
+                snippets::NORMALIZE_EMAIL,
+                snippets::REMOVE_SINGLE_DOTS,
+                rule_tables::EMAIL_DOMAINS,
+            ],
+            Helper::Transformed => &[snippets::TRANSFORMED],
+        }
+    }
+}
+
+/// The helpers some rendered functions call.
+type Needs = BTreeSet<Helper>;
+
+/// The helpers `features`' string rules call, for `shared/validation.rs`:
+/// each needed one once, each snippet with the blank line before it.
+pub fn shared_helpers(features: &[Feature<'_>]) -> String {
+    let mut needs = Needs::new();
+    for feature in features {
+        needs.extend(render_functions(&mut String::new(), feature));
+    }
+    needs
+        .into_iter()
+        .flat_map(|helper| helper.snippets().iter().copied())
+        .collect()
+}
+
+/// Appends the functions checking and transforming the fields of the
+/// create and update bodies, each column once, and imports the helpers they
+/// call from `shared/validation.rs`.
+pub fn push_functions(output: &mut String, uses: &mut Uses, feature: &Feature<'_>) {
+    for helper in render_functions(output, feature) {
+        uses.add(&format!("crate::shared::validation::{}", helper.name()));
+    }
+}
+
+/// The functions of [`push_functions`], returning the helpers they call.
+fn render_functions(output: &mut String, feature: &Feature<'_>) -> Needs {
     let mut done: Vec<&str> = Vec::new();
-    let mut needs = Needs::default();
-    for column in columns {
+    let mut needs = Needs::new();
+    for column in body_columns(feature) {
         let rules = feature.rules_of(column);
         if rules.is_empty() || done.contains(&column.sql_name.as_str()) {
             continue;
         }
         done.push(&column.sql_name);
         if rules.iter().any(Rule::is_transform) {
-            needs.transformed = true;
+            needs.insert(Helper::Transformed);
             push_transforms(output, column, rules, &mut needs);
         }
         for rule in rules.iter().filter(|rule| !rule.is_transform()) {
-            if !matches!(rule, Rule::Email | Rule::Url | Rule::IpAddress(_)) {
-                needs.check = true;
+            if !matches!(rule, Rule::Email | Rule::IpAddress(_)) {
+                needs.insert(Helper::Check);
                 push_check_function(output, column, rule, &mut needs);
             }
         }
     }
-    for (needed, helper) in [
-        (needs.check, helpers::CHECK),
-        (needs.regex, helpers::MATCHES_REGEX),
-        (needs.letters, helpers::LETTERS),
-        (needs.uuid, helpers::IS_UUID),
-        (needs.ulid, helpers::IS_ULID),
-        (needs.hex_code, helpers::IS_HEX_CODE),
-        (needs.jwt, helpers::IS_JWT),
-        (needs.iban, helpers::IS_IBAN),
-        (needs.iban, helpers::IBAN_FORMAT_LIST),
-        (needs.coordinates, helpers::IS_COORDINATES),
-        (needs.coordinates, helpers::DEGREES),
-        (needs.credit_card, helpers::IS_CREDIT_CARD),
-        (needs.credit_card, helpers::LUHN),
-        (needs.credit_card, helpers::CARD_PROVIDER_LIST),
-        (needs.normalize_email, helpers::NORMALIZE_EMAIL),
-        (needs.normalize_email, helpers::REMOVE_SINGLE_DOTS),
-        (needs.normalize_email, helpers::EMAIL_DOMAINS),
-        (needs.transformed, helpers::TRANSFORMED),
-    ] {
-        if needed {
-            output.push_str(helper);
-        }
-    }
-}
-
-/// `fn {name}({params}) -> {returns}`, then ` {`, or `where` clauses: on
-/// one line when it fits, otherwise one parameter per line.
-fn push_fn_head(output: &mut String, name: &str, params: &str, returns: &str, open: &str) {
-    let one_line = format!("fn {name}({params}) -> {returns}{open}");
-    if one_line.lines().next().map_or(0, str::len) <= MAX_WIDTH {
-        output.push_str(&one_line);
-    } else {
-        output.push_str(&format!("fn {name}(\n    {params},\n) -> {returns}{open}"));
-    }
-    output.push('\n');
-}
-
-/// `{pad}{callee}({args})` as a statement or tail at `indent`: on one line
-/// when the arguments fit, otherwise one per line.
-fn push_call(output: &mut String, indent: usize, callee: &str, args: &[String], end: &str) {
-    let pad = " ".repeat(indent);
-    let joined = args.join(", ");
-    let one_line = format!("{pad}{callee}({joined}){end}");
-    if joined.len() <= FN_CALL_WIDTH && one_line.len() <= MAX_WIDTH {
-        output.push_str(&one_line);
-    } else {
-        output.push_str(&format!("{pad}{callee}(\n"));
-        for arg in args {
-            output.push_str(&format!("{pad}    {arg},\n"));
-        }
-        output.push_str(&format!("{pad}){end}"));
-    }
-    output.push('\n');
+    needs
 }
 
 /// `{column}_transforms`, applying the column's transforms in order, and
@@ -138,7 +157,8 @@ fn push_transforms(output: &mut String, column: &Column, rules: &[Rule], needs: 
         )],
     );
     let name = format!("{}_transforms", column.rust_name);
-    push_fn_head(output, &name, "value: &str", "String", " {");
+    let head = format!("fn {name}");
+    push_signature(output, 0, &head, &["value: &str".to_owned()], "String");
     // `value` is a `&str` until a transform makes a `String`.
     let mut borrowed = true;
     for (index, rule) in transforms.iter().enumerate() {
@@ -147,7 +167,7 @@ fn push_transforms(output: &mut String, column: &Column, rules: &[Rule], needs: 
             Rule::ToLowerCase => "value.to_lowercase()".to_owned(),
             Rule::ToUpperCase => "value.to_uppercase()".to_owned(),
             _ => {
-                needs.normalize_email = true;
+                needs.insert(Helper::NormalizeEmail);
                 if borrowed {
                     "normalize_email(value)".to_owned()
                 } else {
@@ -172,21 +192,17 @@ fn push_transforms(output: &mut String, column: &Column, rules: &[Rule], needs: 
             "Deserializes the {doc_column} column, transformed."
         )],
     );
-    let transformed = format!("{}_transformed<'de, D, T>", column.rust_name);
-    push_fn_head(
+    let head = format!("fn {}_transformed<'de, D, T>", column.rust_name);
+    push_signature_where(
         output,
-        &transformed,
-        "deserializer: D",
+        0,
+        &head,
+        &["deserializer: D".to_owned()],
         "Result<T, D::Error>",
-        "\nwhere\n    D: serde::Deserializer<'de>,\n    T: Transformed<'de>,\n{",
+        &["D: serde::Deserializer<'de>", "T: Transformed<'de>"],
     );
-    push_call(
-        output,
-        4,
-        "T::transformed",
-        &["deserializer".to_owned(), name],
-        "",
-    );
+    let args = ["deserializer".to_owned(), name];
+    push_call(output, 4, "", "T::transformed", &args, "");
     output.push_str("}\n");
 }
 
@@ -235,9 +251,17 @@ fn pattern(rule: &Rule) -> Option<String> {
     };
     match rule {
         Rule::Regex(pattern) => Some(pattern.clone()),
-        Rule::Mobile { locales, .. } => Some(alternatives(
-            locales.iter().filter_map(|l| mobile_pattern(l)).collect(),
-        )),
+        Rule::Mobile { locales, .. } => {
+            // No locale: any locale carried.
+            let any: Vec<String> = crate::api_rules::MOBILE_LOCALES
+                .iter()
+                .map(|locale| (*locale).to_owned())
+                .collect();
+            let locales = if locales.is_empty() { &any } else { locales };
+            Some(alternatives(
+                locales.iter().filter_map(|l| mobile_pattern(l)).collect(),
+            ))
+        }
         Rule::PostalCode(countries) => Some(alternatives(
             countries.iter().filter_map(|c| postal_pattern(c)).collect(),
         )),
@@ -257,15 +281,15 @@ fn push_check_function(output: &mut String, column: &Column, rule: &Rule, needs:
             doc_name(&column.sql_name)
         )],
     );
-    push_fn_head(
+    push_signature(
         output,
-        &function_name(column, rule),
-        "value: &str",
+        0,
+        &format!("fn {}", function_name(column, rule)),
+        &["value: &str".to_owned()],
         "Result<(), validator::ValidationError>",
-        " {",
     );
     if let Some(pattern) = pattern(rule) {
-        needs.regex = true;
+        needs.insert(Helper::MatchesRegex);
         output.push_str(&format!(
             "    const PATTERN: &str = {};\n",
             str_literal(&pattern)
@@ -277,12 +301,16 @@ fn push_check_function(output: &mut String, column: &Column, rule: &Rule, needs:
     let flag = |on: bool| if on { "true" } else { "false" };
     let valid = match rule {
         Rule::Uuid(versions) => {
-            needs.uuid = true;
+            needs.insert(Helper::Uuid);
             let versions: Vec<String> = versions.iter().map(u8::to_string).collect();
             format!("is_uuid(value, &[{}])", versions.join(", "))
         }
+        Rule::Url => {
+            needs.insert(Helper::Url);
+            "is_url(value)".to_owned()
+        }
         Rule::Ulid => {
-            needs.ulid = true;
+            needs.insert(Helper::Ulid);
             "is_ulid(value)".to_owned()
         }
         Rule::Mobile { strict: true, .. } => {
@@ -293,7 +321,7 @@ fn push_check_function(output: &mut String, column: &Column, rule: &Rule, needs:
             "matches_regex(value, REGEX.as_ref())".to_owned()
         }
         Rule::Alpha(extras) | Rule::AlphaNumeric(extras) => {
-            needs.letters = true;
+            needs.insert(Helper::Letters);
             format!(
                 "letters(value, {}, {}, {}, {})",
                 flag(matches!(rule, Rule::AlphaNumeric(_))),
@@ -330,23 +358,23 @@ fn push_check_function(output: &mut String, column: &Column, rule: &Rule, needs:
         Rule::MaxLength(count) => format!("value.chars().count() <= {count}"),
         Rule::FixedLength(count) => format!("value.chars().count() == {count}"),
         Rule::HexCode => {
-            needs.hex_code = true;
+            needs.insert(Helper::HexCode);
             "is_hex_code(value)".to_owned()
         }
         Rule::Iban => {
-            needs.iban = true;
+            needs.insert(Helper::Iban);
             "is_iban(value)".to_owned()
         }
         Rule::Jwt => {
-            needs.jwt = true;
+            needs.insert(Helper::Jwt);
             "is_jwt(value)".to_owned()
         }
         Rule::Coordinates => {
-            needs.coordinates = true;
+            needs.insert(Helper::Coordinates);
             "is_coordinates(value)".to_owned()
         }
         Rule::CreditCard(providers) => {
-            needs.credit_card = true;
+            needs.insert(Helper::CreditCard);
             if providers.is_empty() {
                 "is_credit_card(value, &[])".to_owned()
             } else {
@@ -356,13 +384,8 @@ fn push_check_function(output: &mut String, column: &Column, rule: &Rule, needs:
         }
         _ => "true".to_owned(),
     };
-    push_call(
-        output,
-        4,
-        "check",
-        &[valid, format!("\"{}\"", rule.name())],
-        "",
-    );
+    let args = [valid, format!("\"{}\"", rule.name())];
+    push_call(output, 4, "", "check", &args, "");
     output.push_str("}\n");
 }
 
@@ -421,6 +444,23 @@ mod tests {
         for country in POSTAL_COUNTRIES {
             let pattern = postal_pattern(country).expect(country);
             regex_syntax::Parser::new().parse(pattern).expect(country);
+        }
+    }
+
+    /// `mobile` without a locale matches a number of any locale carried.
+    #[test]
+    fn mobile_without_a_locale_takes_every_locale() {
+        let any = Rule::Mobile {
+            locales: Vec::new(),
+            strict: false,
+        };
+        let pattern = pattern(&any).expect("a pattern");
+        regex_syntax::Parser::new()
+            .parse(&pattern)
+            .expect("any locale");
+        for locale in MOBILE_LOCALES {
+            let one = mobile_pattern(locale).expect(locale);
+            assert!(pattern.contains(&format!("(?:{one})")), "{locale}");
         }
     }
 }

@@ -13,23 +13,55 @@ pub fn push_signature(
     params: &[String],
     returns: &str,
 ) {
+    push_head(output, indent, head, params, returns, " {");
+    output.push('\n');
+}
+
+/// [`push_signature`] with `where` clauses: the signature, then `where`
+/// and one bound per line, then the opening brace on a line of its own.
+pub fn push_signature_where(
+    output: &mut String,
+    indent: usize,
+    head: &str,
+    params: &[String],
+    returns: &str,
+    bounds: &[&str],
+) {
+    let pad = " ".repeat(indent);
+    push_head(output, indent, head, params, returns, "");
+    output.push_str(&format!("\n{pad}where\n"));
+    for bound in bounds {
+        output.push_str(&format!("{pad}    {bound},\n"));
+    }
+    output.push_str(&format!("{pad}{{\n"));
+}
+
+/// `{head}(params) -> {returns}{end}` at `indent`, without a final newline:
+/// on one line when it fits, otherwise one parameter per line.
+fn push_head(
+    output: &mut String,
+    indent: usize,
+    head: &str,
+    params: &[String],
+    returns: &str,
+    end: &str,
+) {
     let pad = " ".repeat(indent);
     let arrow = if returns.is_empty() {
         String::new()
     } else {
         format!(" -> {returns}")
     };
-    let one_line = format!("{pad}{head}({}){arrow} {{", params.join(", "));
+    let one_line = format!("{pad}{head}({}){arrow}{end}", params.join(", "));
     if one_line.len() <= MAX_WIDTH {
         output.push_str(&one_line);
-        output.push('\n');
         return;
     }
     output.push_str(&format!("{pad}{head}(\n"));
     for param in params {
         output.push_str(&format!("{pad}    {param},\n"));
     }
-    output.push_str(&format!("{pad}){arrow} {{\n"));
+    output.push_str(&format!("{pad}){arrow}{end}"));
 }
 
 /// rustfmt's default `struct_lit_width`: a struct literal whose fields take

@@ -148,7 +148,8 @@ fn render_handler(output: &mut String, uses: &mut Uses, feature: &Feature<'_>, e
         return;
     }
 
-    let scope = own_scope(feature, uses);
+    let tenant = feature.tenant_of(endpoint);
+    let scope = scope::handler(feature, uses, tenant, feature.caller_of(endpoint));
     let mut params = vec![format!("service: web::Data<{}>", feature.service())];
     params.extend(scope.params);
     let key = feature.key_type().unwrap_or_default();

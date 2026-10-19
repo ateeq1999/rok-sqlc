@@ -364,9 +364,14 @@ fn render_write(output: &mut String, uses: &mut Uses, feature: &Feature<'_>, end
             "()".to_owned(),
         ),
     };
-    let mut params = own_params(feature);
+    // A create or update may take a tenant and caller its pre-checks need.
+    let tenant = feature.tenant_of(endpoint);
+    if let Some(tenant) = tenant {
+        super::scope::import_type(feature, uses, tenant);
+    }
+    let mut params = feature.scope_params(tenant, feature.takes_caller(endpoint));
     params.extend(inputs);
-    let inputs = params[1..].to_vec();
+    let inputs = params;
     let name = endpoint.name();
     prechecks::import(uses, feature, endpoint);
     render_write_pair(output, feature, name, endpoint, &doc, &inputs, &returns);

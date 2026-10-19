@@ -9,6 +9,7 @@
 
 mod api_doc;
 mod dto;
+mod endpoint;
 mod feature;
 mod files;
 mod handlers;
@@ -22,7 +23,8 @@ mod relation_service;
 mod relations;
 mod root;
 mod rule_functions;
-mod rule_helpers;
+mod rule_snippets;
+mod rule_tables;
 mod rules;
 mod schemas;
 mod scope;
@@ -40,8 +42,8 @@ use crate::ApiConfig;
 use crate::schema::Table;
 
 /// The API features of `tables` (the run's tables, kept ones included), in
-/// table order, each with its relations to the others and the references
-/// its writes check.
+/// table order, each with its relations to the others, and the references
+/// and unique keys its writes pre-check.
 pub fn features<'a>(tables: &'a [Table], api: &'a ApiConfig) -> Result<Vec<Feature<'a>>, String> {
     let mut features = Vec::new();
     for table in tables {
@@ -58,6 +60,7 @@ pub fn features<'a>(tables: &'a [Table], api: &'a ApiConfig) -> Result<Vec<Featu
     for ((feature, relations), references) in features.iter_mut().zip(relations).zip(references) {
         feature.relations = relations;
         feature.references = references;
+        feature.unique_checks = unique::checks(feature);
     }
     Ok(features)
 }
@@ -68,7 +71,7 @@ pub fn has_listing(feature: &Feature<'_>) -> bool {
     feature.serves(Endpoint::List)
         || feature.serves(Endpoint::Search)
         || feature.reads_owned_rows()
-        || !unique::checks(feature).is_empty()
+        || !feature.unique_checks.is_empty()
         || feature
             .relations
             .iter()

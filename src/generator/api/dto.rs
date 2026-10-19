@@ -49,8 +49,8 @@ pub fn render(feature: &Feature<'_>) -> String {
     render_response(&mut body, feature);
     relation_routes::render_dto(&mut body, &mut uses, feature);
     let checked = create.iter().flatten().chain(update.iter().flatten());
-    push_decimal_checks(&mut body, checked.clone().copied());
-    rule_functions::push_functions(&mut body, feature, checked.copied());
+    push_decimal_checks(&mut body, checked.copied());
+    rule_functions::push_functions(&mut body, &mut uses, feature);
 
     imports(
         &mut uses,
@@ -100,6 +100,19 @@ pub(super) fn create_columns<'a>(feature: &Feature<'a>) -> Vec<&'a Column> {
         .into_iter()
         .filter(|column| column.id_generation.is_none() && !is_owner(feature, column))
         .collect()
+}
+
+/// The columns of the bodies the feature takes: the create body's, then the
+/// update body's (a column may be in both).
+pub(super) fn body_columns<'a>(feature: &Feature<'a>) -> Vec<&'a Column> {
+    let mut columns = Vec::new();
+    if feature.serves(Endpoint::Create) {
+        columns.extend(create_columns(feature));
+    }
+    if feature.serves(Endpoint::Update) {
+        columns.extend(update_columns(feature));
+    }
+    columns
 }
 
 /// The update body's columns: the patch's, less the owner and the immutable

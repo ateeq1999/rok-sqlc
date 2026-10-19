@@ -1,7 +1,7 @@
 -- The `unique` pre-check (0.5): `handles` is tenant-scoped and soft-deleted,
--- public, with a case-insensitive key (`lower(email)`), a key per tenant
--- (`nickname`) and a composite one per tenant (`region` and `seat`), each
--- holding across live rows only.
+-- with the default access (`user`), a case-insensitive key
+-- (`lower(email)`), a key per tenant (`nickname`) and a composite one per
+-- tenant (`region` and `seat`), each holding across live rows only.
 CREATE TABLE handles (
     id UUID PRIMARY KEY,
     tenant_id UUID NOT NULL,

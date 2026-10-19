@@ -6,13 +6,12 @@
 //! `listing.rs`; the database's constraint stays the race's fallback
 //! (`409`).
 
-use super::dto::{create_columns, update_columns};
-use super::feature::{Endpoint, Feature};
+use super::feature::{Bodies, Endpoint, Feature};
 use super::layout::push_call;
-use crate::generator::sql::{ident, live_condition, table_ref, tenant_condition};
+use super::prechecks::{BodyField, bodies_holding};
+use crate::generator::sql::{equals, ident, live_condition, table_ref, tenant_condition};
 use crate::generator::{
-    StaticQuery, insert_field_type, keys, param_name, param_type, push_and_chain, push_doc,
-    push_fn_head,
+    StaticQuery, keys, param_name, param_type, push_and_chain, push_doc, push_fn_head,
 };
 use crate::schema::Column;
 
@@ -25,19 +24,21 @@ const SERVICE_LOCALS: &[&str] = &[
 /// whose body holds every one of its columns.
 #[derive(Debug, Clone)]
 pub struct UniqueCheck<'a> {
-    /// The key's columns, less the tenant column: the check always stays in
-    /// the caller's tenant.
+    /// The key's columns, less the tenant column and the owner column: the
+    /// check always stays in the caller's tenant, and takes the owner from
+    /// the caller.
     pub columns: Vec<&'a Column>,
-    /// Whether the key is a unique index on `lower(<column>)`, compared
-    /// ignoring case.
-    pub case_insensitive: bool,
+    /// The column a case-insensitive key compares ignoring case (its
+    /// `lower(<column>)` entry).
+    pub lowered: Option<&'a Column>,
+    /// The feature's owner column, when the key includes it: the check
+    /// takes its value from the caller (`user.id`).
+    pub owner: Option<&'a Column>,
     /// Whether the key holds across live rows only (a partial index on
     /// `<soft-delete column> IS NULL`), so soft-deleted rows don't count.
     pub live_only: bool,
-    /// Whether the create body holds every column.
-    pub on_create: bool,
-    /// Whether the update body holds every column.
-    pub on_update: bool,
+    /// Which bodies hold every column.
+    pub bodies: Bodies,
 }
 
 impl UniqueCheck<'_> {
@@ -51,26 +52,24 @@ impl UniqueCheck<'_> {
         format!("{}_taken", names.join("_and_"))
     }
 
-    /// Whether `endpoint`'s body is checked.
-    fn runs_on(&self, endpoint: Endpoint) -> bool {
-        match endpoint {
-            Endpoint::Create => self.on_create,
-            Endpoint::Update => self.on_update,
-            _ => false,
-        }
+    /// Whether `column` is compared ignoring case.
+    fn ignores_case(&self, column: &Column) -> bool {
+        self.lowered
+            .is_some_and(|lowered| lowered.sql_name == column.sql_name)
     }
 }
 
 /// The unique keys of `feature`'s table that its create or update body
-/// holds whole, in declaration order. A key with a column the body doesn't
-/// carry (the owner) or that can't be bound by value or borrow keeps the
-/// constraint's `409`.
+/// holds whole (the tenant and owner columns aside), in declaration order.
+/// A key with a column the body doesn't carry, or that can't be bound by
+/// value or borrow, keeps the constraint's `409`.
 pub fn checks<'a>(feature: &Feature<'a>) -> Vec<UniqueCheck<'a>> {
     let table = feature.table;
-    let creates = feature.serves(Endpoint::Create);
-    let updates = feature.serves(Endpoint::Update) && !table.key_columns().is_empty();
-    let create = create_columns(feature);
-    let update = update_columns(feature);
+    let is_owner = |column: &Column| {
+        feature
+            .owner
+            .is_some_and(|owner| owner.sql_name == column.sql_name)
+    };
     let mut checks: Vec<UniqueCheck<'a>> = Vec::new();
     for key in table.lookup_unique_keys(table.soft_delete_column.as_deref()) {
         let Some(columns) = key
@@ -81,33 +80,33 @@ pub fn checks<'a>(feature: &Feature<'a>) -> Vec<UniqueCheck<'a>> {
         else {
             continue;
         };
+        let owner = columns.iter().copied().find(|column| is_owner(column));
         let columns: Vec<&Column> = columns
             .into_iter()
-            .filter(|column| !table.is_tenant_column(column))
+            .filter(|column| !table.is_tenant_column(column) && !is_owner(column))
             .collect();
         let bindable = |column: &&Column| {
             (column.is_copy() || param_type(column).starts_with('&'))
-                && param_name(column) != "except"
+                && !["except", "owner"].contains(&param_name(column).as_str())
         };
         if columns.is_empty() || !columns.iter().all(bindable) {
             continue;
         }
-        let holds = |body: &[&Column]| {
-            columns
-                .iter()
-                .all(|column| body.iter().any(|c| c.sql_name == column.sql_name))
-        };
+        let lowered = key
+            .lowered
+            .as_deref()
+            .and_then(|name| columns.iter().copied().find(|c| c.sql_name == name));
         let check = UniqueCheck {
-            on_create: creates && holds(&create),
-            on_update: updates && holds(&update),
+            bodies: bodies_holding(feature, &columns),
             columns,
-            case_insensitive: key.case_insensitive,
+            lowered,
+            owner,
             live_only: key.predicate.is_some(),
         };
         let named = checks
             .iter()
             .any(|other| other.function() == check.function());
-        if (check.on_create || check.on_update) && !named {
+        if check.bodies.any() && !named {
             checks.push(check);
         }
     }
@@ -133,12 +132,12 @@ fn render_read(output: &mut String, feature: &Feature<'_>, check: &UniqueCheck<'
         let name = param_name(column);
         params.push(format!("{name}: {}", param_type(column)));
         binds.push(name);
-        let placeholder = format!("${}", binds.len());
-        conditions.push(if check.case_insensitive {
-            format!("lower({}) = lower({placeholder})", ident(&column.sql_name))
-        } else {
-            format!("{} = {placeholder}", ident(&column.sql_name))
-        });
+        conditions.push(equals(column, binds.len(), check.ignores_case(column)));
+    }
+    if let Some(owner) = check.owner {
+        params.push("owner: uuid::Uuid".to_owned());
+        binds.push("owner".to_owned());
+        conditions.push(format!("{} = ${}", ident(&owner.sql_name), binds.len()));
     }
     if check.live_only {
         conditions.extend(live_condition(table, None));
@@ -184,19 +183,26 @@ fn render_read(output: &mut String, feature: &Feature<'_>, check: &UniqueCheck<'
         .iter()
         .map(|column| format!("`{}`", column.sql_name))
         .collect();
+    let ignoring_case = match check.lowered {
+        Some(lowered) if check.columns.len() > 1 => {
+            format!(", `{}` ignoring case", lowered.sql_name)
+        }
+        Some(_) => ", ignoring case".to_owned(),
+        None => String::new(),
+    };
     let mut doc = vec![format!(
-        "Returns whether a row {}has this {}{}:",
+        "Returns whether a row {}has this {}{ignoring_case}{}:",
         if keys.is_empty() {
             ""
         } else {
             "other than `except` "
         },
         join_words(&names),
-        if check.case_insensitive {
-            ", ignoring case"
+        if check.owner.is_some() {
+            " among `owner`'s rows"
         } else {
             ""
-        }
+        },
     )];
     doc.push("the `unique` check of a create or update body.".to_owned());
     if check.live_only {
@@ -229,19 +235,15 @@ fn join_words(words: &[String]) -> String {
     }
 }
 
-/// Whether `endpoint`'s `<write>_in` runs any check.
-pub fn checked(feature: &Feature<'_>, endpoint: Endpoint) -> bool {
-    checks(feature).iter().any(|check| check.runs_on(endpoint))
-}
-
 /// The checks `endpoint`'s `<write>_in` runs, on `conn`, adding to
 /// `failures`: each key whose values its body holds, present and not
 /// `null`, must not be taken by another row (on an update, another than
 /// the row with the key).
 pub fn push_checks(output: &mut String, feature: &Feature<'_>, endpoint: Endpoint) {
-    for check in checks(feature)
+    for check in feature
+        .unique_checks
         .iter()
-        .filter(|check| check.runs_on(endpoint))
+        .filter(|check| check.bodies.holds(endpoint))
     {
         push_check(output, feature, endpoint, check);
     }
@@ -258,32 +260,20 @@ fn push_check(
     let mut args = super::service::data_args(feature, "&mut *conn");
     let mut lets = Vec::new();
     for column in &check.columns {
-        let options = if endpoint == Endpoint::Create {
-            insert_field_type(column).matches("Option<").count()
-        } else {
-            1 + usize::from(column.nullable)
-        };
-        let borrow = if param_type(column).starts_with('&') {
-            "&"
-        } else {
-            ""
-        };
-        let field = format!("{borrow}input.{}", column.rust_name);
-        if options == 0 {
-            args.push(field);
+        let field = BodyField::of(column, endpoint);
+        if field.options == 0 {
+            args.push(field.expr);
         } else {
             let mut binding = param_name(column);
             if SERVICE_LOCALS.contains(&binding.as_str()) {
                 binding.push_str("_value");
             }
-            let pattern = format!(
-                "{}{binding}{}",
-                "Some(".repeat(options),
-                ")".repeat(options)
-            );
-            lets.push(format!("let {pattern} = {field}"));
+            lets.push(field.binding(&binding));
             args.push(binding);
         }
+    }
+    if check.owner.is_some() {
+        args.push("user.id".to_owned());
     }
     let keys = feature.table.key_columns();
     if !keys.is_empty() {

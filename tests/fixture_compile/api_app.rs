@@ -114,6 +114,8 @@ fn generate_api_app() -> Result<Vec<PathBuf>> {
     api.access
         .insert("profiles".into(), rok_sqlc::ApiAccess::Public);
     api.rules.insert("profiles".into(), profile_rules());
+    // `0008_scoped_checks.sql`: `folders` is owned.
+    api.owner.insert("folders".into(), "owner_id".to_owned());
     config.api = Some(api);
     let report = rok_sqlc::generate(&config)?;
     ensure!(
@@ -146,7 +148,7 @@ fn profile_rules() -> std::collections::BTreeMap<String, Vec<rok_sqlc::ApiRule>>
         ("ref_uuid", text(&["uuid(4)"])),
         ("ref_ulid", text(&["ulid"])),
         ("ip", text(&["ipAddress(4)"])),
-        ("phone", text(&["mobile(ar-SA)"])),
+        ("phone", text(&["mobile"])),
         ("first_name", text(&["alpha(allowSpaces)"])),
         ("handle", text(&["alphaNumeric(allowDashes)"])),
         ("plain", text(&["ascii"])),
