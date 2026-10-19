@@ -49,6 +49,9 @@ const COVERED: &[(&str, &str)] = &[
     ("patch", "/api/v1/users/me"),
     ("get", "/health/live"),
     ("get", "/health/ready"),
+    ("post", "/api/v1/auth/password/forgot"),
+    ("post", "/api/v1/auth/password/reset"),
+    ("post", "/api/v1/auth/password/change"),
 ];
 
 /// The differences the application still has, and why.

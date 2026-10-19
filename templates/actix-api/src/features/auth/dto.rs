@@ -131,3 +131,43 @@ where
     let email: String = serde::Deserialize::deserialize(deserializer)?;
     Ok(email.trim().to_lowercase())
 }
+
+/// `POST /auth/password/forgot`'s body. The email is trimmed and
+/// lowercased before it is checked.
+#[derive(Debug, Clone, serde::Deserialize, validator::Validate, utoipa::ToSchema)]
+pub struct ForgotPasswordDto {
+    /// The account's email address.
+    #[serde(deserialize_with = "normalized_email")]
+    #[validate(email(message = "email must be an email address"))]
+    pub email: String,
+}
+
+/// `POST /auth/password/reset`'s body: a reset (or invitation) link's
+/// token and the new password.
+#[derive(Debug, Clone, serde::Deserialize, validator::Validate, utoipa::ToSchema)]
+pub struct ResetPasswordDto {
+    /// The token the mailed link carries (`?token=`).
+    #[validate(length(min = 1, message = "token must not be empty"))]
+    pub token: String,
+    /// The new password: 8 to 128 characters, anything allowed.
+    #[validate(length(
+        min = MIN_LENGTH,
+        max = MAX_LENGTH,
+        message = "new_password must be 8 to 128 characters"
+    ))]
+    pub new_password: String,
+}
+
+/// `POST /auth/password/change`'s body: the password now and the new one.
+#[derive(Debug, Clone, serde::Deserialize, validator::Validate, utoipa::ToSchema)]
+pub struct ChangePasswordDto {
+    /// The account's password now.
+    pub current_password: String,
+    /// The new password: 8 to 128 characters, anything allowed.
+    #[validate(length(
+        min = MIN_LENGTH,
+        max = MAX_LENGTH,
+        message = "new_password must be 8 to 128 characters"
+    ))]
+    pub new_password: String,
+}

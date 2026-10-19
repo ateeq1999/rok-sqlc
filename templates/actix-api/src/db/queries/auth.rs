@@ -262,3 +262,58 @@ where
     .fetch_optional(executor)
     .await
 }
+
+/// Runs the `ResetPassword` query (`:execrows`).
+/// Returns the number of affected rows.
+pub async fn reset_password<'e, E>(
+    executor: E,
+    id: UserId,
+    password_hash: Option<&str>,
+    verify_email: bool,
+) -> Result<u64, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    let result = sqlx::query(
+        r#"
+        UPDATE users
+        SET password_hash = $2,
+            token_version = token_version + 1,
+            failed_logins = 0,
+            locked_until = NULL,
+            email_verified = email_verified OR $3
+        WHERE id = $1 AND deleted_at IS NULL
+        "#,
+    )
+    .bind(id)
+    .bind(password_hash)
+    .bind(verify_email)
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// Runs the `ChangePassword` query (`:execrows`).
+/// Returns the number of affected rows.
+pub async fn change_password<'e, E>(
+    executor: E,
+    id: UserId,
+    password_hash: Option<&str>,
+) -> Result<u64, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    let result = sqlx::query(
+        r#"
+        UPDATE users
+        SET password_hash = $2,
+            token_version = token_version + 1
+        WHERE id = $1 AND deleted_at IS NULL
+        "#,
+    )
+    .bind(id)
+    .bind(password_hash)
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
+}

@@ -14,7 +14,9 @@ use std::sync::Arc;
 use chrono::{TimeDelta, Utc};
 use sqlx::{PgConnection, PgPool};
 
-use super::dto::{CredentialsDto, TokenResponse};
+use super::dto::{
+    ChangePasswordDto, CredentialsDto, ForgotPasswordDto, ResetPasswordDto, TokenResponse,
+};
 use crate::db::auth_tokens::models::AuthTokenId;
 use crate::db::queries::auth::{self as queries, ConsumeTokenRow, InsertTokenParams};
 use crate::db::types::AuthTokenPurpose;
@@ -216,4 +218,87 @@ pub async fn consume_token(
     queries::consume_token(conn, &token::hash(raw), purpose)
         .await?
         .ok_or_else(|| AppError::InvalidToken(INVALID_TOKEN.to_owned()))
+}
+
+/// How long a password reset link stays valid, in hours.
+pub const PASSWORD_RESET_TTL_HOURS: i64 = 1;
+
+/// The password flows: forgot, reset and change.
+impl AuthService {
+    /// Mails the live account with `email` a password reset link, spending
+    /// its older ones. An unknown email gets nothing, and the caller can't
+    /// tell the difference.
+    pub async fn forgot_password(&self, input: ForgotPasswordDto) -> Result<(), AppError> {
+        let Some(user) = users::get_by_email(&self.pool, &input.email).await? else {
+            return Ok(());
+        };
+        let mut tx = self.pool.begin().await?;
+        let link = issue_token(
+            &mut tx,
+            user.id,
+            AuthTokenPurpose::PasswordReset,
+            TimeDelta::hours(PASSWORD_RESET_TTL_HOURS),
+            None,
+        )
+        .await?;
+        let mail = self.templates.password_reset(&user.email, &link.raw);
+        self.outbox.enqueue(&mut tx, &mail).await?;
+        self.outbox.commit(tx).await
+    }
+
+    /// Redeems a password reset link, or an invitation's (whose email is
+    /// then verified too): the account's password becomes `new_password`,
+    /// every older session is signed out, any lock is lifted, and the
+    /// token is spent. A breached password is a `400 breached_password`;
+    /// an unknown, expired or used token a `400 invalid_token`.
+    pub async fn reset_password(&self, input: ResetPasswordDto) -> Result<(), AppError> {
+        self.reject_breached(&input.new_password).await?;
+        let mut tx = self.pool.begin().await?;
+        let (spent, invited) =
+            match consume_token(&mut tx, &input.token, AuthTokenPurpose::PasswordReset).await {
+                Ok(spent) => (spent, false),
+                Err(AppError::InvalidToken(_)) => {
+                    let spent =
+                        consume_token(&mut tx, &input.token, AuthTokenPurpose::Invitation).await?;
+                    (spent, true)
+                }
+                Err(other) => return Err(other),
+            };
+        let hash = password::hash(input.new_password).await?;
+        if queries::reset_password(&mut *tx, spent.user_id, Some(&hash), invited).await? == 0 {
+            return Err(AppError::InvalidToken(INVALID_TOKEN.to_owned()));
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Replaces the password of the account `id` when `current_password`
+    /// is right (otherwise a `400 wrong_password`), signs every session
+    /// out, the caller's included, and mails a notice. A breached password
+    /// is a `400 breached_password`.
+    pub async fn change_password(
+        &self,
+        id: UserId,
+        input: ChangePasswordDto,
+    ) -> Result<(), AppError> {
+        let user = users::get_by_id(&self.pool, id)
+            .await?
+            .ok_or_else(|| AppError::Unauthorized("the account no longer exists".to_owned()))?;
+        if !password::verify(input.current_password, user.password_hash).await? {
+            return Err(AppError::WrongPassword(
+                "the current password is wrong".to_owned(),
+            ));
+        }
+        self.reject_breached(&input.new_password).await?;
+        let hash = password::hash(input.new_password).await?;
+        let mut tx = self.pool.begin().await?;
+        if queries::change_password(&mut *tx, user.id, Some(&hash)).await? == 0 {
+            return Err(AppError::Unauthorized(
+                "the account no longer exists".to_owned(),
+            ));
+        }
+        let mail = self.templates.password_changed(&user.email);
+        self.outbox.enqueue(&mut tx, &mail).await?;
+        self.outbox.commit(tx).await
+    }
 }

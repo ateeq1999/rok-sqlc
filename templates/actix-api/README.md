@@ -36,6 +36,13 @@ Five wrong passwords in a row lock an account for 15 minutes, and every
 `GET /api/v1/auth/me` and `GET`/`PATCH /api/v1/users/me` are the signed-in
 user's own account.
 
+A forgotten password: `POST /api/v1/auth/password/forgot` (`{"email"}`,
+always `202`) mails a link valid for an hour, and
+`POST /api/v1/auth/password/reset` (`{"token", "new_password"}`) sets the
+new password and lifts any lock. A signed-in user changes theirs with
+`POST /api/v1/auth/password/change` (`{"current_password", "new_password"}`)
+and gets a notice by mail. Both sign every older session out.
+
 Every other route but health needs `Authorization: Bearer <token>`: an HS256 JWT
 signed with `JWT_SECRET`, with `sub` (the user's id), `role` (`user` or
 `admin`), `tv` (the account's `token_version`) and `exp`.

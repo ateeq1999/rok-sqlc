@@ -1,0 +1,415 @@
+//! Passwords: `POST /auth/password/forgot` mails a reset link (and says
+//! nothing about which emails exist), `POST /auth/password/reset` redeems
+//! a reset or an invitation link, and `POST /auth/password/change` replaces
+//! the signed-in user's password. Each signs every older session out.
+
+mod support;
+
+use std::sync::Arc;
+
+use actix_api::db::types::{AuthTokenPurpose, Role};
+use actix_api::features::auth::service::issue_token;
+use actix_api::shared::security::breach::BreachCheck;
+use actix_web::http::{Method, StatusCode};
+use async_trait::async_trait;
+use chrono::TimeDelta;
+use serde_json::{Value, json};
+use sqlx::PgPool;
+use support::{
+    Database, PASSWORD, TestResult, call, call_with, mailed, mailed_token, register_verified, state,
+};
+
+const FORGOT: &str = "/api/v1/auth/password/forgot";
+const RESET: &str = "/api/v1/auth/password/reset";
+const LOGIN: &str = "/api/v1/auth/login";
+const CHANGE: &str = "/api/v1/auth/password/change";
+const ME: &str = "/api/v1/auth/me";
+
+/// A new password within the policy.
+const NEW_PASSWORD: &str = "another long passphrase";
+
+/// The one password [`KnowsOne`] knows from a breach.
+const BREACHED: &str = "password123";
+
+/// A breach check that knows one password.
+struct KnowsOne;
+
+#[async_trait]
+impl BreachCheck for KnowsOne {
+    async fn is_breached(&self, password: &str) -> bool {
+        password == BREACHED
+    }
+}
+
+fn credentials(email: &str, password: &str) -> Option<Value> {
+    Some(json!({"email": email, "password": password}))
+}
+
+fn reset(token: &str, new_password: &str) -> Option<Value> {
+    Some(json!({"token": token, "new_password": new_password}))
+}
+
+/// Asks for a reset link for `email` and answers the token it carries.
+async fn forgot(pool: &PgPool, email: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let body = Some(json!({"email": email}));
+    let answer = call(pool, None, Method::POST, FORGOT, body).await?;
+    assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.body);
+    let mail = mailed(pool).await?;
+    let [mail] = mail.as_slice() else {
+        return Err(format!("expected one mail, got {mail:?}").into());
+    };
+    assert_eq!(mail.to, email.trim().to_lowercase());
+    Ok(mailed_token(mail).ok_or("no token in the reset mail")?)
+}
+
+#[actix_web::test]
+async fn forgot_for_an_unknown_email_is_accepted_and_mails_nothing() -> TestResult {
+    let Some(db) = Database::fresh().await? else {
+        return Ok(());
+    };
+    let body = Some(json!({"email": "nobody@example.com"}));
+    let answer = call(&db.pool, None, Method::POST, FORGOT, body).await?;
+    assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.body);
+    assert!(answer.body["message"].is_string(), "{}", answer.body);
+    assert!(mailed(&db.pool).await?.is_empty());
+    db.drop().await
+}
+
+#[actix_web::test]
+async fn a_reset_link_sets_the_password_once_and_signs_old_sessions_out() -> TestResult {
+    let Some(db) = Database::fresh().await? else {
+        return Ok(());
+    };
+    let session = register_verified(&db.pool, "ada@example.com", PASSWORD).await?;
+    let link = forgot(&db.pool, "Ada@Example.com ").await?;
+
+    let answer = call(
+        &db.pool,
+        None,
+        Method::POST,
+        RESET,
+        reset(&link, NEW_PASSWORD),
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    assert!(answer.body["message"].is_string(), "{}", answer.body);
+
+    let answer = call(&db.pool, Some(&session), Method::GET, ME, None).await?;
+    assert_eq!(answer.status, StatusCode::UNAUTHORIZED, "{}", answer.body);
+    let answer = call(
+        &db.pool,
+        None,
+        Method::POST,
+        LOGIN,
+        credentials("ada@example.com", PASSWORD),
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::UNAUTHORIZED, "{}", answer.body);
+    let answer = call(
+        &db.pool,
+        None,
+        Method::POST,
+        LOGIN,
+        credentials("ada@example.com", NEW_PASSWORD),
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+
+    let answer = call(
+        &db.pool,
+        None,
+        Method::POST,
+        RESET,
+        reset(&link, "a third passphrase"),
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.body);
+    assert_eq!(answer.code(), "invalid_token");
+    db.drop().await
+}
+
+#[actix_web::test]
+async fn an_expired_reset_link_is_an_invalid_token() -> TestResult {
+    let Some(db) = Database::fresh().await? else {
+        return Ok(());
+    };
+    register_verified(&db.pool, "ada@example.com", PASSWORD).await?;
+    let link = forgot(&db.pool, "ada@example.com").await?;
+    sqlx::query("UPDATE auth_tokens SET expires_at = now() - interval '1 second'")
+        .execute(&db.pool)
+        .await?;
+    let answer = call(
+        &db.pool,
+        None,
+        Method::POST,
+        RESET,
+        reset(&link, NEW_PASSWORD),
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.body);
+    assert_eq!(answer.code(), "invalid_token");
+
+    let answer = call(
+        &db.pool,
+        None,
+        Method::POST,
+        RESET,
+        reset("not a token", NEW_PASSWORD),
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.body);
+    assert_eq!(answer.code(), "invalid_token");
+    db.drop().await
+}
+
+#[actix_web::test]
+async fn a_newer_reset_link_replaces_the_older_one() -> TestResult {
+    let Some(db) = Database::fresh().await? else {
+        return Ok(());
+    };
+    register_verified(&db.pool, "ada@example.com", PASSWORD).await?;
+    let older = forgot(&db.pool, "ada@example.com").await?;
+    let newer = forgot(&db.pool, "ada@example.com").await?;
+    let answer = call(
+        &db.pool,
+        None,
+        Method::POST,
+        RESET,
+        reset(&older, NEW_PASSWORD),
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.body);
+    let answer = call(
+        &db.pool,
+        None,
+        Method::POST,
+        RESET,
+        reset(&newer, NEW_PASSWORD),
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    db.drop().await
+}
+
+#[actix_web::test]
+async fn a_reset_lifts_a_lockout() -> TestResult {
+    let Some(db) = Database::fresh().await? else {
+        return Ok(());
+    };
+    register_verified(&db.pool, "ada@example.com", PASSWORD).await?;
+    for _ in 0..5 {
+        let body = credentials("ada@example.com", "not the password");
+        call(&db.pool, None, Method::POST, LOGIN, body).await?;
+    }
+    let link = forgot(&db.pool, "ada@example.com").await?;
+    let answer = call(
+        &db.pool,
+        None,
+        Method::POST,
+        RESET,
+        reset(&link, NEW_PASSWORD),
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    let answer = call(
+        &db.pool,
+        None,
+        Method::POST,
+        LOGIN,
+        credentials("ada@example.com", NEW_PASSWORD),
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    db.drop().await
+}
+
+#[actix_web::test]
+async fn an_invitation_link_sets_the_first_password_and_verifies_the_email() -> TestResult {
+    let Some(db) = Database::fresh().await? else {
+        return Ok(());
+    };
+    let (id, _) = support::account(&db.pool, Role::User).await?;
+    let mut conn = db.pool.acquire().await?;
+    let link = issue_token(
+        &mut conn,
+        id.into(),
+        AuthTokenPurpose::Invitation,
+        TimeDelta::days(7),
+        None,
+    )
+    .await?;
+    drop(conn);
+    let email = format!("caller-{}@test.invalid", id.simple());
+    let answer = call(
+        &db.pool,
+        None,
+        Method::POST,
+        RESET,
+        reset(&link.raw, NEW_PASSWORD),
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    let answer = call(
+        &db.pool,
+        None,
+        Method::POST,
+        LOGIN,
+        credentials(&email, NEW_PASSWORD),
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+
+    let answer = call(
+        &db.pool,
+        None,
+        Method::POST,
+        RESET,
+        reset(&link.raw, PASSWORD),
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.body);
+    assert_eq!(answer.code(), "invalid_token");
+    db.drop().await
+}
+
+#[actix_web::test]
+async fn a_reset_refuses_a_weak_or_breached_password_and_keeps_the_link() -> TestResult {
+    let Some(db) = Database::fresh().await? else {
+        return Ok(());
+    };
+    register_verified(&db.pool, "ada@example.com", PASSWORD).await?;
+    let link = forgot(&db.pool, "ada@example.com").await?;
+    let mut state = state(&db.pool)?;
+    state.breach = Arc::new(KnowsOne);
+
+    let answer = call_with(&state, None, Method::POST, RESET, reset(&link, "short")).await?;
+    assert_eq!(
+        answer.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        answer.body
+    );
+    assert_eq!(answer.code(), "validation_failed");
+    let answer = call_with(&state, None, Method::POST, RESET, reset(&link, BREACHED)).await?;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.body);
+    assert_eq!(answer.code(), "breached_password");
+
+    let answer = call_with(
+        &state,
+        None,
+        Method::POST,
+        RESET,
+        reset(&link, NEW_PASSWORD),
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    db.drop().await
+}
+
+fn change(current_password: &str, new_password: &str) -> Option<Value> {
+    Some(json!({"current_password": current_password, "new_password": new_password}))
+}
+
+#[actix_web::test]
+async fn a_change_with_a_wrong_current_password_is_refused() -> TestResult {
+    let Some(db) = Database::fresh().await? else {
+        return Ok(());
+    };
+    let session = register_verified(&db.pool, "ada@example.com", PASSWORD).await?;
+    let body = change("not the password", NEW_PASSWORD);
+    let answer = call(&db.pool, Some(&session), Method::POST, CHANGE, body).await?;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.body);
+    assert_eq!(answer.code(), "wrong_password");
+
+    let answer = call(&db.pool, Some(&session), Method::GET, ME, None).await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    let answer = call(
+        &db.pool,
+        None,
+        Method::POST,
+        CHANGE,
+        change(PASSWORD, NEW_PASSWORD),
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::UNAUTHORIZED, "{}", answer.body);
+    db.drop().await
+}
+
+#[actix_web::test]
+async fn a_change_signs_every_session_out_and_mails_a_notice() -> TestResult {
+    let Some(db) = Database::fresh().await? else {
+        return Ok(());
+    };
+    let session = register_verified(&db.pool, "ada@example.com", PASSWORD).await?;
+    let body = change(PASSWORD, NEW_PASSWORD);
+    let answer = call(&db.pool, Some(&session), Method::POST, CHANGE, body).await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    assert!(answer.body["message"].is_string(), "{}", answer.body);
+
+    let answer = call(&db.pool, Some(&session), Method::GET, ME, None).await?;
+    assert_eq!(answer.status, StatusCode::UNAUTHORIZED, "{}", answer.body);
+    let answer = call(
+        &db.pool,
+        None,
+        Method::POST,
+        LOGIN,
+        credentials("ada@example.com", PASSWORD),
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::UNAUTHORIZED, "{}", answer.body);
+    let answer = call(
+        &db.pool,
+        None,
+        Method::POST,
+        LOGIN,
+        credentials("ada@example.com", NEW_PASSWORD),
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+
+    let mail = mailed(&db.pool).await?;
+    let [notice] = mail.as_slice() else {
+        return Err(format!("expected one notice, got {mail:?}").into());
+    };
+    assert_eq!(notice.to, "ada@example.com");
+    assert_eq!(notice.subject, "Your password was changed");
+    db.drop().await
+}
+
+#[actix_web::test]
+async fn a_change_refuses_a_weak_or_breached_password() -> TestResult {
+    let Some(db) = Database::fresh().await? else {
+        return Ok(());
+    };
+    let session = register_verified(&db.pool, "ada@example.com", PASSWORD).await?;
+    let mut state = state(&db.pool)?;
+    state.breach = Arc::new(KnowsOne);
+    let answer = call_with(
+        &state,
+        Some(&session),
+        Method::POST,
+        CHANGE,
+        change(PASSWORD, "short"),
+    )
+    .await?;
+    assert_eq!(
+        answer.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        answer.body
+    );
+    let answer = call_with(
+        &state,
+        Some(&session),
+        Method::POST,
+        CHANGE,
+        change(PASSWORD, BREACHED),
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.body);
+    assert_eq!(answer.code(), "breached_password");
+
+    let answer = call_with(&state, Some(&session), Method::GET, ME, None).await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    db.drop().await
+}

@@ -5,7 +5,10 @@
 
 use actix_web::{HttpResponse, web};
 
-use super::dto::{CredentialsDto, LoginResponse, MessageResponse, UserResponse, VerifyEmailDto};
+use super::dto::{
+    ChangePasswordDto, CredentialsDto, ForgotPasswordDto, LoginResponse, MessageResponse,
+    ResetPasswordDto, UserResponse, VerifyEmailDto,
+};
 use super::service::AuthService;
 use crate::error::AppError;
 use crate::shared::auth::AuthUser;
@@ -104,4 +107,80 @@ pub async fn resend(
     Ok(HttpResponse::Accepted().json(MessageResponse::new(
         "a new verification link is on its way, unless the email is already verified",
     )))
+}
+
+/// `POST /api/v1/auth/password/forgot`: mails a reset link if the address
+/// is registered, `202` either way.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/password/forgot",
+    tag = "auth",
+    operation_id = "forgot",
+    request_body = ForgotPasswordDto,
+    responses(
+        (status = 202, description = "Always accepted, whether or not the address is registered", body = MessageResponse),
+        (status = 400, description = "A malformed body", body = ErrorBody),
+        (status = 422, description = "Not an email", body = ErrorBody),
+        (status = 429, description = "Too many requests from this IP", body = ErrorBody),
+    ),
+)]
+pub async fn forgot(
+    service: web::Data<AuthService>,
+    body: ValidatedJson<ForgotPasswordDto>,
+) -> Result<HttpResponse, AppError> {
+    service.forgot_password(body.into_inner()).await?;
+    Ok(HttpResponse::Accepted().json(MessageResponse::new(
+        "if the address is registered, a reset link is on its way",
+    )))
+}
+
+/// `POST /api/v1/auth/password/reset`: sets a new password with a reset
+/// or invitation link, `200`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/password/reset",
+    tag = "auth",
+    operation_id = "reset",
+    request_body = ResetPasswordDto,
+    responses(
+        (status = 200, description = "Password updated", body = MessageResponse),
+        (status = 400, description = "Link is invalid, expired or already used (`invalid_token`), the password has appeared in a known breach (`breached_password`), or a malformed body", body = ErrorBody),
+        (status = 422, description = "An empty token, or a password outside 8 to 128 characters", body = ErrorBody),
+        (status = 429, description = "Too many requests from this IP", body = ErrorBody),
+    ),
+)]
+pub async fn reset(
+    service: web::Data<AuthService>,
+    body: ValidatedJson<ResetPasswordDto>,
+) -> Result<HttpResponse, AppError> {
+    service.reset_password(body.into_inner()).await?;
+    Ok(HttpResponse::Ok().json(MessageResponse::new("password updated")))
+}
+
+/// `POST /api/v1/auth/password/change`: replaces the signed-in user's
+/// password and signs every session out, `200`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/password/change",
+    tag = "auth",
+    operation_id = "change",
+    request_body = ChangePasswordDto,
+    responses(
+        (status = 200, description = "Password updated; every session, this one included, is signed out", body = MessageResponse),
+        (status = 400, description = "Wrong current password (`wrong_password`), the new one has appeared in a known breach (`breached_password`), or a malformed body", body = ErrorBody),
+        (status = 401, description = "No valid bearer token", body = ErrorBody),
+        (status = 422, description = "A new password outside 8 to 128 characters", body = ErrorBody),
+        (status = 429, description = "Too many requests from this IP", body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+)]
+pub async fn change(
+    service: web::Data<AuthService>,
+    caller: AuthUser,
+    body: ValidatedJson<ChangePasswordDto>,
+) -> Result<HttpResponse, AppError> {
+    service
+        .change_password(caller.id.into(), body.into_inner())
+        .await?;
+    Ok(HttpResponse::Ok().json(MessageResponse::new("password updated; sign in again")))
 }

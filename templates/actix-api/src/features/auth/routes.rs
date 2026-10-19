@@ -20,6 +20,9 @@ pub fn routes(cfg: &mut web::ServiceConfig, limit: &RateLimit) {
             .route(
                 "/email/verification/resend",
                 web::post().to(handlers::resend),
-            ),
+            )
+            .route("/password/forgot", web::post().to(handlers::forgot))
+            .route("/password/reset", web::post().to(handlers::reset))
+            .route("/password/change", web::post().to(handlers::change)),
     );
 }
