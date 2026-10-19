@@ -87,7 +87,7 @@ pub async fn create(
     path = "/api/v1/projects/{id}",
     tag = "projects",
     operation_id = "get_one",
-    params(("id" = uuid::Uuid, Path, description = "The `id` column.")),
+    params(("id" = uuid::Uuid, Path, description = "Project id")),
     responses(
         (status = 200, description = "The row.", body = ProjectResponse),
         (status = 400, description = "A malformed path, query or body.", body = ErrorBody),
@@ -112,7 +112,7 @@ pub async fn get_one(
     path = "/api/v1/projects/{id}",
     tag = "projects",
     operation_id = "update",
-    params(("id" = uuid::Uuid, Path, description = "The `id` column.")),
+    params(("id" = uuid::Uuid, Path, description = "Project id")),
     request_body = UpdateProjectDto,
     responses(
         (status = 200, description = "The row, changed.", body = ProjectResponse),
@@ -142,7 +142,7 @@ pub async fn update(
     path = "/api/v1/projects/{id}",
     tag = "projects",
     operation_id = "remove",
-    params(("id" = uuid::Uuid, Path, description = "The `id` column.")),
+    params(("id" = uuid::Uuid, Path, description = "Project id")),
     responses(
         (status = 204, description = "The row, deleted."),
         (status = 400, description = "A malformed path, query or body.", body = ErrorBody),
@@ -168,7 +168,7 @@ pub async fn remove(
     path = "/api/v1/projects/{id}/tasks",
     tag = "projects",
     operation_id = "list_tasks",
-    params(("id" = uuid::Uuid, Path, description = "The `id` column.")),
+    params(("id" = uuid::Uuid, Path, description = "Project id")),
     responses(
         (status = 200, description = "The related rows.", body = Vec<TaskResponse>),
         (status = 400, description = "A malformed path, query or body.", body = ErrorBody),

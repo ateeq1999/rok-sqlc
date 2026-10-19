@@ -1225,6 +1225,21 @@ is still cargo's untouched hello-world default (line endings and a trailing
 newline aside), and prints `replaced cargo's default src/main.rs`. Any other
 `src/main.rs` is kept.
 
+### Starting from a template
+
+| Flag | Meaning |
+|---|---|
+| `-t`, `--template <NAME>` | Copy this ready-made project instead of the skeleton. The only one is `actix`; any other name fails and lists the valid ones. |
+
+`rok-sqlc init --template actix [DIR]` copies a complete actix-web project
+(its configuration, migrations, scaffolded files, tests and README) into
+`DIR`. The templates are built into the binary, so this works from
+`cargo install`. Like the skeleton, each file is written only when absent,
+and cargo's untouched default `src/main.rs` is replaced. The template's
+generated files are not copied: run `rok-sqlc g` to generate them, as the
+printed next steps say. When the project already has a `Cargo.toml`, the
+template's Rust files name the project's library crate.
+
 ## Checking the architecture: `rok-sqlc check-arch`
 
 `rok-sqlc check-arch` (`a`) checks an API project against ADR 0016's

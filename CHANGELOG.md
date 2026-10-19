@@ -138,6 +138,16 @@ the *generated* API count as breaking (see ADR 0012).
 - With `[api] openapi = false`, `rok-sqlc g` warns while the scaffolded
   `src/openapi.rs` still uses `GeneratedApiDoc` (`Report::warnings` in the
   library), and the OpenAPI guide lists the scaffolded lines to remove.
+- The OpenAPI document reads like the target: `PaginatedResponse.total` has
+  `minimum: 0`, and path parameters are described as "<Singular> id"
+  ("User id") for a single key and "<Singular> <column words>" for a
+  composite key's columns and a unique lookup's value; a many-to-many
+  route's `{other}` is the related row's id.
+- `rok-sqlc init --template <NAME>` (`-t`) copies a ready-made project from
+  the templates built into the binary (`templates/` in the repository; the
+  only one is `actix`), each file only when absent and without its
+  generated files, and prints the next steps. An unknown name lists the
+  valid ones.
 
 ## [0.3.0] - 2026-10-17
 

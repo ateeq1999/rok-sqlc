@@ -88,7 +88,7 @@ pub async fn create(
     tag = "tasks",
     operation_id = "get_one",
     params(
-        ("id" = uuid::Uuid, Path, description = "The `id` column."),
+        ("id" = uuid::Uuid, Path, description = "Task id"),
         GetTaskQuery,
     ),
     responses(
@@ -133,7 +133,7 @@ pub async fn get_one(
     path = "/api/v1/tasks/{id}",
     tag = "tasks",
     operation_id = "update",
-    params(("id" = uuid::Uuid, Path, description = "The `id` column.")),
+    params(("id" = uuid::Uuid, Path, description = "Task id")),
     request_body = UpdateTaskDto,
     responses(
         (status = 200, description = "The row, changed.", body = TaskResponse),
@@ -164,7 +164,7 @@ pub async fn update(
     path = "/api/v1/tasks/{id}",
     tag = "tasks",
     operation_id = "remove",
-    params(("id" = uuid::Uuid, Path, description = "The `id` column.")),
+    params(("id" = uuid::Uuid, Path, description = "Task id")),
     responses(
         (status = 204, description = "The row, deleted."),
         (status = 400, description = "A malformed path, query or body.", body = ErrorBody),

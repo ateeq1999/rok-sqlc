@@ -42,6 +42,10 @@ fn package_ships_licenses_readme_and_changelog_but_no_fixtures() -> Result<()> {
         // `init` embeds its templates with `include_str!`.
         "src/init/templates/AGENTS.md",
         "src/init/templates/rok-sqlc.toml",
+        // `init --template` embeds `templates/` through `build.rs`.
+        "build.rs",
+        "templates/actix-api/rok-sqlc.toml",
+        "templates/actix-api/migrations/0001_init.sql",
     ] {
         ensure!(
             files.iter().any(|file| file == required),
@@ -54,6 +58,53 @@ fn package_ships_licenses_readme_and_changelog_but_no_fixtures() -> Result<()> {
             "{excluded} must not be packaged: {files:?}"
         );
     }
+    // A template's build output, when the template was built in place.
+    ensure!(
+        !files
+            .iter()
+            .any(|file| file.starts_with("templates/") && file.split('/').nth(2) == Some("target")),
+        "a template's target/ must not be packaged: {files:?}"
+    );
+    Ok(())
+}
+
+/// Every file of every template is packaged, so `init --template` from
+/// `cargo install` copies what it does from the repository. (Cargo leaves
+/// out a directory holding a `Cargo.toml`: a template's manifest is
+/// `Cargo.toml.template`.)
+#[test]
+fn package_ships_every_template_file() -> Result<()> {
+    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) -> Result<()> {
+        for entry in fs::read_dir(dir)? {
+            let path = entry?.path();
+            let relative = path
+                .strip_prefix(root)?
+                .to_string_lossy()
+                .replace('\\', "/");
+            if path.is_dir() {
+                // A template's build in place.
+                if relative.split('/').nth(2) == Some("target") {
+                    continue;
+                }
+                walk(&path, root, out)?;
+            } else {
+                out.push(relative);
+            }
+        }
+        Ok(())
+    }
+    let mut templates = Vec::new();
+    walk(&root().join("templates"), &root(), &mut templates)?;
+    ensure!(!templates.is_empty(), "templates/ holds no files");
+    let files = packaged_files()?;
+    let missing: Vec<_> = templates
+        .iter()
+        .filter(|file| !files.contains(file))
+        .collect();
+    ensure!(
+        missing.is_empty(),
+        "template files not packaged: {missing:?}"
+    );
     Ok(())
 }
 

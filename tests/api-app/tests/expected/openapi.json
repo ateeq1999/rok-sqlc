@@ -2438,6 +2438,7 @@
           "total": {
             "description": "The rows on every page together.",
             "format": "int64",
+            "minimum": 0,
             "type": "integer"
           }
         },
@@ -2497,6 +2498,7 @@
           "total": {
             "description": "The rows on every page together.",
             "format": "int64",
+            "minimum": 0,
             "type": "integer"
           }
         },
@@ -2602,6 +2604,7 @@
           "total": {
             "description": "The rows on every page together.",
             "format": "int64",
+            "minimum": 0,
             "type": "integer"
           }
         },
@@ -2654,6 +2657,7 @@
           "total": {
             "description": "The rows on every page together.",
             "format": "int64",
+            "minimum": 0,
             "type": "integer"
           }
         },
@@ -2736,6 +2740,7 @@
           "total": {
             "description": "The rows on every page together.",
             "format": "int64",
+            "minimum": 0,
             "type": "integer"
           }
         },
@@ -2788,6 +2793,7 @@
           "total": {
             "description": "The rows on every page together.",
             "format": "int64",
+            "minimum": 0,
             "type": "integer"
           }
         },
@@ -2845,6 +2851,7 @@
           "total": {
             "description": "The rows on every page together.",
             "format": "int64",
+            "minimum": 0,
             "type": "integer"
           }
         },
@@ -2921,6 +2928,7 @@
           "total": {
             "description": "The rows on every page together.",
             "format": "int64",
+            "minimum": 0,
             "type": "integer"
           }
         },
@@ -2990,6 +2998,7 @@
           "total": {
             "description": "The rows on every page together.",
             "format": "int64",
+            "minimum": 0,
             "type": "integer"
           }
         },
@@ -4246,7 +4255,7 @@
         "operationId": "get_by_email",
         "parameters": [
           {
-            "description": "The `email` column.",
+            "description": "Account email",
             "in": "path",
             "name": "value",
             "required": true,
@@ -4399,7 +4408,7 @@
         "operationId": "remove",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Account id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -4478,7 +4487,7 @@
         "operationId": "get_one",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Account id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -4554,7 +4563,7 @@
         "operationId": "update",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Account id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -4672,7 +4681,7 @@
         "operationId": "list_tasks",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Account id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -5150,7 +5159,7 @@
         "operationId": "get_by_code",
         "parameters": [
           {
-            "description": "The `code` column.",
+            "description": "Document code",
             "in": "path",
             "name": "value",
             "required": true,
@@ -5225,7 +5234,7 @@
         "operationId": "get_by_task_id",
         "parameters": [
           {
-            "description": "The `task_id` column.",
+            "description": "Document task id",
             "in": "path",
             "name": "value",
             "required": true,
@@ -5397,7 +5406,7 @@
         "operationId": "remove",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Document id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -5475,7 +5484,7 @@
         "operationId": "get_one",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Document id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -5568,7 +5577,7 @@
         "operationId": "update",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Document id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -5723,7 +5732,7 @@
         "operationId": "restore",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Document id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -6029,7 +6038,7 @@
         "operationId": "remove",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Draft id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -6073,7 +6082,7 @@
         "operationId": "get_one",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Draft id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -6124,7 +6133,7 @@
         "operationId": "update",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Draft id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -6417,7 +6426,7 @@
         "operationId": "remove",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Gadget id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -6461,7 +6470,7 @@
         "operationId": "get_one",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Gadget id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -6512,7 +6521,7 @@
         "operationId": "update",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Gadget id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -6753,7 +6762,7 @@
         "operationId": "get_by_name",
         "parameters": [
           {
-            "description": "The `name` column.",
+            "description": "Label name",
             "in": "path",
             "name": "value",
             "required": true,
@@ -6856,7 +6865,7 @@
         "operationId": "get_one",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Label id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -6907,7 +6916,7 @@
         "operationId": "update",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Label id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -7000,7 +7009,7 @@
         "operationId": "list_documents",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Label id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -7081,7 +7090,7 @@
         "operationId": "list_notes",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Label id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -7137,7 +7146,7 @@
         "operationId": "detach_notes",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Label id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -7147,7 +7156,7 @@
             }
           },
           {
-            "description": "The `note_id` column.",
+            "description": "Note id",
             "in": "path",
             "name": "other",
             "required": true,
@@ -7191,7 +7200,7 @@
         "operationId": "attach_notes",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Label id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -7201,7 +7210,7 @@
             }
           },
           {
-            "description": "The `note_id` column.",
+            "description": "Note id",
             "in": "path",
             "name": "other",
             "required": true,
@@ -7257,7 +7266,7 @@
         "operationId": "list_tasks",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Label id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -7328,7 +7337,7 @@
         "operationId": "detach_tasks",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Label id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -7338,7 +7347,7 @@
             }
           },
           {
-            "description": "The `task_id` column.",
+            "description": "Task id",
             "in": "path",
             "name": "other",
             "required": true,
@@ -7397,7 +7406,7 @@
         "operationId": "attach_tasks",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Label id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -7407,7 +7416,7 @@
             }
           },
           {
-            "description": "The `task_id` column.",
+            "description": "Task id",
             "in": "path",
             "name": "other",
             "required": true,
@@ -7688,7 +7697,7 @@
         "operationId": "remove",
         "parameters": [
           {
-            "description": "The `team` column.",
+            "description": "Member team",
             "in": "path",
             "name": "team",
             "required": true,
@@ -7697,7 +7706,7 @@
             }
           },
           {
-            "description": "The `note_id` column.",
+            "description": "Member note id",
             "in": "path",
             "name": "note_id",
             "required": true,
@@ -7741,7 +7750,7 @@
         "operationId": "get_one",
         "parameters": [
           {
-            "description": "The `team` column.",
+            "description": "Member team",
             "in": "path",
             "name": "team",
             "required": true,
@@ -7750,7 +7759,7 @@
             }
           },
           {
-            "description": "The `note_id` column.",
+            "description": "Member note id",
             "in": "path",
             "name": "note_id",
             "required": true,
@@ -7810,7 +7819,7 @@
         "operationId": "update",
         "parameters": [
           {
-            "description": "The `team` column.",
+            "description": "Member team",
             "in": "path",
             "name": "team",
             "required": true,
@@ -7819,7 +7828,7 @@
             }
           },
           {
-            "description": "The `note_id` column.",
+            "description": "Member note id",
             "in": "path",
             "name": "note_id",
             "required": true,
@@ -8070,7 +8079,7 @@
         "operationId": "get_by_slug",
         "parameters": [
           {
-            "description": "The `slug` column.",
+            "description": "Note slug",
             "in": "path",
             "name": "value",
             "required": true,
@@ -8173,7 +8182,7 @@
         "operationId": "remove",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Note id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -8227,7 +8236,7 @@
         "operationId": "get_one",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Note id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -8278,7 +8287,7 @@
         "operationId": "update",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Note id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -8371,7 +8380,7 @@
         "operationId": "list_labels",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Note id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -8425,7 +8434,7 @@
         "operationId": "sync_labels",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Note id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -8511,7 +8520,7 @@
         "operationId": "detach_labels",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Note id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -8521,7 +8530,7 @@
             }
           },
           {
-            "description": "The `label_id` column.",
+            "description": "Label id",
             "in": "path",
             "name": "other",
             "required": true,
@@ -8565,7 +8574,7 @@
         "operationId": "attach_labels",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Note id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -8575,7 +8584,7 @@
             }
           },
           {
-            "description": "The `label_id` column.",
+            "description": "Label id",
             "in": "path",
             "name": "other",
             "required": true,
@@ -8631,7 +8640,7 @@
         "operationId": "list_memberships",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Note id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -8942,7 +8951,7 @@
         "operationId": "remove",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Task id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -9011,7 +9020,7 @@
         "operationId": "get_one",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Task id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -9096,7 +9105,7 @@
         "operationId": "update",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Task id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -9204,7 +9213,7 @@
         "operationId": "list_labels",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Task id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -9273,7 +9282,7 @@
         "operationId": "sync_labels",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Task id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -9374,7 +9383,7 @@
         "operationId": "detach_labels",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Task id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -9384,7 +9393,7 @@
             }
           },
           {
-            "description": "The `label_id` column.",
+            "description": "Label id",
             "in": "path",
             "name": "other",
             "required": true,
@@ -9443,7 +9452,7 @@
         "operationId": "attach_labels",
         "parameters": [
           {
-            "description": "The `id` column.",
+            "description": "Task id",
             "in": "path",
             "name": "id",
             "required": true,
@@ -9453,7 +9462,7 @@
             }
           },
           {
-            "description": "The `label_id` column.",
+            "description": "Label id",
             "in": "path",
             "name": "other",
             "required": true,

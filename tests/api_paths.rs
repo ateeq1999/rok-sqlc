@@ -43,10 +43,15 @@ impl Project {
     /// The schema generated with `init`'s configuration, the conventions
     /// and the access above.
     fn generated() -> Result<Self> {
+        Project::with_schema(SCHEMA)
+    }
+
+    /// `schema` generated as [`Project::generated`] generates its own.
+    fn with_schema(schema: &str) -> Result<Self> {
         let project = Project {
             dir: TempDir::new()?,
         };
-        fs::write(project.path("schema.sql"), SCHEMA)?;
+        fs::write(project.path("schema.sql"), schema)?;
         rok_sqlc::generate(&project.config())?;
         Ok(project)
     }
@@ -136,7 +141,7 @@ fn versioned_admin_routes_document_etag_and_if_match() -> Result<()> {
     let update = annotation(&handlers, "update");
     for expected in [
         "    path = \"/api/v1/accounts/{id}\",\n",
-        "(\"id\" = uuid::Uuid, Path, description = \"The `id` column.\")",
+        "(\"id\" = uuid::Uuid, Path, description = \"Account id\")",
         "(\"If-Match\" = String, Header, description = \"The row's `ETag`.\")",
         "    request_body = UpdateAccountDto,\n",
         "(\"ETag\" = String, description = ",
@@ -165,7 +170,10 @@ fn versioned_admin_routes_document_etag_and_if_match() -> Result<()> {
         lookup.contains("    path = \"/api/v1/accounts/by-email/{value}\",\n"),
         "{lookup}"
     );
-    assert!(lookup.contains("(\"value\" = String, Path"), "{lookup}");
+    assert!(
+        lookup.contains("(\"value\" = String, Path, description = \"Account email\")"),
+        "{lookup}"
+    );
     assert_eq!(statuses(lookup), [200, 401, 403, 404]);
     Ok(())
 }
@@ -182,7 +190,7 @@ fn public_routes_carry_no_security() -> Result<()> {
     assert_eq!(statuses(list), [200, 400]);
     let get = annotation(&handlers, "get_one");
     assert!(
-        get.contains("(\"id\" = i64, Path, description = \"The `id` column.\")"),
+        get.contains("(\"id\" = i64, Path, description = \"Note id\")"),
         "{get}"
     );
     assert!(get.contains("        GetNoteQuery,\n"), "{get}");
@@ -275,5 +283,58 @@ fn the_dependency_hints_name_swagger_ui() -> Result<()> {
         ),
         "{db_mod}"
     );
+    Ok(())
+}
+
+/// Path parameters are described as the target document describes them:
+/// "<Singular> id" for a single key, and "<Singular> <column words>" for
+/// each column of a composite key and for a unique lookup's value. A
+/// many-to-many route's `{other}` names the related row by its id. (The
+/// configuration needs the tables above.)
+#[test]
+fn path_parameters_are_described_like_the_target() -> Result<()> {
+    let project = Project::with_schema(&format!(
+        "{SCHEMA}CREATE TABLE posts (id BIGSERIAL PRIMARY KEY, title TEXT NOT NULL);
+CREATE TABLE tags (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+CREATE TABLE post_tags (
+    post_id BIGINT NOT NULL REFERENCES posts (id),
+    tag_id BIGINT NOT NULL REFERENCES tags (id),
+    PRIMARY KEY (post_id, tag_id)
+);
+CREATE TABLE stock_levels (
+    warehouse_code TEXT NOT NULL,
+    sku TEXT NOT NULL,
+    quantity INTEGER NOT NULL,
+    PRIMARY KEY (warehouse_code, sku)
+);
+",
+    ))?;
+    let posts = project.read("src/features/posts/handlers.rs")?;
+    let get = annotation(&posts, "get_one");
+    assert!(
+        get.contains("(\"id\" = i64, Path, description = \"Post id\")"),
+        "{get}"
+    );
+    let attach = annotation(&posts, "attach_tags");
+    for expected in [
+        "(\"id\" = i64, Path, description = \"Post id\")",
+        "(\"other\" = i64, Path, description = \"Tag id\")",
+    ] {
+        assert!(attach.contains(expected), "{expected}\n{attach}");
+    }
+    let tags = project.read("src/features/tags/handlers.rs")?;
+    let lookup = annotation(&tags, "get_by_name");
+    assert!(
+        lookup.contains("(\"value\" = String, Path, description = \"Tag name\")"),
+        "{lookup}"
+    );
+    let levels = project.read("src/features/stock_levels/handlers.rs")?;
+    let get = annotation(&levels, "get_one");
+    for expected in [
+        "(\"warehouse_code\" = String, Path, description = \"Stock level warehouse code\")",
+        "(\"sku\" = String, Path, description = \"Stock level sku\")",
+    ] {
+        assert!(get.contains(expected), "{expected}\n{get}");
+    }
     Ok(())
 }

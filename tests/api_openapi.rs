@@ -312,6 +312,13 @@ fn the_shared_tools_derive_their_schemas() -> Result<()> {
         item(&response, "pub struct PaginatedResponse<T> {").contains("utoipa::ToSchema"),
         "{response}"
     );
+    // `total` counts rows, as the target's `u64` does.
+    assert!(
+        response.contains(
+            "    /// The rows on every page together.\n    #[schema(minimum = 0)]\n    pub total: i64,"
+        ),
+        "{response}"
+    );
     let validation = project.read("src/shared/validation.rs")?;
     assert!(
         item(&validation, "pub struct IdList<T> {").contains("utoipa::ToSchema"),

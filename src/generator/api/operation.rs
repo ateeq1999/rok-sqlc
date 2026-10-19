@@ -2,6 +2,8 @@
 //! `#[utoipa::path(...)]`: [`super::paths`] decides what each handler
 //! answers, this module how that reads.
 
+use heck::ToSnakeCase;
+
 use super::feature::Feature;
 use super::handlers::key_columns;
 use super::layout::Uses;
@@ -9,7 +11,31 @@ use super::scope::Caller;
 use crate::ApiAccess;
 use crate::generator::MAX_WIDTH;
 use crate::generator::openapi::value_type;
-use crate::schema::Column;
+use crate::schema::{Column, Table};
+
+/// A row's singular name as words, the first capitalized, as the target
+/// document names rows: `users` (`User`) is "User", `audit_log_entry` is
+/// "Audit log entry".
+fn singular(table: &Table) -> String {
+    let words = table.struct_name.to_snake_case().replace('_', " ");
+    let mut chars = words.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
+}
+
+/// The description of the path parameter naming a row of `table` by its
+/// single key: "User id".
+pub fn key_description(table: &Table) -> String {
+    format!("{} id", singular(table))
+}
+
+/// The description of the path parameter holding `table`'s `column` (a
+/// composite key's column, or a unique lookup's): "User email".
+pub fn column_description(table: &Table, column: &Column) -> String {
+    let words = column.rust_name.to_snake_case().replace('_', " ");
+    format!("{} {words}", singular(table))
+}
 
 /// Whether an operation needs `bearer_auth`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,13 +152,12 @@ impl Operation {
         self
     }
 
-    /// The path parameter `name` holding `column`, and the `400` of a value
-    /// that can fail to parse.
-    pub fn path_param(mut self, name: &str, column: &Column) -> Self {
+    /// The path parameter `name` holding `column`, described as
+    /// `description`, and the `400` of a value that can fail to parse.
+    pub fn path_param(mut self, name: &str, column: &Column, description: &str) -> Self {
         self.params.push(format!(
-            "(\"{name}\" = {}, Path, description = \"The `{}` column.\")",
+            "(\"{name}\" = {}, Path, description = \"{description}\")",
             param_type(column),
-            column.sql_name
         ));
         if can_fail_to_parse(column) {
             self.errors.push(400);
@@ -144,11 +169,12 @@ impl Operation {
     pub fn keyed(self, feature: &Feature<'_>) -> Self {
         let columns = key_columns(feature);
         if let [column] = columns.as_slice() {
-            return self.path_param("id", column);
+            return self.path_param("id", column, &key_description(feature.table));
         }
-        columns
-            .into_iter()
-            .fold(self, |op, column| op.path_param(&column.rust_name, column))
+        columns.into_iter().fold(self, |op, column| {
+            let description = column_description(feature.table, column);
+            op.path_param(&column.rust_name, column, &description)
+        })
     }
 
     /// The query string `query`: its params, and the `400` of a query that

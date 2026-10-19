@@ -10,6 +10,9 @@
 //! `features/generated.rs`,
 //! `crate::shared::{health, pagination, response, tenant, validation}`, and
 //! `crate::db::pool::{PoolSettings, init_pool}`.
+//!
+//! `init --template <NAME>` ([`init_template`]) copies a ready-made project
+//! of `templates/` instead.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -76,18 +79,9 @@ pub(crate) fn plan(dir: &Path, krate: &str) -> Vec<(PathBuf, String)> {
 /// `[package] name` with `-` as `_`, else the directory's name made an
 /// identifier (`app` when it cannot be).
 fn crate_name(dir: &Path) -> String {
-    let manifest = fs::read_to_string(dir.join("Cargo.toml"))
+    let declared = fs::read_to_string(dir.join("Cargo.toml"))
         .ok()
-        .and_then(|text| text.parse::<toml::Table>().ok());
-    let declared = manifest.as_ref().and_then(|manifest| {
-        ["lib", "package"].iter().find_map(|section| {
-            manifest
-                .get(*section)?
-                .get("name")?
-                .as_str()
-                .map(|name| name.replace('-', "_"))
-        })
-    });
+        .and_then(|text| declared_crate(&text));
     if let Some(name) = declared {
         return name;
     }
@@ -109,6 +103,19 @@ fn crate_name(dir: &Path) -> String {
     } else {
         "app".to_owned()
     }
+}
+
+/// The library crate a `Cargo.toml` declares: its `[lib] name`, else its
+/// `[package] name` with `-` as `_`.
+fn declared_crate(manifest: &str) -> Option<String> {
+    let manifest = manifest.parse::<toml::Table>().ok()?;
+    ["lib", "package"].iter().find_map(|section| {
+        manifest
+            .get(*section)?
+            .get("name")?
+            .as_str()
+            .map(|name| name.replace('-', "_"))
+    })
 }
 
 /// What `init` did.
@@ -148,6 +155,10 @@ pub fn init(dir: &Path) -> Result<Scaffolded> {
         replaced_default_main,
     })
 }
+
+mod template;
+
+pub use template::{init_template, names as template_names};
 
 #[cfg(test)]
 mod tests;

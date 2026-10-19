@@ -1,0 +1,181 @@
+//! `rok-sqlc init --template <NAME>`: copies a ready-made project, a
+//! directory of `templates/` embedded in the binary by `build.rs`, into a
+//! project, each file only when absent. Generated files (`@generated` on
+//! their first line, such as rok-sqlc's output and `Cargo.lock`) are left
+//! out: `rok-sqlc g` writes them. Adding a file to a template's directory
+//! is all it takes to ship it.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, bail};
+
+use super::{Scaffolded, crate_name, declared_crate, is_cargo_default_main};
+use crate::output::write_absent;
+use crate::report::display_path;
+
+/// A template file: its path in the template, with `/`, and its bytes.
+type File = (&'static str, &'static [u8]);
+
+/// Every template directory of `templates/` and its files, as `build.rs`
+/// embeds them.
+const EMBEDDED: &[(&str, &[File])] = include!(concat!(env!("OUT_DIR"), "/templates.rs"));
+
+/// The templates `--template` names, each with its directory.
+const TEMPLATES: &[(&str, &str)] = &[("actix", "actix-api")];
+
+/// The names `--template` takes.
+pub fn names() -> impl Iterator<Item = &'static str> {
+    TEMPLATES.iter().map(|(name, _)| *name)
+}
+
+/// The embedded files of the template `name`.
+fn files(name: &str) -> Result<&'static [File]> {
+    let dir = TEMPLATES
+        .iter()
+        .find(|(known, _)| *known == name)
+        .map(|(_, dir)| *dir);
+    let embedded = dir.and_then(|dir| EMBEDDED.iter().find(|(embedded, _)| *embedded == dir));
+    match embedded {
+        Some((_, files)) => Ok(files),
+        None => bail!(
+            "unknown template `{name}`; the templates are: {}",
+            names().collect::<Vec<_>>().join(", ")
+        ),
+    }
+}
+
+/// Where a template file goes in the project: its own path, but
+/// `<path>.template` goes to `<path>`. Cargo leaves a directory holding a
+/// `Cargo.toml` (another package) out of the published crate, so a
+/// template's manifest is checked in as `Cargo.toml.template`.
+fn destination(path: &str) -> &str {
+    path.strip_suffix(TEMPLATE_SUFFIX).unwrap_or(path)
+}
+
+/// The suffix [`destination`] removes.
+const TEMPLATE_SUFFIX: &str = ".template";
+
+/// Whether `text` is a generated file: `@generated` on its first line.
+fn is_generated(text: &str) -> bool {
+    text.lines()
+        .next()
+        .is_some_and(|line| line.contains("@generated"))
+}
+
+/// The template's files to copy under `dir`, with `\n` line endings: all
+/// but the generated ones. When the project's library crate is `krate`
+/// and the template's (its `Cargo.toml`'s) another, the Rust files name
+/// `krate` instead.
+fn plan(dir: &Path, files: &[File], krate: Option<&str>) -> Result<Vec<(PathBuf, String)>> {
+    let template_crate = files
+        .iter()
+        .find(|(path, _)| destination(path) == "Cargo.toml")
+        .and_then(|(_, bytes)| declared_crate(&String::from_utf8_lossy(bytes)));
+    let rename = match (template_crate, krate) {
+        (Some(from), Some(to)) if from != to => Some((format!("{from}::"), format!("{to}::"))),
+        _ => None,
+    };
+    let mut planned = Vec::new();
+    for (path, bytes) in files {
+        let text = std::str::from_utf8(bytes)
+            .with_context(|| format!("template file `{path}` is not UTF-8"))?
+            .replace("\r\n", "\n");
+        if is_generated(&text) {
+            continue;
+        }
+        let text = match &rename {
+            Some((from, to)) if path.ends_with(".rs") => text.replace(from, to),
+            _ => text,
+        };
+        planned.push((dir.join(destination(path)), text));
+    }
+    Ok(planned)
+}
+
+/// Copies the template `name` into `dir`, keeping every file that exists
+/// but cargo's untouched default `src/main.rs`.
+pub fn init_template(dir: &Path, name: &str) -> Result<Scaffolded> {
+    let files = files(name)?;
+    let krate = dir.join("Cargo.toml").is_file().then(|| crate_name(dir));
+    let planned = plan(dir, files, krate.as_deref())?;
+    let main = dir.join("src/main.rs");
+    let replaced_default_main = planned.iter().any(|(path, _)| *path == main)
+        && fs::read_to_string(&main).is_ok_and(|text| is_cargo_default_main(&text));
+    if replaced_default_main {
+        fs::remove_file(&main)
+            .with_context(|| format!("failed to replace `{}`", display_path(&main)))?;
+    }
+    Ok(Scaffolded {
+        written: write_absent(&planned)?,
+        replaced_default_main,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_template_is_embedded() {
+        for name in names() {
+            let files = files(name).unwrap_or_else(|err| panic!("{err}"));
+            assert!(!files.is_empty(), "template `{name}` has no files");
+        }
+    }
+
+    #[test]
+    fn generated_files_are_left_out_and_line_endings_normalized() -> Result<()> {
+        let files: &[File] = &[
+            (
+                "Cargo.lock",
+                b"# This file is automatically @generated by Cargo.\n",
+            ),
+            (
+                "src/db/mod.rs",
+                b"// @generated by rok-sqlc. Do not edit by hand.\n",
+            ),
+            (
+                "README.md",
+                b"# App\r\n\r\nFiles marked @generated are rok-sqlc's.\r\n",
+            ),
+        ];
+        let planned = plan(Path::new("p"), files, None)?;
+        assert_eq!(
+            planned,
+            [(
+                PathBuf::from("p/README.md"),
+                "# App\n\nFiles marked @generated are rok-sqlc's.\n".to_owned()
+            )]
+        );
+        Ok(())
+    }
+
+    /// The template's Rust files name its library crate; copied into a
+    /// project with a crate of its own, they name the project's. Its
+    /// manifest is copied as `Cargo.toml`.
+    #[test]
+    fn rust_files_name_the_projects_crate() -> Result<()> {
+        let files: &[File] = &[
+            ("Cargo.toml.template", b"[package]\nname = \"actix-api\"\n"),
+            ("src/main.rs", b"use actix_api::{app, config};\n"),
+            ("README.md", b"`actix_api::app`\n"),
+        ];
+        let planned = plan(Path::new("p"), files, Some("shop"))?;
+        assert_eq!(planned[1].1, "use shop::{app, config};\n");
+        assert_eq!(planned[2].1, "`actix_api::app`\n");
+        let planned = plan(Path::new("p"), files, None)?;
+        assert_eq!(planned[0].0, Path::new("p/Cargo.toml"));
+        assert_eq!(planned[1].1, "use actix_api::{app, config};\n");
+        Ok(())
+    }
+
+    #[test]
+    fn an_unknown_template_lists_the_valid_ones() {
+        let err = files("axum").err().map(|err| err.to_string());
+        assert_eq!(
+            err.as_deref(),
+            Some("unknown template `axum`; the templates are: actix")
+        );
+    }
+}

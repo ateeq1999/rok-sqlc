@@ -103,6 +103,16 @@ enum Command {
         /// The project directory
         #[arg(value_name = "DIR", default_value = ".")]
         dir: PathBuf,
+
+        /// Copy this ready-made project instead of the skeleton, each file
+        /// only if absent, leaving out its generated files
+        #[arg(
+            short,
+            long,
+            value_name = "NAME",
+            value_parser = clap::builder::PossibleValuesParser::new(crate::init::template_names())
+        )]
+        template: Option<String>,
     },
 
     /// Check the project against ADR 0016's architecture: the feature
@@ -147,14 +157,25 @@ where
     };
     match cli.command {
         Command::CheckArch { lenient, config } => check_arch(config, lenient),
-        Command::Init { dir } => {
-            let scaffolded = crate::init::init(&dir)?;
-            if scaffolded.replaced_default_main {
-                println!("replaced cargo's default src/main.rs");
-            }
-            for path in scaffolded.written {
-                println!("scaffolded {}", display_path(&path));
-            }
+        Command::Init {
+            dir,
+            template: Some(template),
+        } => {
+            print_scaffolded(crate::init::init_template(&dir, &template)?);
+            println!(
+                "
+Next steps:
+                   1. add the dependencies listed at the end of rok-sqlc.toml to Cargo.toml
+                   2. run `rok-sqlc g` to generate src/db/ and src/features/ from migrations/
+                   3. set DATABASE_URL and JWT_SECRET, then `cargo run`"
+            );
+            Ok(())
+        }
+        Command::Init {
+            dir,
+            template: None,
+        } => {
+            print_scaffolded(crate::init::init(&dir)?);
             println!(
                 "\nNext steps:\n  \
                  1. add the dependencies listed at the end of rok-sqlc.toml to Cargo.toml\n  \
@@ -230,6 +251,16 @@ where
                 api: merged.api.resolve(),
             })
         }
+    }
+}
+
+/// Prints what `init` wrote.
+fn print_scaffolded(scaffolded: crate::init::Scaffolded) {
+    if scaffolded.replaced_default_main {
+        println!("replaced cargo's default src/main.rs");
+    }
+    for path in scaffolded.written {
+        println!("scaffolded {}", display_path(&path));
     }
 }
 

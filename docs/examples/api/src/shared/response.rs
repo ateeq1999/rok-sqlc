@@ -18,6 +18,7 @@ pub struct PaginatedResponse<T> {
     /// The most rows a page holds.
     pub per_page: u32,
     /// The rows on every page together.
+    #[schema(minimum = 0)]
     pub total: i64,
 }
 

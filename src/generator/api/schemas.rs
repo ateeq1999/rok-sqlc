@@ -44,10 +44,21 @@ pub fn describe(name: &str, template: &str) -> String {
     match name {
         "health.rs" => describe_health(template),
         "pagination.rs" => describe_pagination(template),
-        "response.rs" => derive(template, "pub struct PaginatedResponse<T> {", TO_SCHEMA),
+        "response.rs" => describe_response(template),
         "validation.rs" => derive(template, "pub struct IdList<T> {", TO_SCHEMA),
         _ => template.to_owned(),
     }
+}
+
+/// `response.rs`: `PaginatedResponse` derives `ToSchema`, and its `total`,
+/// a count of rows, is at least 0, as the target document's `u64` is.
+fn describe_response(template: &str) -> String {
+    let text = derive(template, "pub struct PaginatedResponse<T> {", TO_SCHEMA);
+    replace_once(
+        &text,
+        "    pub total: i64,",
+        "    #[schema(minimum = 0)]\n    pub total: i64,",
+    )
 }
 
 /// `health.rs`: each handler of [`HEALTH_ROUTES`] carries its

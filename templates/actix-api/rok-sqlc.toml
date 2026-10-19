@@ -1,0 +1,8 @@
+# Placeholder for the actix template (rok-sqlc 0.4, milestone 3, ticket 02
+# writes the template itself).
+schema = "migrations/"
+derive = ["serde", "validate"]
+extractors = ["actix_web"]
+
+[api]
+output = "src/features"
