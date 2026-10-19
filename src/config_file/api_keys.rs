@@ -30,6 +30,8 @@ pub(crate) struct ApiKeys {
     #[serde(default)]
     hidden: BTreeMap<String, Vec<String>>,
     #[serde(default)]
+    immutable: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
     search: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     sort: BTreeMap<String, Vec<String>>,
@@ -126,6 +128,7 @@ impl ApiKeys {
             access: merge(self.access, lower.access),
             owner: merge(self.owner, lower.owner),
             hidden: merge(self.hidden, lower.hidden),
+            immutable: merge(self.immutable, lower.immutable),
             search: merge(self.search, lower.search),
             sort: merge(self.sort, lower.sort),
         }
@@ -163,6 +166,7 @@ impl ApiKeys {
             .collect();
         api.owner = self.owner;
         api.hidden = self.hidden;
+        api.immutable = self.immutable;
         api.search = self.search;
         api.sort = self.sort;
         Some(api)

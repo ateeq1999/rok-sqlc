@@ -58,6 +58,9 @@ fn templates_have_no_carriage_returns_or_placeholders() {
 #[test]
 fn rust_templates_never_unwrap_expect_or_panic() {
     for (path, text) in rust_templates() {
+        // Rule 6 bans `println!`; `main.rs` reports a failure to start on
+        // stderr with `eprintln!`.
+        let text = text.replace("eprintln!", "");
         for banned in [
             ".unwrap()",
             ".expect(",
@@ -83,6 +86,8 @@ fn rust_templates_use_only_the_allowed_crates() {
         "std",
         "thiserror",
         "tracing",
+        // `main.rs` logs through it.
+        "tracing_subscriber",
         // The OpenAPI document and Swagger UI.
         "utoipa",
         "utoipa_swagger_ui",
@@ -134,6 +139,7 @@ fn the_config_file_hints_the_cargo_dependencies() {
         "# sqlx = { version = \"0.9\"",
         "# thiserror = ",
         "# tracing = ",
+        "# tracing-subscriber = { version = \"0.3\", features = [\"env-filter\"] }",
         "# uuid = ",
         "# validator = ",
     ] {
@@ -160,6 +166,13 @@ fn the_library_declares_the_modules_and_main_starts_the_server() {
     assert!(text.contains("#[actix_web::main]"));
     assert!(text.contains("config::Config::from_env()"));
     assert!(text.contains("app::run(config).await"));
+    // It logs, filtered by `RUST_LOG` (read in `config.rs`), and reports a
+    // failure to start in one readable line and a non-zero exit.
+    assert!(text.contains("tracing_subscriber::fmt()"));
+    assert!(text.contains("EnvFilter::new(config::log_filter())"));
+    assert!(text.contains("eprintln!(\"error: {err}\")"));
+    assert!(text.contains("ExitCode::FAILURE"));
+    assert!(!text.contains("io::Error::other"), "no Debug dump");
     assert!(
         !text.contains("HttpServer"),
         "main.rs only starts the server"
@@ -199,6 +212,7 @@ fn config_is_the_only_environment_reader() {
         "\"DATABASE_URL\"",
         "\"BIND_ADDR\"",
         "\"JWT_SECRET\"",
+        "\"RUST_LOG\"",
         "PoolSettings::default()",
         "pub fn from_env() -> Result<Self, ConfigError>",
     ] {

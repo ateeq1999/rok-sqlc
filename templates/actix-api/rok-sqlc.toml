@@ -1,0 +1,70 @@
+# The actix template's configuration; this file is yours. `rok-sqlc g` reads
+# it: `migrations/` becomes the data layer in `src/db/`, and `users` and
+# `audit_log` API features in `src/features/`. See README.md.
+
+schema = "migrations/"
+output = "src/db"
+derive = ["serde", "validate"]
+extractors = ["actix_web"]
+
+[conventions]
+primary_key_ids = "uuid_v7"
+soft_delete_column = "deleted_at"
+# Server-set columns: the database (defaults, `touch_updated_at`) or the
+# account flows set them, so no create or update body takes them.
+managed_columns = [
+    "created_at",
+    "updated_at",
+    "password_hash",
+    "email_verified",
+    "totp_secret",
+    "totp_enabled",
+    "avatar_key",
+    "failed_logins",
+    "locked_until",
+]
+
+[modules]
+# `AuditLogEntry`, `AuditLogEntryResponse`, and its route stays `/audit-log`.
+audit_log = "audit_log_entry"
+
+[api]
+output = "src/features"
+prefix = "/api/v1"
+# Their features are hand-written in a later release (uploads, API keys).
+exclude = ["media", "api_keys"]
+
+[api.access]
+users = "admin"
+audit_log = "admin"
+
+[api.routes]
+audit_log = "/audit-log"
+
+[api.skip]
+# Accounts are created by the sign-up and invitation flows, which hold the
+# password; deleted accounts stay deleted.
+users = ["create", "restore", "lookups", "relationships"]
+# Read-only: the application writes it.
+audit_log = ["create", "update", "remove", "relationships"]
+
+[api.hidden]
+users = [
+    "password_hash",
+    "totp_secret",
+    "avatar_key",
+    "failed_logins",
+    "locked_until",
+    "updated_at",
+    "deleted_at",
+]
+
+[api.immutable]
+# An email changes only through the verification flow (a later release).
+users = ["email"]
+
+[api.search]
+users = ["email", "display_name"]
+
+[api.sort]
+users = ["created_at", "email"]

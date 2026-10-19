@@ -50,6 +50,9 @@ posts = \"author_id\"
 [api.hidden]
 users = [\"password_hash\"]
 
+[api.immutable]
+users = [\"email\"]
+
 [api.search]
 users = [\"email\"]
 
@@ -240,6 +243,30 @@ fn api_entries_are_checked_against_the_schema() -> Result<()> {
             "`api.hidden.users` in the configuration names `secret`, which is not a column of `users`",
         ),
         (
+            "[api.immutable]\ncomments = [\"id\"]",
+            "`api.immutable.comments` in the configuration names no generated table of the schema",
+        ),
+        (
+            "[api.immutable]\nusers = [\"secret\"]",
+            "`api.immutable.users` in the configuration names `secret`, which is not a column of `users`",
+        ),
+        (
+            "[api.immutable]\nusers = [\"id\"]",
+            "`api.immutable.users` in the configuration names `id`, a key column of `users`, which no update changes anyway",
+        ),
+        (
+            "[api.owner]\nposts = \"author_id\"\n[api.immutable]\nposts = [\"author_id\"]",
+            "`api.immutable.posts` in the configuration names `author_id`, the owner column of `posts`, which no update changes anyway",
+        ),
+        (
+            "[api.immutable]\nposts = [\"author_id\"]\n[conventions]\ntenant_column = \"author_id\"",
+            "`api.immutable.posts` in the configuration names `author_id`, the tenant column of `posts`, which no update changes anyway",
+        ),
+        (
+            "[api.immutable]\nusers = [\"age\"]\n[conventions]\nmanaged_columns = [\"age\"]",
+            "`api.immutable.users` in the configuration names `age`, a managed column of `users`, which generated code never writes",
+        ),
+        (
             "[api.search]\nusers = [\"age\"]",
             "`api.search.users` in the configuration names `age`, which is not a text column, so `q` can't match it",
         ),
@@ -359,6 +386,19 @@ fn api_keys_layer_across_the_file_the_payload_and_the_flag() -> Result<()> {
         "-j",
         r#"{"api": {"owner": {"posts": "author_id"}}}"#,
     ]));
+    // `immutable` takes the file's shape, a list of columns by table.
+    let failed = run(&[
+        "g",
+        "-a",
+        "src/features",
+        "-j",
+        r#"{"api": {"owner": {"posts": "author_id"}, "immutable": {"users": ["nope"]}}}"#,
+    ]);
+    assert!(
+        stderr(&failed).contains("`api.immutable.users` in the configuration names `nope`"),
+        "{}",
+        stderr(&failed)
+    );
 
     // A list replaces the file's whole list: without the exclusion,
     // `audit_log` keeps its default route base, which `users` now takes.

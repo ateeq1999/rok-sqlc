@@ -7,6 +7,8 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-19
+
 ### Breaking changes to the generated API
 
 - `extractors`: `db/http/` answers a rejected body with the wire standard
@@ -21,6 +23,14 @@ the *generated* API count as breaking (see ADR 0012).
 
 ### Added
 
+- `[api.immutable]`: columns set on create and never changed by the
+  generated update, by table, in the config file and the JSON payload
+  (`ApiConfig::immutable`). They stay in `CreateXDto` and the response,
+  leave `UpdateXDto` and its OpenAPI schema, and a `PATCH` naming one
+  answers `422 validation_failed` with the detail code `immutable`. The
+  data layer's `UpdateX` keeps them. A key, owner, tenant or managed
+  column fails the run. The actix template makes `users.email` immutable,
+  so its contract no longer lists the update body's `email`.
 - The Release workflow publishes the crate to crates.io once every binary
   builds, using the `CARGO_REGISTRY_TOKEN` repository secret. A version
   crates.io already has is skipped, so running a tag again doesn't fail.
@@ -138,6 +148,28 @@ the *generated* API count as breaking (see ADR 0012).
 - With `[api] openapi = false`, `rok-sqlc g` warns while the scaffolded
   `src/openapi.rs` still uses `GeneratedApiDoc` (`Report::warnings` in the
   library), and the OpenAPI guide lists the scaffolded lines to remove.
+- The OpenAPI document reads like the target: `PaginatedResponse.total` has
+  `minimum: 0`, and path parameters are described as "<Singular> id"
+  ("User id") for a single key and "<Singular> <column words>" for a
+  composite key's columns and a unique lookup's value; a many-to-many
+  route's `{other}` is the related row's id.
+- `rok-sqlc init --template <NAME>` (`-t`) copies a ready-made project from
+  the templates built into the binary (`templates/` in the repository; the
+  only one is `actix`), each file only when absent and without its
+  generated files, and prints the next steps. An unknown name lists the
+  valid ones.
+- The `actix` template (`templates/actix-api/`): the `users` and
+  `audit-log` part of the axum starter's API, generated from one schema,
+  with a contract test that checks the document it serves against the
+  starter's (`tests/contract.rs`), API tests against PostgreSQL, and a
+  README. CI regenerates it and fails on drift, and runs its lint gate,
+  `check-arch` and tests.
+- The rest of the API guide: getting started, configuring API features,
+  customizing the generated API, the wire standard, testing, deploying,
+  after a schema change, and troubleshooting, linked from the README.
+  `docs/examples/api` gains a hand-written feature (`stats`, with its own
+  OpenAPI path) and service and API tests with `#[sqlx::test]`, which the
+  test suite runs when `ROK_SQLC_TEST_DATABASE_URL` is set.
 
 ## [0.3.0] - 2026-10-17
 
@@ -625,7 +657,8 @@ that break code written against earlier development snapshots.
   paths under the current directory relative to it (also when they come
   from `rok-sqlc.toml`).
 
-[Unreleased]: https://github.com/ateeq1999/rok-sqlc/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/ateeq1999/rok-sqlc/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/ateeq1999/rok-sqlc/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.1.0...v0.2.0

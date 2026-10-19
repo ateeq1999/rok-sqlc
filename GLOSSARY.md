@@ -142,6 +142,10 @@ _Avoid_: check enum, status string
 A column whose value the database always owns: `SERIAL`, identity, or `GENERATED`. Never present in a create input or update patch.
 _Avoid_: auto column, computed (for identity/serial)
 
+**Immutable column**:
+A column a caller sets when creating a row and can never change through an update, such as a slug, an order number, or an email that only a verification flow may change. It still appears in responses; only the application's own code may change it.
+_Avoid_: read-only column (that suggests it is never written at all), frozen
+
 **Defaulted column**:
 A column the database can supply a value for (`DEFAULT`, serial, identity, or `GENERATED`), but which a caller may still set explicitly.
 _Avoid_: optional column

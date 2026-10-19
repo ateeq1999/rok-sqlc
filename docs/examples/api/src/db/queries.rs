@@ -26,3 +26,33 @@ where
     .await?;
     Ok(result.rows_affected())
 }
+
+/// A row returned by `project_stats`.
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+pub struct ProjectStatsRow {
+    /// The `projects` column.
+    pub projects: i64,
+    /// The `open_tasks` column.
+    pub open_tasks: Option<i64>,
+}
+
+/// Runs the `ProjectStats` query (`:one`).
+/// Fails with `sqlx::Error::RowNotFound` when no row matches.
+pub async fn project_stats<'e, E>(
+    executor: E,
+    owner_id: uuid::Uuid,
+) -> Result<ProjectStatsRow, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query_as::<_, ProjectStatsRow>(
+        r#"
+        SELECT count(*) AS projects, coalesce(sum(open_tasks), 0)::BIGINT AS open_tasks
+        FROM projects
+        WHERE owner_id = $1
+        "#,
+    )
+    .bind(owner_id)
+    .fetch_one(executor)
+    .await
+}

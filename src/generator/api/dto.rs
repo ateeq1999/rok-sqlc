@@ -6,7 +6,7 @@ use super::feature::{Endpoint, Feature};
 use super::layout::{Uses, push_field_attr, push_struct_lit};
 use super::{relation_routes, search};
 use crate::generator::openapi::{push_into_params, push_to_schema, push_value_type, value_type};
-use crate::generator::validate::{push_decimal_checks, push_field_rule};
+use crate::generator::validate::{push_decimal_checks, push_field_rule, push_rule};
 use crate::generator::{
     HEADER, MAX_WIDTH, doc_name, insert_field_type, push_doc, update_field_type,
 };
@@ -101,14 +101,24 @@ fn create_columns<'a>(feature: &Feature<'a>) -> Vec<&'a Column> {
         .collect()
 }
 
-/// The update body's columns: the patch's, less the owner, which no update
-/// changes.
+/// The update body's columns: the patch's, less the owner and the immutable
+/// columns, which no update changes.
 fn update_columns<'a>(feature: &Feature<'a>) -> Vec<&'a Column> {
     feature
         .table
         .update_columns()
         .into_iter()
-        .filter(|column| !is_owner(feature, column))
+        .filter(|column| !is_owner(feature, column) && !feature.is_immutable(column))
+        .collect()
+}
+
+/// The patch's immutable columns, which the update body rejects by name.
+fn rejected_columns<'a>(feature: &Feature<'a>) -> Vec<&'a Column> {
+    feature
+        .table
+        .update_columns()
+        .into_iter()
+        .filter(|column| feature.is_immutable(column))
         .collect()
 }
 
@@ -350,16 +360,62 @@ fn render_update(output: &mut String, feature: &Feature<'_>, columns: &[&Column]
         push_field_rule(output, column);
         push_field(output, feature, column, &update_field_type(column));
     }
+    let rejected = rejected_columns(feature);
+    for column in &rejected {
+        push_doc(
+            output,
+            4,
+            &[&format!(
+                "The {} column is immutable: naming it, even as `null`, is a `422`.",
+                doc_name(&column.sql_name)
+            )],
+        );
+        if feature.openapi {
+            output.push_str("    #[schema(ignore)]\n");
+        }
+        output.push_str("    #[serde(deserialize_with = \"present\")]\n");
+        push_rule(
+            output,
+            "custom",
+            &[
+                "function = \"immutable\"".to_owned(),
+                format!("message = \"`{}` can't be changed\"", column.sql_name),
+            ],
+        );
+        output.push_str(&format!(
+            "    pub {}: Option<serde_json::Value>,\n",
+            column.rust_name
+        ));
+    }
     output.push_str("}\n");
     let mut fields: Vec<String> = columns
         .iter()
         .map(|column| format!("{name}: dto.{name}", name = column.rust_name))
         .collect();
-    // No update changes the owner.
-    if let Some(owner) = feature.owner {
-        fields.push(format!("{}: None", owner.rust_name));
-    }
+    // No update changes the owner or an immutable column.
+    let unchanged = feature.owner.into_iter().chain(rejected.iter().copied());
+    fields.extend(unchanged.map(|column| format!("{}: None", column.rust_name)));
     push_from(output, &dto, &patch, "dto", &fields);
+    if !rejected.is_empty() {
+        output.push('\n');
+        push_doc(
+            output,
+            0,
+            &["Deserializes a field that is present, `null` included, as `Some`."],
+        );
+        output.push_str(
+            "fn present<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>\nwhere\n    D: serde::Deserializer<'de>,\n{\n    serde::Deserialize::deserialize(deserializer).map(Some)\n}\n",
+        );
+        output.push('\n');
+        push_doc(
+            output,
+            0,
+            &["Rejects a field naming an immutable column: no update changes one."],
+        );
+        output.push_str(
+            "fn immutable(_: &serde_json::Value) -> Result<(), validator::ValidationError> {\n    Err(validator::ValidationError::new(\"immutable\"))\n}\n",
+        );
+    }
 }
 
 fn render_response(output: &mut String, feature: &Feature<'_>) {

@@ -7,7 +7,7 @@
 
 use super::feature::{Endpoint, Feature, Lookup};
 use super::layout::Uses;
-use super::operation::{Header, Operation, Security, access_errors};
+use super::operation::{Header, Operation, Security, access_errors, column_description};
 use super::relations::{Action, Relation};
 use crate::ApiAccess;
 use crate::schema::RelationshipKind;
@@ -149,7 +149,11 @@ fn lookup_operation(feature: &Feature<'_>, lookup: &Lookup<'_>) -> Operation {
     .errors(&[404])
     .answers(200, "The row.", Some(feature.response()))
     .etag(feature)
-    .path_param("value", lookup.column)
+    .path_param(
+        "value",
+        lookup.column,
+        &column_description(feature.table, lookup.column),
+    )
 }
 
 /// The operation of a to-many relation's `action`.
@@ -164,7 +168,14 @@ fn relation_operation(feature: &Feature<'_>, relation: &Relation<'_>, action: Ac
     .keyed(feature)
     .errors(&[404]);
     let op = match relation.writes().filter(|_| action.names_other()) {
-        Some(writes) => op.path_param("other", writes.other),
+        Some(writes) => {
+            // Writes need the related table's single key, so it has one.
+            let key = relation.target.key_columns();
+            let description = key
+                .first()
+                .map_or_else(String::new, |key| column_description(relation.target, key));
+            op.path_param("other", writes.other, &description)
+        }
         None => op,
     };
     match action {

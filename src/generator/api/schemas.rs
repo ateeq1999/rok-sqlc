@@ -7,7 +7,8 @@ use crate::generator::openapi::{IN_QUERY, INTO_PARAMS, TO_SCHEMA};
 use crate::generator::{push_derives, replace_once};
 
 /// A route of `shared/health.rs`, outside the API prefix: its handler, its
-/// path and its `responses(...)`, as the target document has them.
+/// path and its `responses(...)`, as api-starter-axum's OpenAPI document
+/// has them.
 pub struct HealthRoute {
     pub handler: &'static str,
     pub path: &'static str,
@@ -16,8 +17,8 @@ pub struct HealthRoute {
 
 /// Health's routes: the one place naming their handlers, which
 /// `GeneratedApiDoc` lists and their `#[utoipa::path]`s document.
-/// `/health/ready`'s `503` has its body (the target document describes no
-/// error bodies).
+/// `/health/ready`'s `503` has its body (api-starter-axum's document
+/// describes no error bodies).
 pub const HEALTH_ROUTES: [HealthRoute; 2] = [
     HealthRoute {
         handler: "liveness",
@@ -44,10 +45,22 @@ pub fn describe(name: &str, template: &str) -> String {
     match name {
         "health.rs" => describe_health(template),
         "pagination.rs" => describe_pagination(template),
-        "response.rs" => derive(template, "pub struct PaginatedResponse<T> {", TO_SCHEMA),
+        "response.rs" => describe_response(template),
         "validation.rs" => derive(template, "pub struct IdList<T> {", TO_SCHEMA),
         _ => template.to_owned(),
     }
+}
+
+/// `response.rs`: `PaginatedResponse` derives `ToSchema`, and its `total`,
+/// a count of rows, is at least 0, as api-starter-axum's document
+/// has its `u64`.
+fn describe_response(template: &str) -> String {
+    let text = derive(template, "pub struct PaginatedResponse<T> {", TO_SCHEMA);
+    replace_once(
+        &text,
+        "    pub total: i64,",
+        "    #[schema(minimum = 0)]\n    pub total: i64,",
+    )
 }
 
 /// `health.rs`: each handler of [`HEALTH_ROUTES`] carries its

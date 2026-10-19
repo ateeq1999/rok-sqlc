@@ -1,6 +1,7 @@
-//! Access, ownership and hidden columns: `/api/v1/accounts` is admin only
-//! and hides `password_hash`; `/api/v1/tasks` takes any signed-in caller
-//! and scopes every row to its owner, `owner_id`.
+//! Access, ownership, hidden and immutable columns: `/api/v1/accounts` is
+//! admin only, hides `password_hash` and never patches `email`;
+//! `/api/v1/tasks` takes any signed-in caller and scopes every row to its
+//! owner, `owner_id`.
 
 mod common;
 
@@ -150,6 +151,53 @@ async fn hidden_columns_are_written_but_never_answered() {
     )
     .await;
     assert_error(&sorted, StatusCode::BAD_REQUEST, "bad_request");
+    db.drop().await;
+}
+
+#[actix_web::test]
+async fn an_immutable_column_is_set_on_create_and_never_patched() {
+    let Some(db) = Database::fresh().await else {
+        return;
+    };
+    let admin = admin();
+    let id = account(&db, "a@example.com").await;
+    let one = format!("{ACCOUNTS}/{id}");
+
+    // Naming `email`, even as `null` or beside a valid field, is a `422`
+    // under the field, and changes nothing.
+    for body in [
+        json!({"email": "b@example.com"}),
+        json!({"email": null}),
+        json!({"email": "b@example.com", "password_hash": "second hash"}),
+    ] {
+        let answer = call_as(&db, Some(&admin), Method::PATCH, &one, Some(body.clone())).await;
+        assert_eq!(
+            answer.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{body}: {answer:?}"
+        );
+        assert_eq!(answer.code(), "validation_failed", "{answer:?}");
+        let detail = &answer.body["error"]["details"]["email"][0];
+        assert_eq!(detail["code"], "immutable", "{answer:?}");
+        assert_eq!(detail["message"], "`email` can't be changed", "{answer:?}");
+    }
+    let stored: (String, String) = sqlx::query_as("SELECT email, password_hash FROM accounts")
+        .fetch_one(&db.pool)
+        .await
+        .expect("the stored account");
+    assert_eq!(stored, ("a@example.com".into(), "secret hash".into()));
+
+    // Other fields still change.
+    let updated = call_as(
+        &db,
+        Some(&admin),
+        Method::PATCH,
+        &one,
+        Some(json!({"password_hash": "second hash"})),
+    )
+    .await;
+    assert_eq!(updated.status, StatusCode::OK, "{updated:?}");
+    assert_eq!(updated.body["email"], "a@example.com");
     db.drop().await;
 }
 
