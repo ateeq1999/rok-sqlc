@@ -251,8 +251,8 @@ fn generated_rs_holds_the_api_doc() -> Result<()> {
 }
 
 /// The shared health routes are documented under `health`, outside the
-/// prefix, as the target document has them: `liveness` and `readiness`,
-/// the handlers' names.
+/// prefix, as api-starter-axum's OpenAPI document has them: `liveness`
+/// and `readiness`, the handlers' names.
 #[test]
 fn health_routes_are_documented() -> Result<()> {
     let project = Project::generated()?;
@@ -286,11 +286,12 @@ fn the_dependency_hints_name_swagger_ui() -> Result<()> {
     Ok(())
 }
 
-/// Path parameters are described as the target document describes them:
-/// "<Singular> id" for a single key, and "<Singular> <column words>" for
-/// each column of a composite key and for a unique lookup's value. A
-/// many-to-many route's `{other}` names the related row by its id. (The
-/// configuration needs the tables above.)
+/// Path parameters are described as api-starter-axum's OpenAPI document
+/// describes them: "<Singular> <column words>" for each key column, so
+/// "User id" for a single `id` key and "Country code" for a `code` key, and
+/// for a unique lookup's value. A many-to-many route's `{other}` names the
+/// related row by its key column. (The configuration needs the tables
+/// above.)
 #[test]
 fn path_parameters_are_described_like_the_target() -> Result<()> {
     let project = Project::with_schema(&format!(
@@ -306,6 +307,12 @@ CREATE TABLE stock_levels (
     sku TEXT NOT NULL,
     quantity INTEGER NOT NULL,
     PRIMARY KEY (warehouse_code, sku)
+);
+CREATE TABLE countries (code INTEGER PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE post_countries (
+    post_id BIGINT NOT NULL REFERENCES posts (id),
+    country_code INTEGER NOT NULL REFERENCES countries (code),
+    PRIMARY KEY (post_id, country_code)
 );
 ",
     ))?;
@@ -336,5 +343,16 @@ CREATE TABLE stock_levels (
     ] {
         assert!(get.contains(expected), "{expected}\n{get}");
     }
+    let countries = project.read("src/features/countries/handlers.rs")?;
+    let get = annotation(&countries, "get_one");
+    assert!(
+        get.contains("(\"id\" = i32, Path, description = \"Country code\")"),
+        "{get}"
+    );
+    let attach = annotation(&posts, "attach_countries");
+    assert!(
+        attach.contains("(\"other\" = i32, Path, description = \"Country code\")"),
+        "{attach}"
+    );
     Ok(())
 }

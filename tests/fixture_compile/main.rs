@@ -13,3 +13,25 @@ mod actix_template;
 mod api_app;
 mod fixture_app;
 mod init;
+
+use std::path::Path;
+use std::process::Command;
+
+use anyhow::{Context, Result, ensure};
+
+/// Runs `rok-sqlc <args>` in `dir`, which must succeed, and returns its
+/// stderr.
+fn rok_sqlc(dir: &Path, args: &[&str]) -> Result<String> {
+    let output = Command::new(env!("CARGO_BIN_EXE_rok-sqlc"))
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .context("failed to run rok-sqlc")?;
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    ensure!(
+        output.status.success(),
+        "rok-sqlc {args:?} failed:\n{}{stderr}",
+        String::from_utf8_lossy(&output.stdout),
+    );
+    Ok(stderr)
+}

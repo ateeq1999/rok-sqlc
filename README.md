@@ -1246,10 +1246,13 @@ newline aside), and prints `replaced cargo's default src/main.rs`. Any other
 (its configuration, migrations, scaffolded files, tests and README) into
 `DIR`. The templates are built into the binary, so this works from
 `cargo install`. Like the skeleton, each file is written only when absent,
-and cargo's untouched default `src/main.rs` is replaced. The template's
-generated files are not copied: run `rok-sqlc g` to generate them, as the
-printed next steps say. When the project already has a `Cargo.toml`, the
-template's Rust files name the project's library crate.
+and cargo's untouched default `src/main.rs` is replaced, so `DIR` can be
+new or an existing cargo project. rok-sqlc's generated files are not
+copied: run `rok-sqlc g` to generate them, as the printed next steps say.
+The template's pinned `Cargo.lock` is copied when the project has none.
+When the project already has a `Cargo.toml`, it is kept and the
+template's Rust files name the project's library crate (`use
+myapi::app` instead of `use actix_api::app`).
 
 ## Checking the architecture: `rok-sqlc check-arch`
 

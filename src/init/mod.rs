@@ -125,6 +125,9 @@ pub struct Scaffolded {
     pub written: Vec<PathBuf>,
     /// Whether `src/main.rs` was cargo's untouched default and was replaced.
     pub replaced_default_main: bool,
+    /// Whether a `Cargo.toml` was written: `init --template` copies the
+    /// template's when the project has none.
+    pub wrote_manifest: bool,
 }
 
 /// The `src/main.rs` `cargo new` writes. It is not the user's code, so the
@@ -153,6 +156,7 @@ pub fn init(dir: &Path) -> Result<Scaffolded> {
     Ok(Scaffolded {
         written: write_absent(&plan(dir, &crate_name(dir)))?,
         replaced_default_main,
+        wrote_manifest: false,
     })
 }
 

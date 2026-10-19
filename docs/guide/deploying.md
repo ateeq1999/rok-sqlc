@@ -23,13 +23,15 @@ every setting once, at start, into one `Config`:
 //! | `DB_ACQUIRE_TIMEOUT_SECS` | 3 | wait for a connection |
 //! | `DB_IDLE_TIMEOUT_SECS` | 600 | close an idle connection after |
 //! | `DB_MAX_LIFETIME_SECS` | 1800 | replace a connection after |
+//! | `RUST_LOG` | `info` | the log filter ([`log_filter`]) |
 ```
 
 A missing required variable, or a number that doesn't parse, stops the
-binary before it listens, naming the variable:
+binary before it listens with exit code 1, naming the variable in one line
+on stderr:
 
 ```text
-Error: Custom { kind: Other, error: Missing("JWT_SECRET") }
+error: environment variable `JWT_SECRET` is not set
 ```
 
 `Config` has no `Debug`, so the secret can't reach a log. It reads no
@@ -102,10 +104,12 @@ change](after-a-schema-change.md) covers the code side.
 
 The scaffolded code logs with [`tracing`](https://docs.rs/tracing): the
 pool's settings at start, the bind address, every `500`'s cause, and a
-failed readiness check. `main.rs` installs no subscriber, so until you add
-one those events go nowhere. Add `tracing-subscriber` and initialize it at
-the top of `main` (JSON output, for example, for a log collector), before
-`Config::from_env`.
+failed readiness check. `main.rs` installs a
+[`tracing-subscriber`](https://docs.rs/tracing-subscriber) formatter on
+stdout before it reads the rest of the settings, filtered by `RUST_LOG`
+(`info` when unset; `debug`, or `info,sqlx=warn`, for example). For JSON
+output to a log collector, turn on the crate's `json` feature and add
+`.json()` to the builder in `main.rs`.
 
 ## Checks in CI
 

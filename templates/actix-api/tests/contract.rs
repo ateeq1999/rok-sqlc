@@ -1,4 +1,4 @@
-//! The contract: for every operation of the target API (`target/openapi.json`,
+//! The contract: for every operation of the target API (`spec/openapi.json`,
 //! the axum starter's document) that this application covers, the document
 //! it serves matches the target's.
 //!
@@ -7,11 +7,17 @@
 //! body, and the success status and its response schema. Schemas are
 //! compared structurally: their keywords (properties, types, formats,
 //! nullability, required, enum values, bounds), recursively, with `$ref`s
-//! resolved in each document and the names of the schemas they point at
-//! compared too. A `$ref` the target never defines (`UserSort`, `SortOrder`)
-//! is compared by name only. Descriptions, summaries, titles, examples and
-//! defaults are not compared, nor are extra statuses, error bodies and extra
-//! operations the application serves.
+//! resolved in each document. A `$ref` on either side needs a `$ref` to the
+//! schema of the same name on the other: a schema inlined where the other
+//! document names one is a difference. A `$ref` the target never defines
+//! (`UserSort`, `SortOrder`) is compared by name only. Descriptions,
+//! summaries, titles, examples and defaults are not compared, nor are extra
+//! statuses, error bodies and extra operations the application serves.
+//!
+//! One deliberate allowance: a target success response without a body
+//! documents none, so the application may serve any body there (no covered
+//! operation relies on it today). A target body the application doesn't
+//! serve is still a difference.
 //!
 //! [`KNOWN`] lists the differences the application still has, each with why.
 //! The contract fails on any other difference, and on a known one that is
@@ -25,7 +31,7 @@ use actix_web::{App, test, web};
 use serde_json::Value;
 
 /// The target document.
-const TARGET: &str = include_str!("target/openapi.json");
+const TARGET: &str = include_str!("spec/openapi.json");
 
 /// The target operations the application covers.
 const COVERED: &[(&str, &str)] = &[
@@ -116,8 +122,8 @@ struct Compare<'a> {
 
 impl Compare<'_> {
     fn differ(&mut self, at: &str, what: String) {
-        if at.is_empty() {
-            self.differences.push(what);
+        if at.is_empty() || at.ends_with(": ") {
+            self.differences.push(format!("{at}{what}"));
         } else {
             self.differences.push(format!("{at}: {what}"));
         }
@@ -126,25 +132,29 @@ impl Compare<'_> {
     /// Compares two schemas.
     fn schema(&mut self, at: &str, target: &Value, served: &Value) {
         let (target_ref, served_ref) = (ref_name(target), ref_name(served));
-        if let (Some(target_name), Some(served_name)) = (target_ref, served_ref)
-            && target_name != served_name
-        {
-            self.differ(
-                at,
-                format!("target refers to `{target_name}`, served to `{served_name}`"),
-            );
-            return;
+        match (target_ref, served_ref) {
+            (Some(target_name), Some(served_name)) if target_name != served_name => {
+                self.differ(
+                    at,
+                    format!("target refers to `{target_name}`, served to `{served_name}`"),
+                );
+                return;
+            }
+            (Some(name), None) => {
+                self.differ(at, format!("target refers to `{name}`, served inlines it"));
+                return;
+            }
+            (None, Some(name)) => {
+                self.differ(at, format!("served refers to `{name}`, target inlines it"));
+                return;
+            }
+            _ => {}
         }
         let target = match target_ref {
             Some(name) => match self.target.schema(name) {
                 Some(schema) => schema,
                 // Dangling in the target: compared by name only.
-                None => {
-                    if served_ref.is_none() {
-                        self.differ(at, format!("target refers to `{name}`, served inlines it"));
-                    }
-                    return;
-                }
+                None => return,
             },
             None => target,
         };
@@ -297,9 +307,9 @@ fn success(operation: &Value) -> Option<(&String, &Value)> {
         .min_by_key(|(status, _)| status.as_str())
 }
 
-/// Every difference between the target's covered operations and the served
+/// Every difference between the target's `covered` operations and the served
 /// document's, each a line naming the operation and where.
-fn differences(target: &Value, served: &Value) -> Vec<String> {
+fn differences(target: &Value, served: &Value, covered: &[(&str, &str)]) -> Vec<String> {
     let mut compare = Compare {
         target: Doc {
             root: target,
@@ -311,7 +321,7 @@ fn differences(target: &Value, served: &Value) -> Vec<String> {
         },
         differences: Vec::new(),
     };
-    for (method, path) in COVERED {
+    for (method, path) in covered {
         let operation = |doc: &Value| doc.get("paths")?.get(*path)?.get(*method).cloned();
         let at = format!("{} {path}", method.to_uppercase());
         let Some(wanted) = operation(target) else {
@@ -398,8 +408,8 @@ fn differences(target: &Value, served: &Value) -> Vec<String> {
                     );
                 }
                 let here = format!("{at}: response {wanted_status}");
-                // A target response without a body documents none; the
-                // application may.
+                // The allowance (see the module docs): a target response
+                // without a body accepts any served body.
                 if let Some(wanted) = json_schema(wanted_response) {
                     match json_schema(got_response) {
                         Some(got) => compare.schema(&format!("{here}: "), wanted, got),
@@ -445,7 +455,7 @@ async fn the_served_document_meets_the_target_for_every_covered_operation()
 -> Result<(), Box<dyn std::error::Error>> {
     let target: Value = serde_json::from_str(TARGET)?;
     let served = served_document().await?;
-    let found = differences(&target, &served);
+    let found = differences(&target, &served, COVERED);
     let (new, gone) = unexpected(&found);
     assert!(
         new.is_empty() && gone.is_empty(),
@@ -473,7 +483,7 @@ async fn a_mismatch_breaks_the_contract_with_a_readable_list()
     if let Some(parameters) = served["paths"]["/api/v1/users"]["get"]["parameters"].as_array_mut() {
         parameters.retain(|parameter| parameter["name"] != "q");
     }
-    let found = differences(&target, &served);
+    let found = differences(&target, &served, COVERED);
     let (new, _) = unexpected(&found);
     let new: Vec<&str> = new.iter().map(|line| line.as_str()).collect();
     assert_eq!(
@@ -486,4 +496,58 @@ async fn a_mismatch_breaks_the_contract_with_a_readable_list()
         ]
     );
     Ok(())
+}
+
+/// A document holding one operation, `GET /things`, whose `200` response
+/// has `schema` and whose components define `schemas`.
+fn one_operation(schema: Value, schemas: Value) -> Value {
+    serde_json::json!({
+        "paths": {"/things": {"get": {"responses": {"200": {
+            "content": {"application/json": {"schema": schema}}
+        }}}}},
+        "components": {"schemas": schemas},
+    })
+}
+
+/// The differences between two one-operation documents.
+fn things_differences(target: &Value, served: &Value) -> Vec<String> {
+    differences(target, served, &[("get", "/things")])
+}
+
+/// A `$ref` on one side needs a `$ref` to the same name on the other: a
+/// schema inlined where the other document names one differs, even when
+/// its keywords are the same.
+#[actix_web::test]
+async fn a_ref_on_either_side_needs_a_ref_of_the_same_name() {
+    let thing = serde_json::json!({"type": "object", "properties": {"id": {"type": "string"}}});
+    let named = one_operation(
+        serde_json::json!({"$ref": "#/components/schemas/Thing"}),
+        serde_json::json!({"Thing": thing.clone()}),
+    );
+    let inlined = one_operation(thing, serde_json::json!({}));
+    assert_eq!(
+        things_differences(&named, &inlined),
+        ["GET /things: response 200: target refers to `Thing`, served inlines it"]
+    );
+    assert_eq!(
+        things_differences(&inlined, &named),
+        ["GET /things: response 200: served refers to `Thing`, target inlines it"]
+    );
+    assert!(things_differences(&named, &named).is_empty());
+}
+
+/// A target response without a body documents none, so the application may
+/// serve any (the contract's one allowance). A target body the application
+/// doesn't serve still breaks it.
+#[actix_web::test]
+async fn a_target_response_without_a_body_accepts_any_served_body() {
+    let bodiless = serde_json::json!({
+        "paths": {"/things": {"get": {"responses": {"200": {"description": "OK"}}}}},
+    });
+    let with_body = one_operation(serde_json::json!({"type": "string"}), serde_json::json!({}));
+    assert!(things_differences(&bodiless, &with_body).is_empty());
+    assert_eq!(
+        things_differences(&with_body, &bodiless),
+        ["GET /things: response 200: target has a body, served has none"]
+    );
 }

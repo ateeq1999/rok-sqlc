@@ -1,8 +1,9 @@
 //! Embeds the project templates of `rok-sqlc init --template` (the
 //! directories of `templates/`) in the binary, so `init` works from
-//! `cargo install`. It writes `$OUT_DIR/templates.rs`: one
-//! `(directory, files)` pair per template, each file its path (relative,
-//! with `/`) and its bytes through `include_bytes!`. A template's
+//! `cargo install`. It writes `$OUT_DIR/templates.rs`: one `Embedded` (see
+//! `src/init/template.rs`) per template, its directory and its files, each
+//! a `File`: its path (relative, with `/`) and its bytes through
+//! `include_bytes!`. A template's
 //! top-level `target/` (a build of it in place) is left out; everything
 //! else is embedded, and `init` decides what it copies.
 
@@ -21,16 +22,16 @@ fn main() -> io::Result<()> {
             continue;
         }
         let name = file_name(&template);
-        output.push_str(&format!("    ({name:?}, &[\n"));
+        output.push_str(&format!("    Embedded {{ dir: {name:?}, files: &[\n"));
         let mut files = Vec::new();
         collect(&template, &template, &mut files)?;
         files.sort();
         for (relative, absolute) in files {
             output.push_str(&format!(
-                "        ({relative:?}, include_bytes!({absolute:?})),\n"
+                "        File {{ path: {relative:?}, bytes: include_bytes!({absolute:?}) }},\n"
             ));
         }
-        output.push_str("    ]),\n");
+        output.push_str("    ] },\n");
     }
     output.push_str("]\n");
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("cargo sets it"));

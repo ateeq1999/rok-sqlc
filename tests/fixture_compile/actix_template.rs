@@ -13,48 +13,25 @@ use std::process::Command;
 use anyhow::{Context, Result, ensure};
 
 use crate::common::{self, cargo};
+use crate::rok_sqlc;
 
 /// The template's directory.
 fn template_dir() -> PathBuf {
     common::manifest_dir().join("templates/actix-api")
 }
 
-/// Runs `rok-sqlc <args>` in `dir`, which must succeed.
-fn rok_sqlc(dir: &Path, args: &[&str]) -> Result<()> {
-    let output = Command::new(env!("CARGO_BIN_EXE_rok-sqlc"))
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .context("failed to run rok-sqlc")?;
-    ensure!(
-        output.status.success(),
-        "rok-sqlc {args:?} failed:\n{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(())
-}
-
-/// A project made from the template: `init --template actix`, `g`, and
-/// the template's `Cargo.lock`, so builds resolve as the template's do.
+/// A project made from the template: `init --template actix` (which copies
+/// the template's `Cargo.lock`, so builds resolve as the template's do),
+/// then `g`.
 fn materialize() -> Result<tempfile::TempDir> {
     let project = tempfile::TempDir::new()?;
     let dir = project.path();
     rok_sqlc(dir, &["init", "--template", "actix"])?;
     rok_sqlc(dir, &["g"])?;
-    std::fs::copy(template_dir().join("Cargo.lock"), dir.join("Cargo.lock"))?;
     Ok(project)
 }
 
-/// Whether `text` is a generated file: `@generated` on its first line.
-fn is_generated(text: &str) -> bool {
-    text.lines()
-        .next()
-        .is_some_and(|line| line.contains("@generated"))
-}
-
-/// rok-sqlc's generated files under `root` (`Cargo.lock` and a build's
-/// `target/` aside), by relative path, with `\n` line endings.
+/// rok-sqlc's generated files under `root` (a build's `target/` aside), by relative path, with `\n` line endings.
 fn generated_files(root: &Path) -> Result<BTreeMap<PathBuf, String>> {
     fn walk(root: &Path, dir: &Path, files: &mut BTreeMap<PathBuf, String>) -> Result<()> {
         for entry in std::fs::read_dir(dir)? {
@@ -66,13 +43,10 @@ fn generated_files(root: &Path) -> Result<BTreeMap<PathBuf, String>> {
                 }
                 continue;
             }
-            if relative == Path::new("Cargo.lock") {
-                continue;
-            }
             let Ok(text) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            if is_generated(&text) {
+            if common::is_generated(&text) {
                 files.insert(relative, text.replace("\r\n", "\n"));
             }
         }
@@ -175,7 +149,8 @@ fn cargo_clean(dir: &Path, args: &[&str], database: Option<&str>) -> Result<()> 
 /// The project made from the template is rustfmt-clean, passes `cargo
 /// clippy --all-targets -- -D warnings` and `check-arch`, and passes its
 /// tests: the contract, and the API tests against PostgreSQL when
-/// `ROK_SQLC_TEST_DATABASE_URL` is set (they skip otherwise).
+/// `ROK_SQLC_TEST_DATABASE_URL` is set (they skip otherwise); and started
+/// unconfigured, it fails readably.
 #[test]
 fn actix_template_passes_its_checks_and_tests() -> Result<()> {
     let project = materialize()?;
@@ -201,5 +176,24 @@ fn actix_template_passes_its_checks_and_tests() -> Result<()> {
         None,
     )?;
     let database = std::env::var("ROK_SQLC_TEST_DATABASE_URL").ok();
-    cargo_clean(dir, &["test", "--quiet"], database.as_deref())
+    cargo_clean(dir, &["test", "--quiet"], database.as_deref())?;
+    starts_only_when_configured(dir)
+}
+
+/// Started without its settings, the server says which one is missing in
+/// one readable line, no `Debug` dump, and exits non-zero.
+fn starts_only_when_configured(dir: &Path) -> Result<()> {
+    let output = cargo(dir, &["run", "--quiet"])
+        .env_remove("DATABASE_URL")
+        .env_remove("JWT_SECRET")
+        .output()
+        .context("failed to run cargo run")?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    ensure!(
+        !output.status.success()
+            && stderr.trim_end() == "error: environment variable `DATABASE_URL` is not set",
+        "the server started without DATABASE_URL, or said so unreadably ({}):\n{stderr}",
+        output.status
+    );
+    Ok(())
 }

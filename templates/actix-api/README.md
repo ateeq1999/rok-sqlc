@@ -2,7 +2,7 @@
 
 A complete actix-web API made by [rok-sqlc](https://github.com/ateeq1999/rok-sqlc)
 from one schema: the `users` and `audit_log` part of the axum starter's
-OpenAPI document (`tests/target/openapi.json`), with the same wire standard,
+OpenAPI document (`tests/spec/openapi.json`), with the same wire standard,
 routes and schemas. `tests/contract.rs` checks the document this application
 serves against that one, operation by operation.
 
@@ -47,6 +47,7 @@ serde_json = "1"
 sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "derive", "uuid", "chrono", "json"] }
 thiserror = "2"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 utoipa = { version = "5", features = ["chrono", "uuid"] }
 utoipa-swagger-ui = { version = "9", features = ["actix-web", "vendored"] }
 uuid = { version = "1", features = ["v7", "serde"] }

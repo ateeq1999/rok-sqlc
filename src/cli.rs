@@ -162,27 +162,19 @@ where
             template: Some(template),
         } => {
             let scaffolded = crate::init::init_template(&dir, &template)?;
-            // The template's own manifest was copied unless one was there.
-            let copied_manifest = scaffolded
-                .written
-                .iter()
-                .any(|path| path.ends_with("Cargo.toml"));
-            print_scaffolded(scaffolded);
             let mut steps = Vec::new();
-            if !copied_manifest {
+            if !scaffolded.wrote_manifest {
                 steps.push(
                     "add the template's dependencies and lints (its README.md lists them) to Cargo.toml",
                 );
             }
+            print_scaffolded(scaffolded);
             steps.extend([
                 "run `rok-sqlc g` to generate src/db/, src/shared/ and src/features/ from migrations/",
                 "set DATABASE_URL and JWT_SECRET (see .env.example) and apply migrations/",
                 "`cargo test`, then `cargo run`",
             ]);
-            println!("\nNext steps:");
-            for (number, step) in steps.iter().enumerate() {
-                println!("  {}. {step}", number + 1);
-            }
+            print_next_steps(&steps);
             Ok(())
         }
         Command::Init {
@@ -190,13 +182,12 @@ where
             template: None,
         } => {
             print_scaffolded(crate::init::init(&dir)?);
-            println!(
-                "\nNext steps:\n  \
-                 1. add the dependencies listed at the end of rok-sqlc.toml to Cargo.toml\n  \
-                 2. add migrations to migrations/ (0001_init.sql, ...)\n  \
-                 3. run `rok-sqlc g` to generate src/db/ and src/features/\n  \
-                 4. set DATABASE_URL and JWT_SECRET, then `cargo run`"
-            );
+            print_next_steps(&[
+                "add the dependencies listed at the end of rok-sqlc.toml to Cargo.toml",
+                "add migrations to migrations/ (0001_init.sql, ...)",
+                "run `rok-sqlc g` to generate src/db/ and src/features/",
+                "set DATABASE_URL and JWT_SECRET, then `cargo run`",
+            ]);
             Ok(())
         }
         Command::Generate {
@@ -275,6 +266,14 @@ fn print_scaffolded(scaffolded: crate::init::Scaffolded) {
     }
     for path in scaffolded.written {
         println!("scaffolded {}", display_path(&path));
+    }
+}
+
+/// Prints `init`'s numbered next steps.
+fn print_next_steps(steps: &[&str]) {
+    println!("\nNext steps:");
+    for (number, step) in steps.iter().enumerate() {
+        println!("  {}. {step}", number + 1);
     }
 }
 

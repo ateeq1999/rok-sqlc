@@ -2,12 +2,12 @@
 //! `rok-sqlc g`.
 
 use std::path::Path;
-use std::process::Command;
 
 use anyhow::{Context, Result, ensure};
 
 use crate::api_app::api_app_dir;
 use crate::common::{self, cargo};
+use crate::rok_sqlc;
 
 /// The project's migration: `users` and `posts`, and `tags`, which
 /// [`LIST_ONLY`] leaves only its list.
@@ -29,23 +29,6 @@ CREATE TABLE tags (
 
 /// The `rok-sqlc.toml` lines skipping all of `tags`' endpoints but its list.
 const LIST_ONLY: &str = "\n[api.skip]\ntags = [\"create\", \"get_one\", \"update\", \"remove\"]\n";
-
-/// Runs `rok-sqlc <args>` in `dir`, which must succeed, and returns its
-/// stderr.
-fn rok_sqlc(dir: &Path, args: &[&str]) -> Result<String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_rok-sqlc"))
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .context("failed to run rok-sqlc")?;
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    ensure!(
-        output.status.success(),
-        "rok-sqlc {args:?} failed:\n{}{stderr}",
-        String::from_utf8_lossy(&output.stdout),
-    );
-    Ok(stderr)
-}
 
 /// A project as after `cargo new <name>`, then `rok-sqlc init`, with
 /// [`MIGRATION`] and `init`'s `rok-sqlc.toml` plus [`LIST_ONLY`].

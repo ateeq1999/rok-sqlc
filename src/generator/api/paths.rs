@@ -7,9 +7,7 @@
 
 use super::feature::{Endpoint, Feature, Lookup};
 use super::layout::Uses;
-use super::operation::{
-    Header, Operation, Security, access_errors, column_description, key_description,
-};
+use super::operation::{Header, Operation, Security, access_errors, column_description};
 use super::relations::{Action, Relation};
 use crate::ApiAccess;
 use crate::schema::RelationshipKind;
@@ -170,7 +168,14 @@ fn relation_operation(feature: &Feature<'_>, relation: &Relation<'_>, action: Ac
     .keyed(feature)
     .errors(&[404]);
     let op = match relation.writes().filter(|_| action.names_other()) {
-        Some(writes) => op.path_param("other", writes.other, &key_description(relation.target)),
+        Some(writes) => {
+            // Writes need the related table's single key, so it has one.
+            let key = relation.target.key_columns();
+            let description = key
+                .first()
+                .map_or_else(String::new, |key| column_description(relation.target, key));
+            op.path_param("other", writes.other, &description)
+        }
         None => op,
     };
     match action {

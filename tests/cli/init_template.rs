@@ -1,7 +1,7 @@
 //! `rok-sqlc init --template <NAME>` copies a ready-made project's files
 //! from `templates/`, embedded in the binary, each only when absent. It
-//! leaves out the generated ones (`rok-sqlc g` writes them) and generates
-//! nothing.
+//! leaves out rok-sqlc's generated ones (`rok-sqlc g` writes them), but
+//! copies the template's pinned `Cargo.lock`, and generates nothing.
 
 use super::*;
 
@@ -10,20 +10,13 @@ fn actix_template() -> PathBuf {
     common::manifest_dir().join("templates/actix-api")
 }
 
-/// Whether `text` is a generated file: `@generated` on its first line.
-fn is_generated(text: &str) -> bool {
-    text.lines()
-        .next()
-        .is_some_and(|line| line.contains("@generated"))
-}
-
-/// The template's files as `init` copies them: every one but the
-/// generated ones and a build's `target/`, with `\n` line endings, and
+/// The template's files as `init` copies them: every one but
+/// rok-sqlc's generated ones and a build's `target/`, with `\n` line endings, and
 /// `<path>.template` (its `Cargo.toml`) as `<path>`.
 fn copied_files(template: &Path) -> Result<BTreeMap<PathBuf, String>> {
     Ok(read_tree(template)?
         .into_iter()
-        .filter(|(path, text)| !path.starts_with("target") && !is_generated(text))
+        .filter(|(path, text)| !path.starts_with("target") && !common::is_generated(text))
         .map(|(path, text)| {
             let name = path.to_string_lossy().into_owned();
             let path = name.strip_suffix(".template").map_or(path, PathBuf::from);
@@ -41,13 +34,14 @@ fn init_template_copies_the_templates_files_but_the_generated_ones() -> Result<(
 
     let expected = copied_files(&actix_template())?;
     assert!(
-        expected.contains_key(Path::new("rok-sqlc.toml")),
+        expected.contains_key(Path::new("rok-sqlc.toml"))
+            && expected.contains_key(Path::new("Cargo.lock")),
         "{expected:?}"
     );
     assert!(
         read_tree(&actix_template())?
             .values()
-            .any(|text| is_generated(text)),
+            .any(|text| common::is_generated(text)),
         "the template holds generated files to leave out"
     );
     assert_eq!(read_tree(&project)?, expected);

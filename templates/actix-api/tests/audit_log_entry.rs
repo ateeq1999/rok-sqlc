@@ -1,15 +1,15 @@
 //! `GET /api/v1/audit-log`, admin only and read-only: the list's happy path
 //! and one failure.
 
-mod common;
+mod support;
 
 use actix_api::db::audit_log_entry::models::NewAuditLogEntry;
 use actix_api::db::audit_log_entry::write as entries;
 use actix_api::db::users::models::NewUser;
 use actix_api::db::users::write as users;
 use actix_web::http::{Method, StatusCode};
-use common::{Database, TestResult, admin, call, user};
 use serde_json::json;
+use support::{Database, TestResult, admin, call, user};
 
 #[actix_web::test]
 async fn an_admin_lists_the_log_newest_first() -> TestResult {

@@ -1,15 +1,15 @@
 //! `/api/v1/users`, admin only: list, get, update and remove (a soft delete).
 //! Each route's happy path and one failure.
 
-mod common;
+mod support;
 
 use actix_api::db::types::Role;
 use actix_api::db::users::models::{NewUser, User};
 use actix_api::db::users::{read, write};
 use actix_web::http::{Method, StatusCode};
-use common::{Database, TestResult, admin, call, user};
 use serde_json::json;
 use sqlx::PgPool;
+use support::{Database, TestResult, admin, call, user};
 
 /// Inserts a user with `email` and `display_name`.
 async fn seed(pool: &PgPool, email: &str, display_name: Option<&str>) -> Result<User, sqlx::Error> {

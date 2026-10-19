@@ -80,6 +80,7 @@ serde_json = "1"
 sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "derive", "uuid", "chrono"] }
 thiserror = "2"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 utoipa = { version = "5", features = ["chrono", "uuid"] }
 utoipa-swagger-ui = { version = "9", features = ["actix-web", "vendored"] }
 uuid = { version = "1", features = ["v7", "serde"] }
@@ -270,14 +271,74 @@ rok-sqlc g
 ```
 
 `--template actix` copies [`templates/actix-api/`](../../templates/actix-api)
-into the directory instead of the bare skeleton: its configuration, its
-migrations, the scaffolded files, its tests and its README. The template's
-generated files are not copied; `rok-sqlc g` generates them, as the printed
-next steps say. Start it in a new directory, so the files it brings
-(`Cargo.toml` among them) don't meet ones of yours: like the skeleton, each
-file is written only where none exists. The template's
-[README](../../templates/actix-api/README.md) describes the project. From
-there, steps 4 to 7 apply as they are.
+into the directory instead of the bare skeleton: its `Cargo.toml` and
+pinned `Cargo.lock`, its configuration, its migration, the scaffolded
+files, its tests and its README. rok-sqlc's generated files are not
+copied; `rok-sqlc g` generates them, as the printed next steps say.
+
+Each file is written only where none exists, so the directory can be a new
+one or an existing cargo project (after `cargo new myapi`, say). In an
+existing project your `Cargo.toml` stays, cargo's hello-world
+`src/main.rs` is replaced, and the template's Rust files are rewritten to
+name your library crate instead of the template's `actix_api` (`use
+myapi::{app, config};`). Add the template's dependencies and lints to your
+`Cargo.toml` then, as the first printed step says; the template's
+[README](../../templates/actix-api/README.md) lists them and describes the
+project.
+
+The template is not the `projects` and `tasks` example of steps 3 to 7: it
+serves users and an audit log, and every route but health needs an admin.
+From `rok-sqlc g` on:
+
+1. Create the database and apply the template's migration:
+
+   ```sh
+   export DATABASE_URL=postgres://postgres:postgres@localhost:5432/myapi
+   sqlx database create
+   sqlx migrate run
+   ```
+
+2. Configure and run. `.env.example` lists every setting:
+
+   ```sh
+   cp .env.example .env      # then set DATABASE_URL and JWT_SECRET in it
+   set -a; . ./.env; set +a
+   cargo run
+   ```
+
+3. Make a token as in [step 6](#6-the-first-requests), with
+   `"role":"admin"` in its claims. No route creates users yet (sign-up
+   comes with a later release), so the list starts empty:
+
+   ```sh
+   curl http://127.0.0.1:8080/api/v1/users -H "Authorization: Bearer $TOKEN"
+   ```
+
+   ```json
+   {"items":[],"page":1,"per_page":20,"total":0}
+   ```
+
+   Add one in SQL, then find and change it through the API:
+
+   ```sh
+   psql "$DATABASE_URL" -c "INSERT INTO users (id, email, display_name, role)
+     VALUES ('0190a4b2-4c1e-7d3a-9f00-000000000001', 'ada@example.com', 'Ada', 'admin')"
+   curl "http://127.0.0.1:8080/api/v1/users?q=ada" -H "Authorization: Bearer $TOKEN"
+   curl -X PATCH http://127.0.0.1:8080/api/v1/users/0190a4b2-4c1e-7d3a-9f00-000000000001 \
+     -H "Authorization: Bearer $TOKEN" \
+     -H 'Content-Type: application/json' \
+     -d '{"display_name":"Ada L."}'
+   ```
+
+   A token whose role is `user` gets `403` with `this needs the admin
+   role`. `GET /api/v1/audit-log` answers the audit log the same way.
+
+4. Swagger UI is at `http://127.0.0.1:8080/docs/`, as in
+   [step 7](#7-swagger-ui).
+
+`cargo test` runs the template's contract test, which checks the served
+OpenAPI document against api-starter-axum's (`tests/spec/openapi.json`) and
+needs no database, and its API tests, which run when `DATABASE_URL` is set.
 
 ## Next
 

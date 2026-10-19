@@ -314,21 +314,22 @@ Run it from the project, or pass the config file with `-c`.
 
 ## Running the application
 
-The binary stops before it listens when its settings are wrong:
+The binary stops before it listens when its settings are wrong, with one
+line on stderr and exit code 1:
 
 ```text
-Error: Custom { kind: Other, error: Missing("JWT_SECRET") }
+error: environment variable `JWT_SECRET` is not set
 ```
 
 ```text
-Error: Custom { kind: Other, error: NotANumber { name: "DB_MAX_CONNECTIONS", value: "lots" } }
+error: environment variable `DB_MAX_CONNECTIONS` is `lots`, which is not a whole number
 ```
 
 Set the variable ([Deploying](deploying.md#configuration)). The
 application doesn't read `.env`; export it into the environment.
 
 ```text
-Error: Custom { kind: Other, error: PoolTimedOut }
+error: pool timed out while waiting for an open connection
 ```
 
 The pool couldn't connect within `DB_ACQUIRE_TIMEOUT_SECS`: the database
@@ -340,9 +341,9 @@ token was signed with another secret than the server's `JWT_SECRET`, isn't
 HS256, has expired (`exp`), or its claims don't match (`sub` must be a
 UUID, `role` `user` or `admin`).
 
-**A `500` with `something went wrong`.** The cause is in the log, which
-needs a `tracing` subscriber ([Deploying](deploying.md#logs)). A common one
-in tests: building the app without the JWT keys or the pool as app data;
+**A `500` with `something went wrong`.** The cause is in the server's log
+([Deploying](deploying.md#logs)), as an `ERROR` event. A common one in
+tests: building the app without the JWT keys or the pool as app data;
 build it with `app::configure`, as `main.rs` does. On a tenant-scoped
 table, it means no middleware put the tenant in the request's extensions
 ([Configuring](configuring.md#conventions-that-shape-the-api)).

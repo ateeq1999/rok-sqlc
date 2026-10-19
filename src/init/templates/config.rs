@@ -11,6 +11,7 @@
 //! | `DB_ACQUIRE_TIMEOUT_SECS` | 3 | wait for a connection |
 //! | `DB_IDLE_TIMEOUT_SECS` | 600 | close an idle connection after |
 //! | `DB_MAX_LIFETIME_SECS` | 1800 | replace a connection after |
+//! | `RUST_LOG` | `info` | the log filter ([`log_filter`]) |
 
 use std::env;
 use std::str::FromStr;
@@ -20,6 +21,17 @@ use crate::db::pool::PoolSettings;
 
 /// Where the server listens when `BIND_ADDR` is not set.
 const DEFAULT_BIND_ADDR: &str = "0.0.0.0:8080";
+
+/// The log filter when `RUST_LOG` is not set: everything at `info` and
+/// above.
+const DEFAULT_LOG_FILTER: &str = "info";
+
+/// The log filter: `RUST_LOG` (such as `debug` or `info,sqlx=warn`), else
+/// [`DEFAULT_LOG_FILTER`]. `main.rs` reads it before [`Config::from_env`].
+#[must_use]
+pub fn log_filter() -> String {
+    env::var("RUST_LOG").unwrap_or_else(|_| DEFAULT_LOG_FILTER.to_owned())
+}
 
 /// The application's settings. It has no `Debug`, so the secret can't end
 /// up in a log.

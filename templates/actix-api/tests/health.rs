@@ -1,10 +1,10 @@
 //! `/health/live` and `/health/ready`, outside the API prefix.
 
-mod common;
+mod support;
 
 use actix_web::http::{Method, StatusCode};
-use common::{Database, TestResult, call};
 use serde_json::json;
+use support::{Database, TestResult, call};
 
 #[actix_web::test]
 async fn the_process_is_live_and_ready_with_its_database() -> TestResult {

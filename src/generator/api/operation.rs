@@ -13,28 +13,28 @@ use crate::generator::MAX_WIDTH;
 use crate::generator::openapi::value_type;
 use crate::schema::{Column, Table};
 
-/// A row's singular name as words, the first capitalized, as the target
-/// document names rows: `users` (`User`) is "User", `audit_log_entry` is
-/// "Audit log entry".
+/// A Rust name as lowercase words: `AuditLogEntry` and `warehouse_code`
+/// are "audit log entry" and "warehouse code".
+fn words(name: &str) -> String {
+    name.to_snake_case().replace('_', " ")
+}
+
+/// A row's singular name as words, the first capitalized, as
+/// api-starter-axum's OpenAPI document names rows: `users` (`User`) is
+/// "User", `audit_log_entry` is "Audit log entry".
 fn singular(table: &Table) -> String {
-    let words = table.struct_name.to_snake_case().replace('_', " ");
+    let words = words(&table.struct_name);
     let mut chars = words.chars();
     chars.next().map_or_else(String::new, |first| {
         first.to_uppercase().chain(chars).collect()
     })
 }
 
-/// The description of the path parameter naming a row of `table` by its
-/// single key: "User id".
-pub fn key_description(table: &Table) -> String {
-    format!("{} id", singular(table))
-}
-
-/// The description of the path parameter holding `table`'s `column` (a
-/// composite key's column, or a unique lookup's): "User email".
+/// The description of the path parameter holding `table`'s `column` (a key
+/// column, or a unique lookup's): "User id" for `users.id`, "User email"
+/// for `users.email`.
 pub fn column_description(table: &Table, column: &Column) -> String {
-    let words = column.rust_name.to_snake_case().replace('_', " ");
-    format!("{} {words}", singular(table))
+    format!("{} {}", singular(table), words(&column.rust_name))
 }
 
 /// Whether an operation needs `bearer_auth`.
@@ -169,7 +169,7 @@ impl Operation {
     pub fn keyed(self, feature: &Feature<'_>) -> Self {
         let columns = key_columns(feature);
         if let [column] = columns.as_slice() {
-            return self.path_param("id", column, &key_description(feature.table));
+            return self.path_param("id", column, &column_description(feature.table, column));
         }
         columns.into_iter().fold(self, |op, column| {
             let description = column_description(feature.table, column);
