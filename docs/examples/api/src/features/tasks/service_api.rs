@@ -60,6 +60,12 @@ pub trait TasksServiceApi {
         if !exists {
             failures.missing("project_id", "project");
         }
+        let taken =
+            repo::project_id_and_title_taken(&mut *conn, input.project_id, &input.title, None)
+                .await?;
+        if taken {
+            failures.taken_together(&["project_id", "title"]);
+        }
         failures.into_result()?;
         let row = repo::create(&mut *conn, input.into_new(user.id)).await?;
         Ok(row)
@@ -98,6 +104,15 @@ pub trait TasksServiceApi {
             let exists = projects::listing::exists_owned(&mut *conn, value, user.id).await?;
             if !exists {
                 failures.missing("project_id", "project");
+            }
+        }
+        if let Some(project_id) = input.project_id
+            && let Some(title) = &input.title
+        {
+            let taken =
+                repo::project_id_and_title_taken(&mut *conn, project_id, title, Some(id)).await?;
+            if taken {
+                failures.taken_together(&["project_id", "title"]);
             }
         }
         failures.into_result()?;

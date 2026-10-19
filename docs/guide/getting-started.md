@@ -117,7 +117,8 @@ CREATE TABLE tasks (
     project_id  UUID NOT NULL REFERENCES projects (id),
     title       VARCHAR(200) NOT NULL,
     done        BOOLEAN NOT NULL DEFAULT false,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (project_id, title)
 );
 ```
 

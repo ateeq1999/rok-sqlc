@@ -1,5 +1,6 @@
 -- Projects and their tasks. Each table becomes an API feature under
 -- src/features/, owned by the caller through `owner_id` (rok-sqlc.toml).
+-- A task's title is unique within its project.
 
 CREATE TABLE projects (
     id          UUID PRIMARY KEY,
@@ -15,5 +16,6 @@ CREATE TABLE tasks (
     project_id  UUID NOT NULL REFERENCES projects (id),
     title       VARCHAR(200) NOT NULL,
     done        BOOLEAN NOT NULL DEFAULT false,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (project_id, title)
 );

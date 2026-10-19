@@ -4,7 +4,11 @@
 //! one of the [`TaskSort`] keys.
 //!
 //! The reads of one row the caller owns: another caller's row is none.
+//!
+//! The `unique` checks of a create or update body: whether another row
+//! already has its values.
 
+use super::super::projects::models::ProjectId;
 use super::super::search::{Page, Sort, push_contains_any};
 use super::models::{Task, TaskId};
 
@@ -196,4 +200,33 @@ pub fn owned(row: Option<Task>, owner: uuid::Uuid) -> Option<Task> {
 /// Keeps the rows `owner` owns.
 pub fn retain_owned(rows: &mut Vec<Task>, owner: uuid::Uuid) {
     rows.retain(|row| owned_by(row, owner));
+}
+
+/// Returns whether a row other than `except` has this `project_id` and `title`:
+/// the `unique` check of a create or update body.
+pub async fn project_id_and_title_taken<'e, E>(
+    executor: E,
+    project_id: ProjectId,
+    title: &str,
+    except: Option<TaskId>,
+) -> Result<bool, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS (
+            SELECT 1
+            FROM tasks
+            WHERE project_id = $1
+                AND title = $2
+                AND id IS DISTINCT FROM $3
+        )
+        "#,
+    )
+    .bind(project_id)
+    .bind(title)
+    .bind(except)
+    .fetch_one(executor)
+    .await
 }

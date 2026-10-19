@@ -223,10 +223,11 @@ content-type: application/json
 
 A foreign key in a create or update body must name a row the caller can
 see: one that exists, isn't soft-deleted, is in the caller's tenant and,
-when the referenced table is owned (`[api.owner]`), is the caller's. The
-generated `create_in` and `update_in` check every such field (a `null` or
-absent one is skipped) on the write's transaction before writing, and
-answer every miss at once, under the code `exists`:
+when the referenced table is owned (`[api.owner]`) and the route has a
+caller, is the caller's. The generated `create_in` and `update_in` check
+every such field (a `null` or absent one is skipped) on the write's
+transaction before writing, and answer every miss at once, under the code
+`exists`:
 
 ```http
 HTTP/1.1 422 Unprocessable Entity
@@ -235,17 +236,10 @@ content-type: application/json
 {"error":{"code":"validation_failed","message":"the request failed validation","details":{"project_id":[{"code":"exists","message":"project_id does not refer to an existing project","params":{}}]}}}
 ```
 
-A row deleted between the check and the write still breaks the foreign
-key, which answers `409`. A reference the check can't scope (a
-tenant-scoped table referenced from a table without the tenant column, or
-a key that isn't the referenced table's whole single-column key) is left
-to the constraint too.
-
 A value a unique key of the table already holds fails too, under the code
-`unique`, in the same answer as the `exists` misses. Every single-column
-unique key the body holds is checked, and so is every composite one whose
-columns the body holds together; a composite key is reported against its
-last column:
+`unique`, in the same answer as the `exists` misses. Every unique key whose
+columns the body holds is checked, the tenant and owner columns taken from
+the caller; a composite key is reported against its last column:
 
 ```http
 HTTP/1.1 422 Unprocessable Entity
@@ -255,12 +249,32 @@ content-type: application/json
 ```
 
 The check counts the rows the key does: only live ones for a partial
-index on `<soft-delete column> IS NULL`, and only the caller's tenant's.
-An update never counts the row it changes, so sending a row's own value
-back passes. A key on `lower(<column>)` compares ignoring case. A key with
-the owner column, or a patch holding only some of a composite key's
-columns, is left to the constraint, as is a duplicate written between the
-check and the write: `409 conflict`, naming the constraint.
+index on `<soft-delete column> IS NULL`, and only the caller's tenant's
+(and the caller's own, for a key with the owner column). An update never
+counts the row it changes, so sending a row's own value back passes. A
+key's `lower(<column>)` entry compares that column ignoring case.
+
+What the pre-checks leave to the constraint answers `409 conflict`, as
+[above](#409-constraints): a row deleted or a duplicate written between
+the check and the write, a reference from a public route to an owned
+table (no caller to scope it to), a reference to anything but the
+referenced table's whole single-column key, and a `PATCH` holding only
+some of a composite key's columns. The
+[configuring guide](configuring.md#pre-checks-from-the-schema-unique-and-exists)
+lists every case.
+
+Every detail code a generated API answers:
+
+| Code | From | Meaning |
+| --- | --- | --- |
+| `length` | the schema (`VARCHAR(n)`) | longer than the column takes |
+| `range` | the schema (a `CHECK` bounding a number, such as `stock >= 0`) | outside the bounds the check sets |
+| `immutable` | `[api.immutable]` | a `PATCH` names a column set only on create |
+| `exists` | foreign keys | the row named isn't one the caller can see |
+| `unique` | unique keys | another row already holds the value |
+| `email`, `url`, `uuid`, `ulid`, `ipAddress`, `mobile`, `alpha`, `alphaNumeric`, `ascii`, `regex`, `in`, `notIn`, `startsWith`, `endsWith`, `minLength`, `maxLength`, `fixedLength`, `hexCode`, `iban`, `jwt`, `postalCode`, `creditCard`, `coordinates` | `[api.rules]` | the [string rule](configuring.md#rules) of that name failed |
+
+A hand-written request type adds its own codes, such as `validator`'s.
 
 JSON that doesn't fit the body answers serde's message, without details:
 

@@ -238,7 +238,8 @@ output = "src/features"
 
 [api.rules.users]
 email   = ["trim", "toLowerCase", "email"]
-phone   = ["mobile(ar-SA, ar-AE)"]
+phone   = ["mobile"]
+fax     = ["mobile(ar-SA, ar-AE)"]
 website = ["url"]
 handle  = ["alphaNumeric(allowDashes)", "minLength(3)", { regex = "^[a-z0-9-]+$" }]
 country = ["in(SA, AE, EG)"]
@@ -263,10 +264,11 @@ content-type: application/json
 
 | Rule | Checks |
 | --- | --- |
-| `email`, `url`, `ipAddress`, `ipAddress(4)`, `ipAddress(6)` | `validator`'s own `email`, `url` and `ip` rules (a URL needs a scheme) |
+| `email`, `ipAddress`, `ipAddress(4)`, `ipAddress(6)` | `validator`'s own `email` and `ip` rules |
+| `url` | validator.js's `isURL` with its defaults, as VineJS checks: the scheme may be left out (`example.com` passes), but is `http`, `https` or `ftp` when given; the host is an IP address or a domain with a top-level domain (`localhost` fails), without `_`; a port is 1 to 65535 |
 | `uuid`, `uuid(4, 7)` | a UUID of any version 1 to 8 (or nil or max), or of the versions named |
 | `ulid` | 26 Crockford base32 characters, the first at most `7` |
-| `mobile(ar-SA, ...)`, `mobile(..., strictMode)` | validator.js's pattern of each locale named; `strictMode` needs a leading `+` |
+| `mobile`, `mobile(ar-SA, ...)`, `mobile(..., strictMode)` | validator.js's pattern of each locale named, or of any locale below with none; `strictMode` needs a leading `+` |
 | `alpha`, `alphaNumeric` | ASCII letters (and digits), with `allowSpaces`, `allowDashes`, `allowUnderscores` |
 | `ascii` | one or more ASCII characters |
 | `{ regex = "..." }` | matches the pattern, in the `regex` crate's syntax |
@@ -282,14 +284,19 @@ content-type: application/json
 
 `mobile` takes the locales `ar-AE`, `ar-BH`, `ar-EG`, `ar-JO`, `ar-KW`,
 `ar-OM`, `ar-QA`, `ar-SA`, `de-DE`, `en-CA`, `en-GB`, `en-IN`, `en-US`,
-`es-ES`, `fr-FR` and `tr-TR`, and needs at least one (VineJS's default,
-every locale, isn't carried). `postalCode` takes `CA`, `DE`, `ES`, `FR`,
+`es-ES`, `fr-FR` and `tr-TR`. With none, as in `mobile`, a number of any
+of these locales passes. That is narrower than VineJS's default, which
+tries every locale validator.js knows: a number valid only elsewhere
+fails. `postalCode` takes `CA`, `DE`, `ES`, `FR`,
 `GB`, `SA` and `US`. `creditCard` takes `amex`, `dinersclub`,
 `discover`, `jcb`, `mastercard`, `unionpay` and `visa`. Lengths count
-characters, as the schema's own length checks do. Each check but `email`,
-`url` and `ipAddress` is a function generated into `dto.rs`; `regex`,
-`mobile` and `postalCode` match with the `regex` crate (which `validator`
-already depends on), so the data layer's `mod.rs` names `regex = "1"`.
+characters, as the schema's own length checks do. Each check but `email`
+and `ipAddress` is a function generated into `dto.rs`, calling helpers
+that `shared/validation.rs` holds once for every feature (`is_url`,
+`is_iban`, the `Transformed` trait the transforms read through, ...);
+`regex`, `mobile` and `postalCode` match with the `regex` crate (which
+`validator` already depends on), so the data layer's `mod.rs` names
+`regex = "1"`.
 
 The transforms run while the body is read, in the order listed, so the
 checks and the database see the transformed value; `null` still clears a
@@ -306,8 +313,10 @@ nullable column:
   `-` and what follows). Yandex's domains become `yandex.ru`. A value with
   no `@`, or whose local part would end up empty, is kept as given.
 
-The OpenAPI document shows what utoipa can: `format` (`email`, `uri`,
-`ipv4`, `ipv6`, `uuid`), `pattern`, `minLength` and `maxLength`. Every
+The OpenAPI document shows what utoipa can: `format` (`email`, `ipv4`,
+`ipv6`, `uuid`), `pattern`, `minLength` and `maxLength`. A `url` field
+has no `format`: `uri` would reject `example.com`, which the rule takes.
+Every
 rule and transform is also listed in the field's description (an `in`
 list included: utoipa can't put `enum` on a `String` field).
 
@@ -504,20 +513,101 @@ body (left out, the database makes it), and one without a default is
 required: the caller supplies the key. An identity or serial key is never
 in the body.
 
-## Checks from the schema: `unique` and `exists`
+## Validation: what a body is checked against
+
+A create or update body passes three kinds of check, in this order:
+
+1. **The schema's rules**, with no configuration: a `VARCHAR(80)` gives a
+   `length` rule, a `CHECK (stock >= 0)` a `range` rule, and a `PATCH`
+   naming an [immutable](#immutable) column fails `immutable`.
+2. **String rules** from [`[api.rules]`](#rules), with the transforms
+   applied first. If any of these first two kinds fails, the `422` lists
+   those failures and nothing touches the database.
+3. **Pre-checks** from the schema, below: `exists` for foreign keys and
+   `unique` for unique keys. They run on the write's transaction, and every
+   failure is listed in one `422`.
+
+Every failure is a field's, under the codes
+[the wire standard](wire-standard.md#422-validation) lists.
+
+## Pre-checks from the schema: `unique` and `exists`
 
 Two checks need no key: the schema decides them. Before a create or update
 writes, its `create_in` or `update_in` checks, on the write's transaction,
 that every foreign key in the body names a row the caller can see
 (`exists`) and that no other row already holds a unique key's values
-(`unique`), and answers every failure in one `422 validation_failed`
-([the wire standard](wire-standard.md#422-validation) has the details). A unique
-index on `lower(<column>)` is checked ignoring case, and a partial one on
-`<soft-delete column> IS NULL` counts live rows only. The data layer's
-`db/<table>/listing.rs` holds each key's read, `<columns>_taken`.
+(`unique`), and answers every failure in one `422 validation_failed`. The
+data layer's `db/<table>/listing.rs` holds each unique key's read,
+`<columns>_taken`, and an owned table's `exists_owned`.
 
-The database's constraints stay, so a race the checks miss still answers
-`409 conflict`. To drop or change a check, override `create_in` or
-`update_in` in the feature's `service.rs`: the override replaces the
-generated default, checks included, and can call the same `repo::` reads
-and `FieldFailures` (`shared/validation.rs`).
+With this schema, where `tags` has the default access (`user`) and
+`projects` is owned through `owner_id`:
+
+```sql
+CREATE TABLE tags (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    project_id UUID REFERENCES projects (id),
+    name TEXT NOT NULL,
+    deleted_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX tags_name_key ON tags (tenant_id, lower(name))
+    WHERE deleted_at IS NULL;
+```
+
+a `POST /api/v1/tags` with `{"name": "Red", "project_id": "..."}` answers,
+when the tenant already has a live `red` tag and the project isn't one of
+the caller's:
+
+```http
+HTTP/1.1 422 Unprocessable Entity
+content-type: application/json
+
+{"error":{"code":"validation_failed","message":"the request failed validation","details":{"name":[{"code":"unique","message":"name is already taken","params":{}}],"project_id":[{"code":"exists","message":"project_id does not refer to an existing project","params":{}}]}}}
+```
+
+**`exists`** checks every foreign key of a body that is present and not
+`null`. A row counts as missing when it doesn't exist, is soft-deleted, is
+in another tenant, or belongs to another caller:
+
+- **Tenant:** the referencing feature's tenant, or, when its table has no
+  tenant column, the `Tenant` the request carries (its handler then takes
+  one).
+- **Owner:** when the referenced table's feature is owned and the caller
+  is known: the referencing feature is owned, or its routes need a
+  signed-in caller (`user` or `admin`). The service method then takes the
+  caller (`user: AuthUser`) even when its own rows aren't owned.
+
+**`unique`** checks every unique key whose columns the body holds,
+present and not `null`, and never counts the row an update changes:
+
+- **Tenant and owner:** the tenant column of a key comes from the caller's
+  tenant, and the owner column from the caller (`(owner_id, name)` is
+  checked per owner and reported on `name`).
+- **Case:** a unique index with one `lower(<column>)` entry, alone or
+  among plain columns (`(tenant_id, lower(name))`), compares that column
+  ignoring case.
+- **Soft delete:** a partial index on `<soft-delete column> IS NULL`
+  counts live rows only. A full constraint counts soft-deleted rows too,
+  as the database does.
+- **Composite keys:** reported against the last column, as
+  `region and seat are already taken together`.
+
+Some writes are left to the constraint, which answers `409 conflict`
+naming it:
+
+- a race the checks miss (a row deleted, or a duplicate written, between
+  the check and the write);
+- a reference from a **public** route to an owned table: there is no
+  caller, so the check only sees that the row exists, live, in the tenant;
+- a reference to anything but the referenced table's whole single-column
+  key, or of another type, and a reference to a tenant-scoped table whose
+  tenant has another type than the feature's;
+- a `PATCH` holding only some of a composite unique key's columns;
+- a unique index with any other expression, which rok-sqlc doesn't read.
+
+To drop or change a check, override `create_in` or `update_in` in the
+feature's `service.rs`: the override replaces the generated default,
+checks included, and can call the same `repo::` reads and `FieldFailures`
+(`shared/validation.rs`). [ADR 0017](../adr/0017-validation-rules.md)
+records why.

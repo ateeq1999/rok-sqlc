@@ -7,6 +7,8 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-19
+
 ### Breaking changes to the generated API
 
 - The `exists` pre-check: a create or update body's foreign key that names
@@ -15,13 +17,19 @@ the *generated* API count as breaking (see ADR 0012).
   `<column> does not refer to an existing <singular>`, instead of
   `409 conflict` naming the constraint. A row counts as missing when it
   doesn't exist, is soft-deleted, is in another tenant, or belongs to
-  another caller (an owned table's, when the referencing feature is owned
-  too). `null` and absent fields are skipped, and every failure is listed
-  in one answer. The generated `create_in` and `update_in` run the checks
-  on their transaction before writing; the constraint's `409` stays for a
-  row deleted in between. A reference to a tenant-scoped table from a
-  table without the tenant column, or to anything but the whole
-  single-column key, is left to the constraint.
+  another caller, so a `422` never confirms a row the caller couldn't read.
+  The caller's tenant and id are used even when the referencing table
+  lacks the column: a feature whose routes need a caller passes it to the
+  check of a reference to an owned table, and a feature without a tenant
+  column takes the request's `Tenant` for a reference to a tenant-scoped
+  table, so that create's or update's service method and handler gain
+  `user` or `tenant`. `null` and absent fields are skipped, and every
+  failure is listed in one answer. The generated `create_in` and
+  `update_in` run the checks on their transaction before writing; the
+  constraint's `409` stays for a row deleted in between. A reference from a
+  public route to an owned table (no caller: only existence, liveness and
+  tenant are checked), or to anything but the whole single-column key, is
+  left to the constraint (ADR 0017).
 - The `unique` pre-check: a create or update body holding a value a unique
   key of the table already has answers `422 validation_failed`, with
   `details` keyed by the column, code `unique` and the message
@@ -29,13 +37,15 @@ the *generated* API count as breaking (see ADR 0012).
   constraint. A composite key is reported against its last column, as
   `<col a> and <col b> are already taken together`. The check runs on the
   write's transaction with the `exists` checks, so one `422` lists both
-  kinds; it stays in the caller's tenant, never counts the row being
-  updated, counts only live rows for a partial index on
-  `<soft-delete column> IS NULL`, and compares ignoring case for a key on
-  `lower(<column>)`. Only keys whose columns the body holds (present and
-  not `null`) are checked; a key with the owner column is left to the
-  constraint, whose `409` also stays for a race. To opt out, override
-  `create_in` or `update_in` in the feature's `service.rs`.
+  kinds. It stays in the caller's tenant, takes a key's owner column from
+  the caller (`(owner_id, name)` is checked per owner, reported on `name`),
+  never counts the row being updated, counts only live rows for a partial
+  index on `<soft-delete column> IS NULL`, and compares a key's
+  `lower(<column>)` entry ignoring case. Only keys whose columns the body
+  holds (present and not `null`) are checked; a `PATCH` holding part of a
+  composite key is left to the constraint, whose `409` also stays for a
+  race. To opt out, override `create_in` or `update_in` in the feature's
+  `service.rs`.
 
 ### Added
 
@@ -44,29 +54,45 @@ the *generated* API count as breaking (see ADR 0012).
   `taken_together` add the `exists` and `unique` failures). An owned
   table's `db/<table>/listing.rs` has `exists_owned`, the check of a
   reference to one of its rows, and a table whose feature checks a unique
-  key has `<columns>_taken(executor, [tenant], values.., except)`.
-- A unique index whose only entry is `lower(<column>)` (any casing of
-  `lower`, the column optionally quoted) is a case-insensitive unique key
-  (`UniqueKey::case_insensitive`). The usual partial-index rule applies
-  (`WHERE deleted_at IS NULL` counts under the soft-delete convention). Its
-  lookup, `read::get_by_<col>`, compares `lower(col) = lower($1)`, and so
-  does the API's `by-<col>` route. Other expression indexes are still
-  ignored, and `ON CONFLICT (<col>)` doesn't match such a key (PostgreSQL
-  needs `ON CONFLICT (lower(<col>))`). Output changes only for schemas with
-  such an index: the actix template's `users` gains `get_by_email` (its
-  skipped `lookups` keep the route out), and its update now documents
-  `409`. The module corpus has only composite `lower()` indexes,
-  so its output is unchanged.
+  key has `<columns>_taken(executor, [tenant], values.., [owner], except)`.
+- Unique indexes with a `lower(<column>)` entry are case-insensitive
+  unique keys: one whose only entry is `lower(<column>)`, or one of plain
+  columns and exactly one `lower(<column>)` entry, such as
+  `(tenant_id, lower(name))` (any casing of `lower`, the column optionally
+  quoted). The usual partial-index rule applies (`WHERE deleted_at IS NULL`
+  counts under the soft-delete convention). Their lookups, such as
+  `read::get_by_email`, or `read::get_by_name` within the tenant, compare
+  that column with `lower(col) = lower($n)`, and so does the API's
+  `by-<col>` route. Other expression indexes are still ignored, and
+  `ON CONFLICT (<cols>)` doesn't match such a key (PostgreSQL needs the
+  expression). Output changes only for schemas with such an index: the
+  actix template's `users` gains `get_by_email` (its skipped `lookups` keep
+  the route out), and its update now documents `409`. In the module corpus,
+  the `(organization_id, lower(name))` indexes of
+  `accounting.expense_categories`, `crm.customer_segments`,
+  `customers.customer_groups` and `hr.leave_types` give each a
+  `read::get_by_name` within the tenant; `core.users`' index (its condition
+  isn't only the soft-delete one) and `marketplace.vendor_delivery_areas`'
+  (two `lower()` entries) still give none.
 - `[api.rules]`: string rules and transforms by VineJS name, by table and
   text column, in the config file and the JSON payload (`ApiConfig::rules`,
   `ApiRule`). `CreateXDto` and `UpdateXDto` check them (`validator`'s
-  `email`, `url` and `ip`, otherwise functions generated into `dto.rs`),
-  a failed rule answering `422 validation_failed` with the rule's name as
-  the detail code; `trim`, `toLowerCase`, `toUpperCase` and
-  `normalizeEmail` apply while the body is read, so the transformed value
-  is stored. The OpenAPI document shows `format`, `pattern` and lengths.
-  `regex`, `mobile` and `postalCode` add a `regex = "1"` hint. The actix
-  template trims and lowercases `users.email` and trims `display_name`.
+  `email` and `ip`, otherwise functions generated into `dto.rs`, calling
+  helpers `shared/validation.rs` holds once for every feature), a failed
+  rule answering `422 validation_failed` with the rule's name as the detail
+  code; `trim`, `toLowerCase`, `toUpperCase` and `normalizeEmail` apply
+  while the body is read, so the transformed value is stored. `url` ports
+  validator.js's `isURL` defaults, as VineJS checks: the scheme may be left
+  out (`example.com` passes) but must be `http`, `https` or `ftp`, and the
+  host needs a top-level domain unless it is an IP address. `mobile` takes
+  locales, or none for any of the 16 it carries (narrower than VineJS's
+  every locale). The OpenAPI document shows `format` (not `uri` for `url`),
+  `pattern` and lengths. `regex`, `mobile` and `postalCode` add a
+  `regex = "1"` hint. The actix template trims and lowercases `users.email`
+  and trims `display_name`.
+- ADR 0017 records the validation rules, the `409` to `422` trade-off and
+  what is still left to the constraints. The configuring guide has a
+  validation section, and the wire standard lists every detail code.
 - The tool depends on `regex-syntax`, to check `regex` patterns.
 
 ## [0.4.0] - 2026-10-19
@@ -719,7 +745,8 @@ that break code written against earlier development snapshots.
   paths under the current directory relative to it (also when they come
   from `rok-sqlc.toml`).
 
-[Unreleased]: https://github.com/ateeq1999/rok-sqlc/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/ateeq1999/rok-sqlc/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/ateeq1999/rok-sqlc/compare/v0.2.0...v0.2.1

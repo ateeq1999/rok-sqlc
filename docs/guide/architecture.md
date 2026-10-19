@@ -273,6 +273,12 @@ layer. Its only required method is `pool`. Every write comes in two parts:
         if !exists {
             failures.missing("project_id", "project");
         }
+        let taken =
+            repo::project_id_and_title_taken(&mut *conn, input.project_id, &input.title, None)
+                .await?;
+        if taken {
+            failures.taken_together(&["project_id", "title"]);
+        }
         failures.into_result()?;
         let row = repo::create(&mut *conn, input.into_new(user.id)).await?;
         Ok(row)
@@ -295,8 +301,12 @@ responses. On an owned table (`[api.owner]`) every method takes the caller
 update or delete it, so another caller's row is a `404`. On a tenant-scoped
 table every method takes the tenant first. Before writing, `create_in` and
 `update_in` run the pre-checks: each foreign key in the body must name a
-row the caller can see (`exists`), and every miss is collected in
-`FieldFailures` (`shared/validation.rs`) and answered as one `422`.
+row the caller can see (`exists`), and no other row may already hold the
+values of a unique key the body holds (`unique`; here a task's title within
+its project, through the data layer's `project_id_and_title_taken`). Every
+failure is collected in `FieldFailures` (`shared/validation.rs`) and
+answered as one `422`, before the write. A create or update whose checks
+need a caller or a tenant the feature's own rows don't takes them too.
 
 `service.rs` is scaffolded: written once, then yours. It holds the service
 struct, `TasksService { pool }`, its constructor `TasksService::new(pool)`

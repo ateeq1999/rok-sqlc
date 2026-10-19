@@ -5,7 +5,8 @@ application, `rok-sqlc g` generates the data layer and one API feature per
 table, and `rok-sqlc check-arch` keeps the architecture. The
 [README](../../README.md#generated-apis) documents the commands and the
 `[api]` configuration. The decisions behind them are in ADR 0016
-(`docs/adr/0016-api-features-for-actix-web.md`).
+(`docs/adr/0016-api-features-for-actix-web.md`), and those behind
+validation in ADR 0017 (`docs/adr/0017-validation-rules.md`).
 
 The guide's code samples come from projects that compile, mostly
 [`docs/examples/api`](../examples/api), and a test keeps the two in sync.

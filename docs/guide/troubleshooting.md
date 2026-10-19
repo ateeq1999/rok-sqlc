@@ -18,7 +18,7 @@ Caused by:
       |
     4 | prefixx = "/v2"
       | ^^^^^^^
-    unknown field `prefixx`, expected one of `output`, `db_path`, `prefix`, `search_endpoint`, `openapi`, `exclude`, `skip`, `routes`, `access`, `owner`, `hidden`, `immutable`, `search`, `sort`
+    unknown field `prefixx`, expected one of `output`, `db_path`, `prefix`, `search_endpoint`, `openapi`, `exclude`, `skip`, `routes`, `access`, `owner`, `hidden`, `immutable`, `search`, `sort`, `rules`
 ```
 
 A misspelled key. Unknown keys are errors, so a typo can't silently do
@@ -137,6 +137,95 @@ Error: `api.immutable.users` in the configuration names `updated_at`, a managed 
 
 A managed or generated column is in no request body at all, so it has
 nothing to be immutable from. Drop the entry.
+
+### String rules
+
+```text
+Error: `api.rules.users.email` in the configuration has `emial`, which is no string rule; the rules are `email`, `url`, `uuid`, `ulid`, `ipAddress`, `mobile`, `alpha`, `alphaNumeric`, `ascii`, `regex`, `in`, `notIn`, `startsWith`, `endsWith`, `minLength`, `maxLength`, `fixedLength`, `hexCode`, `iban`, `jwt`, `postalCode`, `creditCard` and `coordinates`, and the transforms `trim`, `toLowerCase`, `toUpperCase` and `normalizeEmail`
+```
+
+A misspelled rule. The names are VineJS's, in its casing.
+
+```text
+Error: `api.rules.users.email` in the configuration has `minLength(x)`, but `minLength` takes a number of characters, such as `minLength(3)`
+```
+
+```text
+Error: `api.rules.users.phone` in the configuration has `mobile(xx-XX)`, but `mobile` takes locales, such as `mobile(ar-SA)`, or none for any, and `strictMode`; the locales are `ar-AE`, `ar-BH`, `ar-EG`, `ar-JO`, `ar-KW`, `ar-OM`, `ar-QA`, `ar-SA`, `de-DE`, `en-CA`, `en-GB`, `en-IN`, `en-US`, `es-ES`, `fr-FR` and `tr-TR`
+```
+
+The arguments don't fit the rule. The message says what it takes; for
+`mobile`, `postalCode` and `creditCard` it lists the values rok-sqlc
+carries.
+
+```text
+Error: `api.rules.users.email` in the configuration has `regex(^a$)`, but `regex` takes its pattern in an inline table: `{ regex = "^[a-z0-9-]+$" }`
+```
+
+```text
+Error: `api.rules.users.email` in the configuration has the pattern `^[a-z`, which is no regular expression: regex parse error:
+    ^[a-z
+     ^
+error: unclosed character class
+```
+
+A pattern goes in an inline table, so its commas and parentheses stay
+its own, and must parse in the `regex` crate's syntax (no look-around or
+backreferences).
+
+```text
+Error: invalid config file rok-sqlc.toml
+
+Caused by:
+    TOML parse error at line 39, column 10
+       |
+    39 | email = [{ pattern = "x" }]
+       |          ^^^^^^^^^^^^^^^^^
+    `pattern`: an inline rule takes one key: `regex`, `in`, `notIn`, `startsWith` or `endsWith`
+```
+
+An inline table names the rule it carries the argument of.
+
+```text
+Error: `api.rules.users.email` in the configuration has `trim` twice
+```
+
+Drop the repeat.
+
+```text
+Error: `api.rules.users.password` in the configuration has `sameAs`, which rok-sqlc leaves out: cross-field rules belong in hand-written request types
+```
+
+```text
+Error: `api.rules.users.website` in the configuration has `activeUrl`, which rok-sqlc leaves out: it looks up DNS records while validating
+```
+
+`confirmed`, `sameAs` and `notSameAs` compare two fields, which a
+generated body doesn't do; `activeUrl` would make a request wait on DNS.
+Write a request type of your own for them (see
+[customizing](customizing.md)).
+
+```text
+Error: `api.rules.users` in the configuration names `age`, which is not a text column, so string rules can't check it
+```
+
+```text
+Error: `api.rules.users` in the configuration names `slug`, a generated column, which generated code never writes
+```
+
+String rules check text columns that a body holds. A number has the
+schema's `range` rule instead (a `CHECK`), and a generated or managed
+column is in no body.
+
+```text
+Error: `api.rules.users` in the configuration names `nickname`, which is not a column of `users`
+```
+
+```text
+Error: `api.rules.posts` in the configuration names no generated table of the schema
+```
+
+The table or column doesn't exist (any more). Fix the entry.
 
 ### Route bases
 

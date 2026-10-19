@@ -46,9 +46,9 @@ Both templates follow the axum starter's OpenAPI document:
 | `unauthorized` | 401 | no valid credentials |
 | `forbidden` | 403 | not allowed |
 | `not_found` | 404 | no such row |
-| `conflict` | 409 | unique or foreign-key violation, naming the constraint |
+| `conflict` | 409 | unique or foreign-key violation, naming the constraint (since 0.5.0, only what the pre-checks miss or leave out; ADR 0017) |
 | `payload_too_large` | 413 | body over the limit |
-| `validation_failed` | 422 | failed rules, with validator's details; also a check violation |
+| `validation_failed` | 422 | failed rules, with validator's details; also a check violation, and since 0.5.0 a failed `unique` or `exists` pre-check (ADR 0017) |
 | `precondition_required` | 428 | `If-Match` missing on a versioned table |
 | `version_conflict` | 412 | stale `If-Match` |
 | `internal_error` | 500 | anything else; logged, never detailed |
