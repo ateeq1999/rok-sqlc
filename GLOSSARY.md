@@ -166,6 +166,10 @@ _Avoid_: constraint (that is the database's own check), validator
 The rejection of a body whose fields break validation rules, reported to the caller field by field with a stable code.
 _Avoid_: validation error (in user-facing text), 422
 
+**Pre-check**:
+A rule a generated `create_in` or `update_in` checks against the database, on the write's transaction, before it writes, such as `exists`: a foreign key must name a row the caller can see. Its failures are validation failures, every one answered together; the constraint behind it still answers a write that loses a race.
+_Avoid_: database validation, async rule
+
 **Update patch**:
 The `UpdateXxx` struct a caller passes to `update`; each field is optional, where `None` means "leave unchanged" and, for a nullable column, `Some(None)` means "set NULL".
 _Avoid_: update model, diff

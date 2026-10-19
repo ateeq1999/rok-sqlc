@@ -268,6 +268,12 @@ layer. Its only required method is `pool`. Every write comes in two parts:
         user: AuthUser,
         input: CreateTaskDto,
     ) -> Result<Task, AppError> {
+        let mut failures = FieldFailures::default();
+        let exists = projects::listing::exists_owned(&mut *conn, input.project_id, user.id).await?;
+        if !exists {
+            failures.missing("project_id", "project");
+        }
+        failures.into_result()?;
         let row = repo::create(&mut *conn, input.into_new(user.id)).await?;
         Ok(row)
     }
@@ -287,7 +293,10 @@ responses. On an owned table (`[api.owner]`) every method takes the caller
 (`user: AuthUser`), reads only the caller's rows, and `update_in` and
 `remove_in` first lock the caller's row (`SELECT … FOR UPDATE`) and then
 update or delete it, so another caller's row is a `404`. On a tenant-scoped
-table every method takes the tenant first.
+table every method takes the tenant first. Before writing, `create_in` and
+`update_in` run the pre-checks: each foreign key in the body must name a
+row the caller can see (`exists`), and every miss is collected in
+`FieldFailures` (`shared/validation.rs`) and answered as one `422`.
 
 `service.rs` is scaffolded: written once, then yours. It holds the service
 struct, `TasksService { pool }`, its constructor `TasksService::new(pool)`

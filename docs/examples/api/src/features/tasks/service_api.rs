@@ -14,6 +14,7 @@ use crate::db::search::{Direction, Sort};
 use crate::error::AppError;
 use crate::shared::auth::AuthUser;
 use crate::shared::response::PaginatedResponse;
+use crate::shared::validation::FieldFailures;
 
 /// The `tasks` feature's operations, called by its handlers. Every method but
 /// [`pool`](Self::pool) has a default over the data layer: override one in
@@ -54,6 +55,12 @@ pub trait TasksServiceApi {
         user: AuthUser,
         input: CreateTaskDto,
     ) -> Result<Task, AppError> {
+        let mut failures = FieldFailures::default();
+        let exists = projects::listing::exists_owned(&mut *conn, input.project_id, user.id).await?;
+        if !exists {
+            failures.missing("project_id", "project");
+        }
+        failures.into_result()?;
         let row = repo::create(&mut *conn, input.into_new(user.id)).await?;
         Ok(row)
     }
@@ -86,6 +93,14 @@ pub trait TasksServiceApi {
         if !owned {
             return Err(not_found());
         }
+        let mut failures = FieldFailures::default();
+        if let Some(value) = input.project_id {
+            let exists = projects::listing::exists_owned(&mut *conn, value, user.id).await?;
+            if !exists {
+                failures.missing("project_id", "project");
+            }
+        }
+        failures.into_result()?;
         let row = repo::update(&mut *conn, id, input.into()).await?;
         row.ok_or_else(not_found)
     }

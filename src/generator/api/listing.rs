@@ -3,7 +3,7 @@
 //! Generated for a table whose feature serves `list` (the `XSort` keys
 //! `sort` takes, and a page of rows matching `q`, with its count) or
 //! `search`, has an owner (every read scoped to the caller: the list's,
-//! `get_owned` and `lock_owned`), or writes a many-to-many relationship
+//! `get_owned`, `lock_owned` and `exists_owned`), or writes a many-to-many relationship
 //! (its join table's writes, which a feature may only call through its own
 //! table's module).
 
@@ -220,11 +220,36 @@ fn render_owned(output: &mut String, feature: &Feature<'_>) {
     StaticQuery {
         call: "sqlx::query_scalar::<_, i32>",
         sql,
-        binds,
+        binds: binds.clone(),
         execute: "fetch_optional(executor)",
     }
     .push(output, 4, "let row = ", "?;");
-    output.push_str("    Ok(row.is_some())\n}\n");
+    output.push_str("    Ok(row.is_some())\n}\n\n");
+
+    let sql = vec![
+        "SELECT EXISTS (".to_owned(),
+        "    SELECT 1".to_owned(),
+        format!("    FROM {}", table_ref(table)),
+        format!("    WHERE {predicate}"),
+        ")".to_owned(),
+    ];
+    let mut doc = vec![
+        "Returns whether `owner` owns the row with the given primary key: the",
+        "`exists` check of a reference to it in a create or update body.",
+    ];
+    if table.soft_delete_column.is_some() {
+        doc.push("Soft-deleted rows are left out.");
+    }
+    push_doc(output, 0, &doc);
+    push_fn_head(output, "exists_owned", &params, "Result<bool, sqlx::Error>");
+    StaticQuery {
+        call: "sqlx::query_scalar::<_, bool>",
+        sql,
+        binds,
+        execute: "fetch_one(executor)",
+    }
+    .push(output, 4, "", "");
+    output.push_str("}\n");
 
     let row = feature.row();
     let owner_value = if owner.typed_id.is_some() {

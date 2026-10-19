@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 
 use heck::{ToKebabCase, ToUpperCamelCase};
 
+use super::prechecks::Reference;
 use super::relations::Relation;
 use super::scope::Caller;
 use crate::generator::relationships::join_pair;
@@ -180,6 +181,10 @@ pub struct Feature<'a> {
     /// The relationship routes, filled by [`super::features`] once every
     /// feature is known.
     pub relations: Vec<Relation<'a>>,
+    /// The foreign keys of the create and update bodies that the writes
+    /// check name a row the caller can see, filled by [`super::features`]
+    /// with the relations.
+    pub references: Vec<Reference<'a>>,
     /// Whether the data layer's filter can fail (it has relationship
     /// fields), so pushing its `WHERE` clause takes a `?`.
     pub filter_fallible: bool,
@@ -274,6 +279,7 @@ impl<'a> Feature<'a> {
             soft_delete,
             lookups,
             relations: Vec::new(),
+            references: Vec::new(),
             filter_fallible: !filter_relationships(table, tables).is_empty(),
             openapi: api.openapi,
         }))

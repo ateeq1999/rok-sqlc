@@ -92,7 +92,7 @@ fn render_remove_query(output: &mut String, feature: &Feature<'_>) {
 
 /// The create body's columns: the create input's, less a key the server
 /// makes (`primary_key_ids`) and the owner, which is the caller.
-fn create_columns<'a>(feature: &Feature<'a>) -> Vec<&'a Column> {
+pub(super) fn create_columns<'a>(feature: &Feature<'a>) -> Vec<&'a Column> {
     feature
         .table
         .insert_columns()
@@ -103,7 +103,7 @@ fn create_columns<'a>(feature: &Feature<'a>) -> Vec<&'a Column> {
 
 /// The update body's columns: the patch's, less the owner and the immutable
 /// columns, which no update changes.
-fn update_columns<'a>(feature: &Feature<'a>) -> Vec<&'a Column> {
+pub(super) fn update_columns<'a>(feature: &Feature<'a>) -> Vec<&'a Column> {
     feature
         .table
         .update_columns()

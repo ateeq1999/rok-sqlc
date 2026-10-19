@@ -102,10 +102,10 @@ field.
 | `unauthorized` | 401 | no bearer token, or one that is invalid or expired |
 | `forbidden` | 403 | an `admin` route called with a token whose role isn't `admin` |
 | `not_found` | 404 | no row has the key, or it is another caller's (`[api.owner]`) |
-| `conflict` | 409 | a unique or foreign-key violation, naming the constraint |
+| `conflict` | 409 | a unique or foreign-key violation, naming the constraint (a referenced row deleted after the `exists` check, for one) |
 | `version_conflict` | 412 | `If-Match` holds a stale version, or none |
 | `payload_too_large` | 413 | the body is over actix-web's JSON limit (2 MiB unless you set a `JsonConfig`) |
-| `validation_failed` | 422 | JSON that doesn't fit the body (a wrong type, a missing field), a body breaking its rules, or a check constraint violation |
+| `validation_failed` | 422 | JSON that doesn't fit the body (a wrong type, a missing field), a body breaking its rules, a foreign key naming no row the caller can see (`exists`), or a check constraint violation |
 | `precondition_required` | 428 | `PATCH` on a versioned table without `If-Match` |
 | `internal_error` | 500 | anything else, such as a lost database connection |
 
@@ -218,6 +218,26 @@ content-type: application/json
 
 {"error":{"code":"validation_failed","message":"the request body failed validation","details":{"email":[{"code":"immutable","message":"`email` can't be changed","params":{"value":"b@example.com"}}]}}}
 ```
+
+A foreign key in a create or update body must name a row the caller can
+see: one that exists, isn't soft-deleted, is in the caller's tenant and,
+when the referenced table is owned (`[api.owner]`), is the caller's. The
+generated `create_in` and `update_in` check every such field (a `null` or
+absent one is skipped) on the write's transaction before writing, and
+answer every miss at once, under the code `exists`:
+
+```http
+HTTP/1.1 422 Unprocessable Entity
+content-type: application/json
+
+{"error":{"code":"validation_failed","message":"the request failed validation","details":{"project_id":[{"code":"exists","message":"project_id does not refer to an existing project","params":{}}]}}}
+```
+
+A row deleted between the check and the write still breaks the foreign
+key, which answers `409`. A reference the check can't scope (a
+tenant-scoped table referenced from a table without the tenant column, or
+a key that isn't the referenced table's whole single-column key) is left
+to the constraint too.
 
 JSON that doesn't fit the body answers serde's message, without details:
 

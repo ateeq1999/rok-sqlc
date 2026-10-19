@@ -7,6 +7,29 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+### Breaking changes to the generated API
+
+- The `exists` pre-check: a create or update body's foreign key that names
+  no row the caller can see answers `422 validation_failed`, with
+  `details` keyed by the column, code `exists` and the message
+  `<column> does not refer to an existing <singular>`, instead of
+  `409 conflict` naming the constraint. A row counts as missing when it
+  doesn't exist, is soft-deleted, is in another tenant, or belongs to
+  another caller (an owned table's, when the referencing feature is owned
+  too). `null` and absent fields are skipped, and every failure is listed
+  in one answer. The generated `create_in` and `update_in` run the checks
+  on their transaction before writing; the constraint's `409` stays for a
+  row deleted in between. A reference to a tenant-scoped table from a
+  table without the tenant column, or to anything but the whole
+  single-column key, is left to the constraint.
+
+### Added
+
+- `shared/validation.rs` has `FieldFailures`, the collector of a write's
+  pre-check failures, answered as one `422`. An owned table's
+  `db/<table>/listing.rs` has `exists_owned`, the check of a reference to
+  one of its rows.
+
 ## [0.4.0] - 2026-10-19
 
 ### Breaking changes to the generated API
