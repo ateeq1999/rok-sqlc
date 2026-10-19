@@ -35,7 +35,11 @@ a disabled or deleted account, or a token issued before the account's
 `token_version` was bumped, is a `401`, and the role is read from the
 database, so a role change applies at once. `src/shared/security/` holds the
 tools the account flows use: argon2id password hashing, single-use tokens
-and issuing the JWT. Signing in is not part of the template yet; see below.
+and issuing the JWT. `src/shared/mail/` sends mail through an outbox: a
+flow writes its message as an `outbound_mail` row on its own transaction,
+and a sender task started by `app.rs` delivers it (SMTP, or the log when
+`MAIL_TRANSPORT=log`), retrying with backoff. Signing in is not part of the
+template yet; see below.
 
 ## Dependencies
 
@@ -46,15 +50,18 @@ The template's `Cargo.toml` has them. Starting from a package of your own
 [dependencies]
 actix-web = "4"
 argon2 = "0.6"
+async-trait = "0.1"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
+lettre = { version = "0.11", default-features = false, features = ["builder", "hostname", "smtp-transport", "tokio1-rustls-tls"] }
 rand = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
 sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "derive", "uuid", "chrono", "json"] }
 thiserror = "2"
+tokio = { version = "1", features = ["macros", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 utoipa = { version = "5", features = ["chrono", "uuid"] }
@@ -99,7 +106,7 @@ test needs no database. The lints in `Cargo.toml` deny `unwrap`, `expect`,
   `mod.rs` and each feature's `service.rs`.
 - **Yours** (first line `Scaffolded once`, or no header): `rok-sqlc.toml`,
   `migrations/`, `queries/`, `src/{lib,main,app,config,error,openapi}.rs`,
-  `src/shared/{mod,auth}.rs`, `src/shared/security/`,
+  `src/shared/{mod,auth}.rs`, `src/shared/security/`, `src/shared/mail/`,
   `src/features/mod.rs`, each feature's `service.rs` (business rules go
   there), `tests/`, and this README.
 

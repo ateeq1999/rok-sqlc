@@ -3,3 +3,4 @@
 //! One module per query file.
 
 pub mod auth;
+pub mod mail;

@@ -26,7 +26,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
-use actix_api::app::configure;
+use actix_api::app::{AppState, configure};
+use actix_api::shared::mail::{Outbox, Templates};
 use actix_api::shared::security::jwt::JwtKeys;
 use actix_web::{App, test, web};
 use serde_json::Value;
@@ -424,8 +425,13 @@ fn differences(target: &Value, served: &Value, covered: &[(&str, &str)]) -> Vec<
 /// pool never connects: serving the document needs no database.
 async fn served_document() -> Result<Value, Box<dyn std::error::Error>> {
     let pool = sqlx::PgPool::connect_lazy("postgres://localhost/unused")?;
-    let keys = web::Data::new(JwtKeys::new("unused", Duration::from_secs(1)));
-    let app = test::init_service(App::new().configure(|cfg| configure(cfg, &pool, &keys))).await;
+    let state = AppState {
+        pool,
+        keys: web::Data::new(JwtKeys::new("unused", Duration::from_secs(1))),
+        outbox: web::Data::new(Outbox::new()),
+        templates: web::Data::new(Templates::new("http://unused")),
+    };
+    let app = test::init_service(App::new().configure(|cfg| configure(cfg, &state))).await;
     let request = test::TestRequest::get().uri("/api-docs/openapi.json");
     let response = test::call_service(&app, request.to_request()).await;
     assert!(response.status().is_success(), "{}", response.status());

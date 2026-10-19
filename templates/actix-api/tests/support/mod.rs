@@ -9,13 +9,15 @@
 #![allow(dead_code, reason = "each test file uses some of the helpers")]
 
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
-use actix_api::app::configure;
+use actix_api::app::{AppState, configure};
 use actix_api::db::schema::SCHEMA_SQL;
 use actix_api::db::types::Role;
 use actix_api::db::users::models::NewUser;
 use actix_api::db::users::write;
+use actix_api::shared::mail::{Mail, MemoryMailer, Outbox, Sender, Templates};
 use actix_api::shared::security::jwt::JwtKeys;
 use actix_web::http::{Method, StatusCode, header};
 use actix_web::{App, test, web};
@@ -29,6 +31,9 @@ pub type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 /// The JWT secret the test application verifies tokens with.
 const SECRET: &str = "test secret";
+
+/// The `APP_URL` the test application's mailed links start with.
+pub const APP_URL: &str = "http://app.test";
 
 /// A schema of the test database, and a pool whose connections use it.
 pub struct Database {
@@ -98,8 +103,8 @@ pub async fn call(
     uri: &str,
     body: Option<Value>,
 ) -> Result<Answer, Box<dyn std::error::Error>> {
-    let keys = keys();
-    let app = test::init_service(App::new().configure(|cfg| configure(cfg, pool, &keys))).await;
+    let state = state(pool);
+    let app = test::init_service(App::new().configure(|cfg| configure(cfg, &state))).await;
     let mut request = test::TestRequest::default().method(method).uri(uri);
     if let Some(token) = token {
         request = request.insert_header((header::AUTHORIZATION, format!("Bearer {token}")));
@@ -161,4 +166,33 @@ pub async fn admin(pool: &PgPool) -> Result<String, Box<dyn std::error::Error>> 
 /// A token of a new account that is not an admin's.
 pub async fn user(pool: &PgPool) -> Result<String, Box<dyn std::error::Error>> {
     Ok(account(pool, Role::User).await?.1)
+}
+
+/// The application's state over `pool`, as the tests configure it.
+pub fn state(pool: &PgPool) -> AppState {
+    AppState {
+        pool: pool.clone(),
+        keys: keys(),
+        outbox: web::Data::new(Outbox::new()),
+        templates: web::Data::new(Templates::new(APP_URL)),
+    }
+}
+
+/// Delivers every due mail in `pool`'s outbox, as the sender would, and
+/// returns what was sent, oldest first.
+pub async fn mailed(pool: &PgPool) -> Result<Vec<Mail>, Box<dyn std::error::Error>> {
+    let mailer = Arc::new(MemoryMailer::default());
+    let sender = Sender::new(pool.clone(), mailer.clone(), &Outbox::new());
+    while sender.deliver_due().await?.sent > 0 {}
+    Ok(mailer.sent())
+}
+
+/// The token of the link `mail` carries (`…?token=<token>`), if any.
+pub fn mailed_token(mail: &Mail) -> Option<String> {
+    let start = mail.text.find("?token=")? + "?token=".len();
+    let token: String = mail.text[start..]
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    (!token.is_empty()).then_some(token)
 }
