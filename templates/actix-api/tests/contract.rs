@@ -59,10 +59,6 @@ const KNOWN: &[(&str, &str)] = &[
         "`avatar_url` comes with uploads (a later release)",
     ),
     (
-        "PATCH /api/v1/users/{id}: request body: properties: served has `email`, target has not",
-        "the target changes an email through its auth flow (a later release); until then an admin may",
-    ),
-    (
         "DELETE /api/v1/users/{id}: parameter `permanent` (query): served has it, target has not",
         "every generated soft-delete `DELETE` takes `?permanent=true` (ADR 0016)",
     ),

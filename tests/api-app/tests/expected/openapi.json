@@ -3776,14 +3776,6 @@
       "UpdateAccountDto": {
         "description": "`PATCH /api/v1/accounts/{id}`'s body, checked by the rules of `UpdateAccount`.\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
         "properties": {
-          "email": {
-            "default": null,
-            "description": "The new value of the `email` column.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "password_hash": {
             "default": null,
             "description": "The new value of the `password_hash` column.",

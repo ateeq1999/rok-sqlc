@@ -194,6 +194,42 @@ A key column can't be hidden. `[api.search]` and `[api.sort]` may not name
 a hidden column, it gets no `/by-<column>` route, and a `/search` filter on
 it is a `422 validation_failed`.
 
+## `immutable`
+
+```toml
+[api]
+output = "src/features"
+
+[api.immutable]
+users    = ["email"]
+projects = ["slug"]
+orders   = ["order_number", "currency"]
+payments = ["external_id"]
+```
+
+Columns a caller sets when creating a row and never changes through the
+API: a slug that is in URLs, an order number, an id from another system,
+the currency an amount was taken in, or an email that only a verification
+flow may change. An immutable column stays in the create body
+(`CreateUserDto`), required when it is `NOT NULL` without a default, and in
+every response. It leaves the update body: `UpdateUserDto` has no `email`
+in the document, and a `PATCH` naming it, even as `null`, answers
+`422 validation_failed` with the details under the field rather than
+ignoring it:
+
+```http
+HTTP/1.1 422 Unprocessable Entity
+content-type: application/json
+
+{"error":{"code":"validation_failed","message":"the request body failed validation","details":{"email":[{"code":"immutable","message":"`email` can't be changed","params":{"value":"b@example.com"}}]}}}
+```
+
+The data layer's patch, `UpdateUser`, keeps the column, so your own code
+(a service override, a verified email change) can still write it.
+
+A key, owner or tenant column can't be immutable (no update changes it
+anyway), nor a managed or generated one (generated code never writes it).
+
 ## `search`
 
 ```toml

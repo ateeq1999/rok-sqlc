@@ -85,6 +85,8 @@ fn generate_api_app() -> Result<Vec<PathBuf>> {
         .insert("accounts".into(), rok_sqlc::ApiAccess::Admin);
     api.hidden
         .insert("accounts".into(), names(&["password_hash"]));
+    // An account's email is set on create and never patched.
+    api.immutable.insert("accounts".into(), names(&["email"]));
     api.owner.insert("tasks".into(), "owner_id".to_owned());
     config.api = Some(api.clone());
 

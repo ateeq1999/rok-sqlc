@@ -240,7 +240,7 @@ fn decimal_expr(value: &str) -> String {
 
 /// `"{name}(args)"` inside `#[validate(...)]`, laid out as rustfmt lays it
 /// out: on one line when the arguments fit, otherwise one per line.
-fn push_rule(output: &mut String, kind: &str, args: &[String]) {
+pub fn push_rule(output: &mut String, kind: &str, args: &[String]) {
     let joined = args.join(", ");
     if joined.len() <= ATTR_FN_LIKE_WIDTH {
         output.push_str(&format!("    #[validate({kind}({joined}))]\n"));

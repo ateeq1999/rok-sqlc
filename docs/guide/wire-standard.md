@@ -208,6 +208,17 @@ content-type: application/json
 {"error":{"code":"validation_failed","message":"the request body failed validation","details":{"open_tasks":[{"code":"range","message":"open_tasks must be at least 0","params":{"min":0,"value":-1}}]}}}
 ```
 
+A `PATCH` body naming an immutable column (`[api.immutable]`), even as
+`null`, breaks the rule `immutable` under that field. The field is never
+ignored, though fields the body doesn't know are:
+
+```http
+HTTP/1.1 422 Unprocessable Entity
+content-type: application/json
+
+{"error":{"code":"validation_failed","message":"the request body failed validation","details":{"email":[{"code":"immutable","message":"`email` can't be changed","params":{"value":"b@example.com"}}]}}}
+```
+
 JSON that doesn't fit the body answers serde's message, without details:
 
 ```http

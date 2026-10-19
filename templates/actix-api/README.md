@@ -107,6 +107,9 @@ Change the schema with a new migration, adjust `rok-sqlc.toml`, run
   managed_columns`), so no request body takes them; a trigger keeps
   `updated_at` current.
 - `deleted_at` is the soft-delete column: `DELETE /users/{id}` marks the row.
+- `email` is immutable (`[api.immutable]`): set when an account is created,
+  never by `PATCH /users/{id}`, which answers `422` when its body names it.
+  An email changes through the verification flow to come.
 - `audit_log` is generated as the `audit_log_entry` module
   (`AuditLogEntryResponse`), served at `/audit-log`, read-only.
 - `[api.search]` and `[api.sort]` give the users list its `q` and
@@ -115,9 +118,8 @@ Change the schema with a new migration, adjust `rok-sqlc.toml`, run
   have no API yet (`[api] exclude`).
 
 `tests/contract.rs` lists the differences that remain, each with its
-reason: `avatar_url` (uploads), the users update body's `email` (the target
-changes an email through its auth flow), and the `?permanent=` and list
-`sort`/`order` parameters every generated API has.
+reason: `avatar_url` (uploads), and the `?permanent=` and list `sort`/`order`
+parameters every generated API has.
 
 ## Coming next
 

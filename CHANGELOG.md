@@ -21,6 +21,14 @@ the *generated* API count as breaking (see ADR 0012).
 
 ### Added
 
+- `[api.immutable]`: columns set on create and never changed by the
+  generated update, by table, in the config file and the JSON payload
+  (`ApiConfig::immutable`). They stay in `CreateXDto` and the response,
+  leave `UpdateXDto` and its OpenAPI schema, and a `PATCH` naming one
+  answers `422 validation_failed` with the detail code `immutable`. The
+  data layer's `UpdateX` keeps them. A key, owner, tenant or managed
+  column fails the run. The actix template makes `users.email` immutable,
+  so its contract no longer lists the update body's `email`.
 - The Release workflow publishes the crate to crates.io once every binary
   builds, using the `CARGO_REGISTRY_TOKEN` repository secret. A version
   crates.io already has is skipped, so running a tag again doesn't fail.

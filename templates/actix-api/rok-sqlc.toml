@@ -59,6 +59,10 @@ users = [
     "deleted_at",
 ]
 
+[api.immutable]
+# An email changes only through the verification flow (a later release).
+users = ["email"]
+
 [api.search]
 users = ["email", "display_name"]
 

@@ -21,8 +21,6 @@ pub type ListUsersQuery = ListQuery<UserSort>;
 )]
 #[serde(default)]
 pub struct UpdateUserDto {
-    /// The new value of the `email` column.
-    pub email: Option<String>,
     /// The new value of the `display_name` column.
     #[serde(deserialize_with = "crate::db::nullable::deserialize")]
     pub display_name: Option<Option<String>>,
@@ -30,17 +28,35 @@ pub struct UpdateUserDto {
     pub role: Option<types::Role>,
     /// The new value of the `is_active` column.
     pub is_active: Option<bool>,
+    /// The `email` column is immutable: naming it, even as `null`, is a `422`.
+    #[schema(ignore)]
+    #[serde(deserialize_with = "present")]
+    #[validate(custom(function = "immutable", message = "`email` can't be changed"))]
+    pub email: Option<serde_json::Value>,
 }
 
 impl From<UpdateUserDto> for UpdateUser {
     fn from(dto: UpdateUserDto) -> Self {
         UpdateUser {
-            email: dto.email,
             display_name: dto.display_name,
             role: dto.role,
             is_active: dto.is_active,
+            email: None,
         }
     }
+}
+
+/// Deserializes a field that is present, `null` included, as `Some`.
+fn present<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    serde::Deserialize::deserialize(deserializer).map(Some)
+}
+
+/// Rejects a field naming an immutable column: no update changes one.
+fn immutable(_: &serde_json::Value) -> Result<(), validator::ValidationError> {
+    Err(validator::ValidationError::new("immutable"))
 }
 
 /// `DELETE /api/v1/users/{id}`'s query string: `?permanent=true` deletes the row for good.

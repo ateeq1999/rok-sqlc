@@ -146,7 +146,7 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
     .map_err(anyhow::Error::msg)?;
     // `[api]` likewise.
     if let Some(api) = &config.api {
-        api_config::check(api, &schema_tables).map_err(anyhow::Error::msg)?;
+        api_config::check(api, &schema_tables, &config.conventions).map_err(anyhow::Error::msg)?;
     }
 
     let query_inputs = query_inputs(&config.queries)?;

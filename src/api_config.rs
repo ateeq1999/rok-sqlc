@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use heck::ToKebabCase;
 
+use crate::Conventions;
 use crate::schema::{BaseType, Column, FilterKind, Table};
 
 /// Generated API features for actix-web (ADR 0016), set by the config file's
@@ -56,6 +57,9 @@ pub struct ApiConfig {
     pub owner: BTreeMap<String, String>,
     /// Columns left out of responses, by table. A key column can't be hidden.
     pub hidden: BTreeMap<String, Vec<String>>,
+    /// Immutable columns, by table: set on create, never changed by the
+    /// generated update. Not a key, owner, tenant or managed column.
+    pub immutable: BTreeMap<String, Vec<String>>,
     /// Text columns the list endpoint's `q` matches, by table.
     pub search: BTreeMap<String, Vec<String>>,
     /// Columns the list endpoint's `sort` takes, by table: ordered or text
@@ -84,6 +88,7 @@ impl ApiConfig {
             access: BTreeMap::new(),
             owner: BTreeMap::new(),
             hidden: BTreeMap::new(),
+            immutable: BTreeMap::new(),
             search: BTreeMap::new(),
             sort: BTreeMap::new(),
         }
@@ -213,8 +218,13 @@ fn entry_column<'a>(
 /// Checks `api` against `tables`, the generated tables of the schema: every
 /// table and column it names exists, owner, search and sort columns have
 /// fitting types, an owned table isn't public, hidden columns aren't keys,
-/// search columns or sort keys, and route bases are well formed and unique.
-pub(crate) fn check(api: &ApiConfig, tables: &[Table]) -> Result<(), String> {
+/// search columns or sort keys, immutable columns are ones an update could
+/// change, and route bases are well formed and unique.
+pub(crate) fn check(
+    api: &ApiConfig,
+    tables: &[Table],
+    conventions: &Conventions,
+) -> Result<(), String> {
     let mut excluded = Vec::new();
     for key in &api.exclude {
         let table = find_table(tables, key).ok_or_else(|| {
@@ -316,7 +326,50 @@ pub(crate) fn check(api: &ApiConfig, tables: &[Table]) -> Result<(), String> {
             }
         }
     }
+    check_immutable(api, tables, conventions)?;
     check_routes(api, tables, &excluded)
+}
+
+/// Each immutable column exists and is one an update could change: not a
+/// key, owner or tenant column (no update changes those anyway), nor a
+/// managed or generated one (generated code never writes those).
+fn check_immutable(
+    api: &ApiConfig,
+    tables: &[Table],
+    conventions: &Conventions,
+) -> Result<(), String> {
+    for (key, names) in &api.immutable {
+        let table = entry_table(tables, "immutable", key)?;
+        let owner = api
+            .owner
+            .iter()
+            .find(|(other, _)| find_table(tables, other).is_some_and(|other| same(other, table)))
+            .map(|(_, owner)| owner.as_str());
+        for name in names {
+            let column = entry_column("immutable", key, table, name)?;
+            let managed = conventions.managed_columns.iter().any(|m| m == name)
+                || conventions.version_column.as_deref() == Some(name.as_str());
+            let (what, then) = if column.is_primary_key {
+                ("a key column", "no update changes anyway")
+            } else if owner == Some(name.as_str()) {
+                ("the owner column", "no update changes anyway")
+            } else if conventions.tenant_column.as_deref() == Some(name.as_str()) {
+                ("the tenant column", "no update changes anyway")
+            } else if managed {
+                ("a managed column", "generated code never writes")
+            } else if column.is_generated {
+                ("a generated column", "generated code never writes")
+            } else {
+                continue;
+            };
+            return Err(format!(
+                "{} in the configuration names `{name}`, {what} of `{}`, which {then}",
+                location("immutable", key),
+                table.display_name()
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Each configured route base starts with `/` and is no other API

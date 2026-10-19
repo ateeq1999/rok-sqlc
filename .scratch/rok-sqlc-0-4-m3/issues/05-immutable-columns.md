@@ -18,7 +18,17 @@
 
 **Blocked by:** 01, 02, 03 (all done)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Config tests (each check) and generator tests (create keeps it, update drops it, OpenAPI).
-- [ ] `tests/api-app` gets an immutable column, and a PATCH naming it is a 422 against PostgreSQL. The template's contract passes with KNOWN entry 2 removed.
+- [x] Config tests (each check) and generator tests (create keeps it, update drops it, OpenAPI).
+- [x] `tests/api-app` gets an immutable column, and a PATCH naming it is a 422 against PostgreSQL. The template's contract passes with KNOWN entry 2 removed.
+
+## Comments
+
+Resolved on branch `rok-sqlc-0-4-m3-05`.
+
+- **Config:** `ApiConfig::immutable` (`BTreeMap<String, Vec<String>>`), in `ApiKeys` (file and JSON payload), merged by table like `hidden`. `api_config::check` now takes the `Conventions` and rejects an unknown table or column, a key, owner or tenant column ("which no update changes anyway"), and a managed or generated column ("which generated code never writes"). Generated columns are a small addition to the ticket's list.
+- **Generation:** `Feature::immutable` / `is_immutable`. `UpdateXDto` drops the column. In its place is `Option<serde_json::Value>` with `#[schema(ignore)]` (when `openapi`), `#[serde(deserialize_with = "present")]` (so `null` counts too) and `#[validate(custom(function = "immutable", message = "`<col>` can't be changed"))]`, which gives code `immutable`. `From<UpdateXDto>` sets it to `None`, and `UpdateX` keeps it. A table whose only patchable columns are immutable or the owner gets no `PATCH`. `validate::push_rule` is now `pub` for the attribute layout.
+- **Fixture:** `accounts.email` is immutable in `tests/api-app` (`access.rs::an_immutable_column_is_set_on_create_and_never_patched`). The expected OpenAPI document was regenerated.
+- **Template:** `[api.immutable] users = ["email"]`, KNOWN entry 2 removed, `users/dto.rs` regenerated, README updated.
+- **Docs:** configuring.md (`immutable` section), wire-standard.md, troubleshooting.md (errors and the unknown-field list), README reference and prose, CHANGELOG, ADR 0016 bullet.

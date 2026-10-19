@@ -975,6 +975,9 @@ invoices = "created_by"
 [api.hidden]                 # by table: columns left out of responses; not key columns
 users = ["password_hash"]
 
+[api.immutable]              # by table: set on create, never by `PATCH`; not key, owner,
+users = ["email"]            # tenant or managed columns
+
 [api.search]                 # by table: text columns the list's `q` matches
 products = ["name", "sku"]
 
@@ -1015,7 +1018,11 @@ take the `AuthUser`, every read and write is scoped to the caller's id
 (another caller's row is a `404`), and `create` sets the owner, which
 neither body holds. A hidden column (`[api.hidden]`) stays in both bodies
 but never appears in a response, and no `[api.search]` or `[api.sort]`
-entry may name it.
+entry may name it. An immutable column (`[api.immutable]`) is in the
+create body but not the update body: a `PATCH` naming it answers `422`
+(detail code `immutable`), and the document leaves it out of `UpdateXDto`.
+The data layer's `UpdateX` keeps it for your own code (a verified email
+change). A key, owner, tenant or managed column can't be immutable.
 
 `[modules]` renames a table's module, and its row struct, typed id and key
 struct follow the new name. That's how same-named tables of two schemas

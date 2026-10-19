@@ -425,6 +425,10 @@ CREATE TABLE statement_document_review_category_pairings (
         "financial_statement_review_categories".into(),
         vec!["descriptive_category_label".into()],
     );
+    api(&mut config).immutable.insert(
+        "organization_membership_invitations".into(),
+        vec!["invitation_message_written_by_the_inviter".into()],
+    );
     api(&mut config).search.insert(
         "organization_membership_invitations".into(),
         vec![
@@ -452,6 +456,67 @@ CREATE TABLE statement_document_review_category_pairings (
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stdout)
+    );
+    Ok(())
+}
+
+/// The struct `name` of a generated file: from its line to its closing
+/// brace.
+fn struct_block<'a>(text: &'a str, name: &str) -> &'a str {
+    let start = text
+        .find(&format!("pub struct {name} {{"))
+        .unwrap_or_else(|| panic!("no {name} in\n{text}"));
+    let end = start + text[start..].find("\n}\n").expect("the closing brace");
+    &text[start..end]
+}
+
+/// An immutable column (`[api.immutable]`) stays in the create body but
+/// leaves the update body, which rejects it by name instead of taking it,
+/// and the OpenAPI document never shows it there. The data layer's patch
+/// keeps it, for the application's own code.
+#[test]
+fn an_immutable_column_is_created_but_never_updated() -> Result<()> {
+    let project =
+        Project::new("CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL, name TEXT);")?;
+    let mut config = project.config();
+    api(&mut config)
+        .immutable
+        .insert("users".into(), vec!["email".into()]);
+    rok_sqlc::generate(&config)?;
+
+    let dto = project.read("src/features/users/dto.rs")?;
+    assert!(
+        struct_block(&dto, "CreateUserDto").contains("pub email: String,"),
+        "{dto}"
+    );
+    let update = struct_block(&dto, "UpdateUserDto");
+    assert!(
+        update.contains("pub name: Option<Option<String>>,"),
+        "{update}"
+    );
+    assert!(!update.contains("pub email: Option<String>,"), "{update}");
+    assert!(
+        update.contains(
+            "    #[schema(ignore)]\n    #[serde(deserialize_with = \"present\")]\n    #[validate(custom(function = \"immutable\", message = \"`email` can't be changed\"))]\n    pub email: Option<serde_json::Value>,"
+        ),
+        "{update}"
+    );
+    assert!(dto.contains("email: None,"), "{dto}");
+    let patch = project.read("src/db/users/models.rs")?;
+    assert!(
+        struct_block(&patch, "UpdateUser").contains("pub email: Option<String>,"),
+        "{patch}"
+    );
+
+    // Without the document, no `schema` attribute.
+    api(&mut config).openapi = false;
+    rok_sqlc::generate(&config)?;
+    let dto = project.read("src/features/users/dto.rs")?;
+    let update = struct_block(&dto, "UpdateUserDto");
+    assert!(!update.contains("#[schema(ignore)]"), "{update}");
+    assert!(
+        update.contains("pub email: Option<serde_json::Value>,"),
+        "{update}"
     );
     Ok(())
 }

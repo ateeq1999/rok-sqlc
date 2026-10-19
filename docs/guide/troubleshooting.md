@@ -18,7 +18,7 @@ Caused by:
       |
     4 | prefixx = "/v2"
       | ^^^^^^^
-    unknown field `prefixx`, expected one of `output`, `db_path`, `prefix`, `search_endpoint`, `openapi`, `exclude`, `skip`, `routes`, `access`, `owner`, `hidden`, `search`, `sort`
+    unknown field `prefixx`, expected one of `output`, `db_path`, `prefix`, `search_endpoint`, `openapi`, `exclude`, `skip`, `routes`, `access`, `owner`, `hidden`, `immutable`, `search`, `sort`
 ```
 
 A misspelled key. Unknown keys are errors, so a typo can't silently do
@@ -121,6 +121,22 @@ Error: `pings` has no column its list can sort by; name one in `api.sort`, or sk
 
 A list needs an order to page through, and this table has no key and no
 column that sorts. Name a sort column, or skip the list.
+
+### Immutable columns
+
+```text
+Error: `api.immutable.users` in the configuration names `id`, a key column of `users`, which no update changes anyway
+```
+
+The same goes for the owner and the tenant column. Drop the entry: the
+update body never takes those.
+
+```text
+Error: `api.immutable.users` in the configuration names `updated_at`, a managed column of `users`, which generated code never writes
+```
+
+A managed or generated column is in no request body at all, so it has
+nothing to be immutable from. Drop the entry.
 
 ### Route bases
 

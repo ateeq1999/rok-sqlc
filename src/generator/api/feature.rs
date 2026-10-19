@@ -163,6 +163,10 @@ pub struct Feature<'a> {
     /// renderer taking either (the search body) checks
     /// [`Feature::is_hidden`].
     pub hidden: Vec<&'a Column>,
+    /// The immutable columns (`[api.immutable]`): in the create body, and
+    /// rejected by name in the update body. The data layer's patch keeps
+    /// them. See [`Feature::is_immutable`].
+    pub immutable: Vec<&'a Column>,
     /// The tenant column: every handler takes the `Tenant` extractor, and
     /// every data layer call the tenant.
     pub tenant: Option<&'a Column>,
@@ -205,11 +209,12 @@ impl<'a> Feature<'a> {
         };
         let owner = entry(&api.owner, table)
             .and_then(|name| table.columns.iter().find(|column| column.sql_name == *name));
-        // No update changes the owner.
-        let has_patch = table
-            .update_columns()
-            .iter()
-            .any(|column| owner.is_none_or(|owner| owner.sql_name != column.sql_name));
+        let immutable = columns(table, entry(&api.immutable, table));
+        // No update changes the owner or an immutable column.
+        let has_patch = table.update_columns().iter().any(|column| {
+            owner.is_none_or(|owner| owner.sql_name != column.sql_name)
+                && !immutable.iter().any(|i| i.sql_name == column.sql_name)
+        });
         let hidden = columns(table, entry(&api.hidden, table));
         let search = columns(table, entry(&api.search, table));
         let mut sort = columns(table, entry(&api.sort, table));
@@ -263,6 +268,7 @@ impl<'a> Feature<'a> {
             access: entry(&api.access, table).copied().unwrap_or_default(),
             owner,
             hidden,
+            immutable,
             tenant: table.tenant(),
             version,
             soft_delete,
@@ -284,6 +290,14 @@ impl<'a> Feature<'a> {
         self.hidden
             .iter()
             .any(|hidden| hidden.sql_name == column.sql_name)
+    }
+
+    /// Whether `column` is immutable: set on create, never by the update
+    /// body.
+    pub fn is_immutable(&self, column: &Column) -> bool {
+        self.immutable
+            .iter()
+            .any(|immutable| immutable.sql_name == column.sql_name)
     }
 
     /// The columns the response holds: all but the hidden ones.
