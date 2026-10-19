@@ -61,7 +61,7 @@ users = [\"email\", \"age\", \"created_at\"]
 ";
 
 /// A project dir holding the schema and a `rok-sqlc.toml` with `extra`.
-fn api_project(extra: &str) -> Result<TempDir> {
+pub(super) fn api_project(extra: &str) -> Result<TempDir> {
     let dir = TempDir::new()?;
     fs::write(dir.path().join("schema.sql"), API_SCHEMA)?;
     fs::write(
@@ -71,7 +71,7 @@ fn api_project(extra: &str) -> Result<TempDir> {
     Ok(dir)
 }
 
-fn stderr(output: &Output) -> String {
+pub(super) fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 

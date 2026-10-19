@@ -34,7 +34,7 @@
 Resolved on branch `rok-sqlc-0-5-02`.
 
 - **Generator:** `src/generator/api/unique.rs`. `unique::checks(feature)` picks the keys from `Table::lookup_unique_keys` (primary key included), less the tenant column. A key is checked on create or update when that body holds every one of its columns. The data layer's `listing.rs` gets `<cols>_taken(executor, [tenant], values.., except: Option<Key>)`, which excludes the row with `IS DISTINCT FROM`. `prechecks::push_checks` renders the checks after the `exists` ones, before `into_result()?`. `FieldFailures` gains `taken(field)` and `taken_together(&[fields])`.
-- **Fixture:** `tests/api-app/migrations/0006_handles.sql` (`handles`: tenant-scoped, soft-deleted, `lower(email)`, `(tenant_id, nickname)`, `(tenant_id, region, seat)`, all partial on `deleted_at IS NULL`). The tests are in `tests/api-app/tests/unique.rs`, including the race fallback (`AppError::from` a real unique violation is a `409`). `notes.rs` now expects 422 for a duplicate slug.
+- **Fixture:** `tests/api-app/migrations/0007_handles.sql` (`handles`: tenant-scoped, soft-deleted, `lower(email)`, `(tenant_id, nickname)`, `(tenant_id, region, seat)`, all partial on `deleted_at IS NULL`). The tests are in `tests/api-app/tests/unique.rs`, including the race fallback (`AppError::from` a real unique violation is a `409`). `notes.rs` now expects 422 for a duplicate slug.
 - **Deviations:**
   - Soft-deleted rows are left out only for a key that is partial on the soft-delete column. A full constraint counts them too, as the database does, so its duplicate is a 422 rather than a 409.
   - Not checked; these keep the 409:

@@ -72,6 +72,10 @@ _Avoid_: settings, manifest
 Configuration passed to `-j/--json` as JSON in the same shape as the config file: inline, `@path` for a file, or `-` for stdin. Its paths are relative to the current directory; it overrides the config file, and flags override it.
 _Avoid_: JSON config, JSON file (it need not be a file)
 
+**String rule**:
+A check or transform on a text column of an API feature's create and update bodies, configured in `[api.rules]` by its VineJS name (`email`, `minLength(3)`, `trim`). A failed check's error code is its name.
+_Avoid_: validator, constraint (that is the schema's)
+
 **Convention**:
 An opt-in rule about what certain columns mean across tables (for example, which column scopes rows to a tenant), changing what is generated for every table that has the column.
 _Avoid_: rule, policy (reserved for PostgreSQL row-level security)

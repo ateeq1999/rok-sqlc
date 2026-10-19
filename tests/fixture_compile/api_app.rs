@@ -109,6 +109,11 @@ fn generate_api_app() -> Result<Vec<PathBuf>> {
     // describe, public.
     api.access
         .insert("gadgets".into(), rok_sqlc::ApiAccess::Public);
+    // `profiles` (`0006_profiles.sql`): a string rule or transform on each
+    // column, public.
+    api.access
+        .insert("profiles".into(), rok_sqlc::ApiAccess::Public);
+    api.rules.insert("profiles".into(), profile_rules());
     config.api = Some(api);
     let report = rok_sqlc::generate(&config)?;
     ensure!(
@@ -126,6 +131,45 @@ fn generate_api_app() -> Result<Vec<PathBuf>> {
     Ok(files
         .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
         .collect())
+}
+
+/// The string rules of `profiles`: one rule or transform per column
+/// (`email` takes three), which `tests/api-app/tests/rules.rs` exercises.
+fn profile_rules() -> std::collections::BTreeMap<String, Vec<rok_sqlc::ApiRule>> {
+    use rok_sqlc::ApiRule;
+    let text = |rules: &[&str]| rules.iter().map(|rule| ApiRule::from(*rule)).collect();
+    [
+        ("email", text(&["trim", "toLowerCase", "email"])),
+        ("shout", text(&["toUpperCase"])),
+        ("contact", text(&["normalizeEmail"])),
+        ("website", text(&["url"])),
+        ("ref_uuid", text(&["uuid(4)"])),
+        ("ref_ulid", text(&["ulid"])),
+        ("ip", text(&["ipAddress(4)"])),
+        ("phone", text(&["mobile(ar-SA)"])),
+        ("first_name", text(&["alpha(allowSpaces)"])),
+        ("handle", text(&["alphaNumeric(allowDashes)"])),
+        ("plain", text(&["ascii"])),
+        ("slug", vec![ApiRule::Regex("^[a-z0-9-]+$".into())]),
+        ("country", text(&["in(SA, AE, EG)"])),
+        (
+            "username",
+            vec![ApiRule::NotIn(vec!["admin".into(), "root".into()])],
+        ),
+        ("sku", text(&["startsWith(SKU-)"])),
+        ("file_name", vec![ApiRule::EndsWith(".pdf".into())]),
+        ("bio", text(&["minLength(3)", "maxLength(10)"])),
+        ("pin", text(&["fixedLength(4)"])),
+        ("color", text(&["hexCode"])),
+        ("iban", text(&["iban"])),
+        ("token", text(&["jwt"])),
+        ("zip", text(&["postalCode(SA)"])),
+        ("card", text(&["creditCard"])),
+        ("location", text(&["coordinates"])),
+    ]
+    .into_iter()
+    .map(|(column, rules)| (column.to_owned(), rules))
+    .collect()
 }
 
 /// Copies the files under `from` to `to`, all but `from/lib.rs`.

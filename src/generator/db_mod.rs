@@ -21,6 +21,9 @@ pub struct DbMod<'a> {
     pub derives: DeriveOptions,
     /// The frameworks `http/` has an extractor for; none leaves `http/` out.
     pub extractors: &'a [Extractor],
+    /// Whether an API feature's string rules match regular expressions
+    /// (`regex`, `mobile`, `postalCode`), which needs `regex`.
+    pub uses_regex: bool,
 }
 
 /// Renders `db/mod.rs`: the dependency hints, a module per table of
@@ -34,6 +37,7 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
         queries,
         derives,
         extractors,
+        uses_regex,
     } = *db_mod;
     let mut types: Vec<String> = tables
         .iter()
@@ -66,6 +70,9 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
             super::openapi::dependency_hint(tables)
         ));
         output.push_str(super::openapi::SWAGGER_UI_HINT);
+    }
+    if uses_regex {
+        output.push_str("//   regex = \"1\"\n");
     }
     output.push('\n');
     // Sorted the way rustfmt sorts `mod` declarations.
@@ -261,6 +268,7 @@ mod tests {
                     openapi: false,
                 },
                 extractors: &[],
+                uses_regex: false,
             },
         )
     }
@@ -319,6 +327,7 @@ mod tests {
                         openapi: false,
                     },
                     extractors: &[],
+                    uses_regex: false,
                 },
             )
         };

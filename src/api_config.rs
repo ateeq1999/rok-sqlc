@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use heck::ToKebabCase;
 
 use crate::Conventions;
+use crate::api_rules::{self, ApiRule};
 use crate::schema::{BaseType, Column, FilterKind, Table};
 
 /// Generated API features for actix-web (ADR 0016), set by the config file's
@@ -65,6 +66,9 @@ pub struct ApiConfig {
     /// Columns the list endpoint's `sort` takes, by table: ordered or text
     /// columns.
     pub sort: BTreeMap<String, Vec<String>>,
+    /// String rules and transforms (VineJS names), by table, then by text
+    /// column: checked or applied by the create and update bodies.
+    pub rules: BTreeMap<String, BTreeMap<String, Vec<ApiRule>>>,
 }
 
 impl ApiConfig {
@@ -91,6 +95,7 @@ impl ApiConfig {
             immutable: BTreeMap::new(),
             search: BTreeMap::new(),
             sort: BTreeMap::new(),
+            rules: BTreeMap::new(),
         }
     }
 }
@@ -219,7 +224,8 @@ fn entry_column<'a>(
 /// table and column it names exists, owner, search and sort columns have
 /// fitting types, an owned table isn't public, hidden columns aren't keys,
 /// search columns or sort keys, immutable columns are ones an update could
-/// change, and route bases are well formed and unique.
+/// change, string rules are well formed on text columns, and route bases
+/// are well formed and unique.
 pub(crate) fn check(
     api: &ApiConfig,
     tables: &[Table],
@@ -327,7 +333,29 @@ pub(crate) fn check(
         }
     }
     check_immutable(api, tables, conventions)?;
+    check_rules(api, tables, conventions)?;
     check_routes(api, tables, &excluded)
+}
+
+/// Each string rule names a text column generated code writes, and is well
+/// formed.
+fn check_rules(api: &ApiConfig, tables: &[Table], conventions: &Conventions) -> Result<(), String> {
+    for (key, columns) in &api.rules {
+        let table = entry_table(tables, "rules", key)?;
+        for (name, rules) in columns {
+            let column = entry_column("rules", key, table, name)?;
+            let managed = conventions.managed_columns.iter().any(|m| m == name)
+                || conventions.version_column.as_deref() == Some(name.as_str());
+            if let Some(why) = api_rules::unfit(column, managed) {
+                return Err(format!(
+                    "{} in the configuration names `{name}`, {why}",
+                    location("rules", key)
+                ));
+            }
+            api_rules::parse_column(key, name, rules)?;
+        }
+    }
+    Ok(())
 }
 
 /// Each immutable column exists and is one an update could change: not a

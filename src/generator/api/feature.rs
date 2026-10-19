@@ -11,6 +11,7 @@ use heck::{ToKebabCase, ToUpperCamelCase};
 use super::prechecks::Reference;
 use super::relations::Relation;
 use super::scope::Caller;
+use crate::api_rules::Rule;
 use crate::generator::relationships::join_pair;
 use crate::generator::search::{SearchApi, filter_relationships};
 use crate::generator::write::{has_versioned_update, version_column};
@@ -168,6 +169,9 @@ pub struct Feature<'a> {
     /// rejected by name in the update body. The data layer's patch keeps
     /// them. See [`Feature::is_immutable`].
     pub immutable: Vec<&'a Column>,
+    /// The string rules and transforms of text columns (`[api.rules]`), by
+    /// column, in the order configured.
+    pub rules: Vec<(&'a Column, Vec<Rule>)>,
     /// The tenant column: every handler takes the `Tenant` extractor, and
     /// every data layer call the tenant.
     pub tenant: Option<&'a Column>,
@@ -274,6 +278,7 @@ impl<'a> Feature<'a> {
             owner,
             hidden,
             immutable,
+            rules: crate::api_rules::of_table(table, entry(&api.rules, table)),
             tenant: table.tenant(),
             version,
             soft_delete,
@@ -304,6 +309,14 @@ impl<'a> Feature<'a> {
         self.immutable
             .iter()
             .any(|immutable| immutable.sql_name == column.sql_name)
+    }
+
+    /// The string rules and transforms of `column`, if it has any.
+    pub fn rules_of(&self, column: &Column) -> &[Rule] {
+        self.rules
+            .iter()
+            .find(|(other, _)| other.sql_name == column.sql_name)
+            .map_or(&[], |(_, rules)| rules.as_slice())
     }
 
     /// The columns the response holds: all but the hidden ones.

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::{ApiAccess, ApiConfig, ApiEndpoint};
+use crate::{ApiAccess, ApiConfig, ApiEndpoint, ApiRule};
 
 /// The `[api]` keys one source sets. Single keys merge one by one across
 /// sources; a list replaces the lower list; table-keyed sections merge by
@@ -35,6 +35,57 @@ pub(crate) struct ApiKeys {
     search: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     sort: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    rules: BTreeMap<String, BTreeMap<String, Vec<RuleSpec>>>,
+}
+
+/// A string rule of `[api.rules]`: a string, or an inline table with one
+/// key, `regex`, `in`, `notIn`, `startsWith` or `endsWith`.
+#[derive(Debug)]
+struct RuleSpec(ApiRule);
+
+/// What an inline rule table holds.
+const INLINE_KEYS: &str =
+    "an inline rule takes one key: `regex`, `in`, `notIn`, `startsWith` or `endsWith`";
+
+impl<'de> Deserialize<'de> for RuleSpec {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = RuleSpec;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a string rule, such as \"email\", or an inline table, such as { regex = \"^[a-z]+$\" }")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<RuleSpec, E> {
+                Ok(RuleSpec(ApiRule::Text(text.to_owned())))
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<RuleSpec, A::Error> {
+                use serde::de::Error;
+                let Some(key) = map.next_key::<String>()? else {
+                    return Err(A::Error::custom(INLINE_KEYS));
+                };
+                let rule = match key.as_str() {
+                    "regex" => ApiRule::Regex(map.next_value()?),
+                    "in" => ApiRule::In(map.next_value()?),
+                    "notIn" => ApiRule::NotIn(map.next_value()?),
+                    "startsWith" => ApiRule::StartsWith(map.next_value()?),
+                    "endsWith" => ApiRule::EndsWith(map.next_value()?),
+                    _ => return Err(A::Error::custom(format!("`{key}`: {INLINE_KEYS}"))),
+                };
+                if map.next_key::<String>()?.is_some() {
+                    return Err(A::Error::custom(INLINE_KEYS));
+                }
+                Ok(RuleSpec(rule))
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
 }
 
 /// An `[api.access]` value. Deserializing an unknown name fails with the
@@ -131,6 +182,15 @@ impl ApiKeys {
             immutable: merge(self.immutable, lower.immutable),
             search: merge(self.search, lower.search),
             sort: merge(self.sort, lower.sort),
+            // By table, then by column: an upper column's rules replace the
+            // lower ones.
+            rules: {
+                let mut rules = lower.rules;
+                for (table, columns) in self.rules {
+                    rules.entry(table).or_default().extend(columns);
+                }
+                rules
+            },
         }
     }
 
@@ -169,6 +229,17 @@ impl ApiKeys {
         api.immutable = self.immutable;
         api.search = self.search;
         api.sort = self.sort;
+        api.rules = self
+            .rules
+            .into_iter()
+            .map(|(table, columns)| {
+                let columns = columns
+                    .into_iter()
+                    .map(|(column, rules)| (column, rules.into_iter().map(|rule| rule.0).collect()))
+                    .collect();
+                (table, columns)
+            })
+            .collect();
         Some(api)
     }
 }
