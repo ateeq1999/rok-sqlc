@@ -4,7 +4,7 @@
 
 use super::feature::{Endpoint, Feature};
 use super::layout::{Uses, push_field_attr, push_struct_lit};
-use super::{relation_routes, search};
+use super::{relation_routes, rule_functions, rules, search};
 use crate::generator::openapi::{push_into_params, push_to_schema, push_value_type, value_type};
 use crate::generator::validate::{push_decimal_checks, push_field_rule, push_rule};
 use crate::generator::{
@@ -49,7 +49,8 @@ pub fn render(feature: &Feature<'_>) -> String {
     render_response(&mut body, feature);
     relation_routes::render_dto(&mut body, &mut uses, feature);
     let checked = create.iter().flatten().chain(update.iter().flatten());
-    push_decimal_checks(&mut body, checked.copied());
+    push_decimal_checks(&mut body, checked.clone().copied());
+    rule_functions::push_functions(&mut body, feature, checked.copied());
 
     imports(
         &mut uses,
@@ -277,12 +278,20 @@ fn render_create(output: &mut String, feature: &Feature<'_>, columns: &[&Column]
     push_to_schema(output, feature.openapi);
     output.push_str(&format!("pub struct {dto} {{\n"));
     for column in columns {
+        let field_type = insert_field_type(column);
+        let rules = feature.rules_of(column);
         push_doc(output, 4, &[&field_doc(column)]);
-        if column.is_omittable_on_insert() && column.nullable {
+        rules::push_doc_lines(output, rules);
+        if !rules::push_transformed(output, column, rules, true, &field_type)
+            && column.is_omittable_on_insert()
+            && column.nullable
+        {
             push_nullable(output, feature, true);
         }
+        rules::push_schema(output, feature.openapi, rules);
         push_field_rule(output, column);
-        push_field(output, feature, column, &insert_field_type(column));
+        rules::push_checks(output, column, rules);
+        push_field(output, feature, column, &field_type);
     }
     output.push_str("}\n");
     let binding = if feature.owner.is_some() {
@@ -354,11 +363,16 @@ fn render_update(output: &mut String, feature: &Feature<'_>, columns: &[&Column]
                 doc_name(&column.sql_name)
             )],
         );
-        if column.nullable {
+        let field_type = update_field_type(column);
+        let rules = feature.rules_of(column);
+        rules::push_doc_lines(output, rules);
+        if !rules::push_transformed(output, column, rules, false, &field_type) && column.nullable {
             push_nullable(output, feature, false);
         }
+        rules::push_schema(output, feature.openapi, rules);
         push_field_rule(output, column);
-        push_field(output, feature, column, &update_field_type(column));
+        rules::push_checks(output, column, rules);
+        push_field(output, feature, column, &field_type);
     }
     let rejected = rejected_columns(feature);
     for column in &rejected {

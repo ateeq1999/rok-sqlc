@@ -356,6 +356,189 @@
         ],
         "type": "object"
       },
+      "CreateProfileDto": {
+        "description": "`POST /api/v1/profiles`'s body, checked by the rules of `NewProfile`.\nA field for a defaulted column may be left out.",
+        "properties": {
+          "bio": {
+            "description": "The `bio` column.\n\nRules: `minLength(3)`, `maxLength(10)`.",
+            "maxLength": 10,
+            "minLength": 3,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "card": {
+            "description": "The `card` column.\n\nRules: `creditCard`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "color": {
+            "description": "The `color` column.\n\nRules: `hexCode`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "contact": {
+            "description": "The `contact` column.\n\nTransforms: `normalizeEmail`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "country": {
+            "description": "The `country` column.\n\nRules: `in(SA, AE, EG)`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "description": "The `email` column.\n\nTransforms: `trim`, `toLowerCase`.\nRules: `email`.",
+            "format": "email",
+            "type": "string"
+          },
+          "file_name": {
+            "description": "The `file_name` column.\n\nRules: `endsWith(.pdf)`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "first_name": {
+            "description": "The `first_name` column.\n\nRules: `alpha(allowSpaces)`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "handle": {
+            "description": "The `handle` column.\n\nRules: `alphaNumeric(allowDashes)`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "iban": {
+            "description": "The `iban` column.\n\nRules: `iban`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ip": {
+            "description": "The `ip` column.\n\nRules: `ipAddress(4)`.",
+            "format": "ipv4",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location": {
+            "description": "The `location` column.\n\nRules: `coordinates`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone": {
+            "description": "The `phone` column.\n\nRules: `mobile(ar-SA)`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pin": {
+            "description": "The `pin` column.\n\nRules: `fixedLength(4)`.",
+            "maxLength": 4,
+            "minLength": 4,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "plain": {
+            "description": "The `plain` column.\n\nRules: `ascii`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref_ulid": {
+            "description": "The `ref_ulid` column.\n\nRules: `ulid`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref_uuid": {
+            "description": "The `ref_uuid` column.\n\nRules: `uuid(4)`.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "shout": {
+            "description": "The `shout` column.\n\nTransforms: `toUpperCase`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sku": {
+            "description": "The `sku` column.\n\nRules: `startsWith(SKU-)`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "slug": {
+            "description": "The `slug` column.\n\nRules: `regex(^[a-z0-9-]+$)`.",
+            "pattern": "^[a-z0-9-]+$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "token": {
+            "description": "The `token` column.\n\nRules: `jwt`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "description": "The `username` column.\n\nRules: `notIn(admin, root)`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "website": {
+            "description": "The `website` column.\n\nRules: `url`.",
+            "format": "uri",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "zip": {
+            "description": "The `zip` column.\n\nRules: `postalCode(SA)`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "type": "object"
+      },
       "CreateTaskDto": {
         "description": "`POST /api/v1/tasks`'s body, checked by the rules of `NewTask`.\nA field for a defaulted column may be left out.",
         "properties": {
@@ -1174,6 +1357,75 @@
                 "description": "Equal to none of the values.",
                 "items": {
                   "description": "The primary key of the `notes` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "not_in"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Equality_ProfileId": {
+        "description": "A condition on a boolean or UUID column.",
+        "oneOf": [
+          {
+            "description": "Equal to the value.",
+            "properties": {
+              "eq": {
+                "description": "The primary key of the `profiles` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "eq"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Not equal to the value.",
+            "properties": {
+              "ne": {
+                "description": "The primary key of the `profiles` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ne"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Equal to one of the values.",
+            "properties": {
+              "in": {
+                "description": "Equal to one of the values.",
+                "items": {
+                  "description": "The primary key of the `profiles` table, as a distinct type so it\ncannot be mixed up with another table's key.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "in"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Equal to none of the values.",
+            "properties": {
+              "not_in": {
+                "description": "Equal to none of the values.",
+                "items": {
+                  "description": "The primary key of the `profiles` table, as a distinct type so it\ncannot be mixed up with another table's key.",
                   "format": "uuid",
                   "type": "string"
                 },
@@ -2940,6 +3192,220 @@
         ],
         "type": "object"
       },
+      "PaginatedResponse_ProfileResponse": {
+        "description": "One page of a list: `{\"items\", \"page\", \"per_page\", \"total\"}`.",
+        "properties": {
+          "items": {
+            "description": "The page's rows.",
+            "items": {
+              "description": "A `profiles` row as the API answers it.",
+              "properties": {
+                "bio": {
+                  "description": "The `bio` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "card": {
+                  "description": "The `card` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "color": {
+                  "description": "The `color` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "contact": {
+                  "description": "The `contact` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "country": {
+                  "description": "The `country` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "email": {
+                  "description": "The `email` column.",
+                  "type": "string"
+                },
+                "file_name": {
+                  "description": "The `file_name` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "first_name": {
+                  "description": "The `first_name` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "handle": {
+                  "description": "The `handle` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "iban": {
+                  "description": "The `iban` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "description": "The `id` column.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "ip": {
+                  "description": "The `ip` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "location": {
+                  "description": "The `location` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "phone": {
+                  "description": "The `phone` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "pin": {
+                  "description": "The `pin` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "plain": {
+                  "description": "The `plain` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "ref_ulid": {
+                  "description": "The `ref_ulid` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "ref_uuid": {
+                  "description": "The `ref_uuid` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "shout": {
+                  "description": "The `shout` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "sku": {
+                  "description": "The `sku` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "slug": {
+                  "description": "The `slug` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "token": {
+                  "description": "The `token` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "username": {
+                  "description": "The `username` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "website": {
+                  "description": "The `website` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "zip": {
+                  "description": "The `zip` column.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "email"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "page": {
+            "description": "The page, from 1.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "per_page": {
+            "description": "The most rows a page holds.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "description": "The rows on every page together.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total"
+        ],
+        "type": "object"
+      },
       "PaginatedResponse_TaskResponse": {
         "description": "One page of a list: `{\"items\", \"page\", \"per_page\", \"total\"}`.",
         "properties": {
@@ -3009,6 +3475,584 @@
           "total"
         ],
         "type": "object"
+      },
+      "ProfileResponse": {
+        "description": "A `profiles` row as the API answers it.",
+        "properties": {
+          "bio": {
+            "description": "The `bio` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "card": {
+            "description": "The `card` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "color": {
+            "description": "The `color` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "contact": {
+            "description": "The `contact` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "country": {
+            "description": "The `country` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "description": "The `email` column.",
+            "type": "string"
+          },
+          "file_name": {
+            "description": "The `file_name` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "first_name": {
+            "description": "The `first_name` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "handle": {
+            "description": "The `handle` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "iban": {
+            "description": "The `iban` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "description": "The `id` column.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "ip": {
+            "description": "The `ip` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location": {
+            "description": "The `location` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone": {
+            "description": "The `phone` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pin": {
+            "description": "The `pin` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "plain": {
+            "description": "The `plain` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref_ulid": {
+            "description": "The `ref_ulid` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref_uuid": {
+            "description": "The `ref_uuid` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "shout": {
+            "description": "The `shout` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sku": {
+            "description": "The `sku` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "slug": {
+            "description": "The `slug` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "token": {
+            "description": "The `token` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "description": "The `username` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "website": {
+            "description": "The `website` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "zip": {
+            "description": "The `zip` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "email"
+        ],
+        "type": "object"
+      },
+      "ProfileSearchFilter": {
+        "additionalProperties": false,
+        "description": "The search body's conditions by column: `ProfileFilter` without its\nrelationship filters. A hidden column can't be named.",
+        "properties": {
+          "bio": {
+            "default": [],
+            "description": "Conditions on the `bio` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "bio_is_null": {
+            "default": null,
+            "description": "Whether the `bio` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "card": {
+            "default": [],
+            "description": "Conditions on the `card` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "card_is_null": {
+            "default": null,
+            "description": "Whether the `card` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "color": {
+            "default": [],
+            "description": "Conditions on the `color` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "color_is_null": {
+            "default": null,
+            "description": "Whether the `color` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "contact": {
+            "default": [],
+            "description": "Conditions on the `contact` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "contact_is_null": {
+            "default": null,
+            "description": "Whether the `contact` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "country": {
+            "default": [],
+            "description": "Conditions on the `country` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "country_is_null": {
+            "default": null,
+            "description": "Whether the `country` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "email": {
+            "default": [],
+            "description": "Conditions on the `email` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "file_name": {
+            "default": [],
+            "description": "Conditions on the `file_name` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "file_name_is_null": {
+            "default": null,
+            "description": "Whether the `file_name` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "first_name": {
+            "default": [],
+            "description": "Conditions on the `first_name` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "first_name_is_null": {
+            "default": null,
+            "description": "Whether the `first_name` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "handle": {
+            "default": [],
+            "description": "Conditions on the `handle` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "handle_is_null": {
+            "default": null,
+            "description": "Whether the `handle` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "iban": {
+            "default": [],
+            "description": "Conditions on the `iban` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "iban_is_null": {
+            "default": null,
+            "description": "Whether the `iban` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "id": {
+            "default": [],
+            "description": "Conditions on the `id` column.",
+            "items": {
+              "$ref": "#/components/schemas/Equality_ProfileId"
+            },
+            "type": "array"
+          },
+          "ip": {
+            "default": [],
+            "description": "Conditions on the `ip` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "ip_is_null": {
+            "default": null,
+            "description": "Whether the `ip` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "location": {
+            "default": [],
+            "description": "Conditions on the `location` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "location_is_null": {
+            "default": null,
+            "description": "Whether the `location` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "phone": {
+            "default": [],
+            "description": "Conditions on the `phone` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "phone_is_null": {
+            "default": null,
+            "description": "Whether the `phone` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "pin": {
+            "default": [],
+            "description": "Conditions on the `pin` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "pin_is_null": {
+            "default": null,
+            "description": "Whether the `pin` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "plain": {
+            "default": [],
+            "description": "Conditions on the `plain` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "plain_is_null": {
+            "default": null,
+            "description": "Whether the `plain` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ref_ulid": {
+            "default": [],
+            "description": "Conditions on the `ref_ulid` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "ref_ulid_is_null": {
+            "default": null,
+            "description": "Whether the `ref_ulid` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ref_uuid": {
+            "default": [],
+            "description": "Conditions on the `ref_uuid` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "ref_uuid_is_null": {
+            "default": null,
+            "description": "Whether the `ref_uuid` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "shout": {
+            "default": [],
+            "description": "Conditions on the `shout` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "shout_is_null": {
+            "default": null,
+            "description": "Whether the `shout` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "sku": {
+            "default": [],
+            "description": "Conditions on the `sku` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "sku_is_null": {
+            "default": null,
+            "description": "Whether the `sku` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "slug": {
+            "default": [],
+            "description": "Conditions on the `slug` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "slug_is_null": {
+            "default": null,
+            "description": "Whether the `slug` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "token": {
+            "default": [],
+            "description": "Conditions on the `token` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "token_is_null": {
+            "default": null,
+            "description": "Whether the `token` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "username": {
+            "default": [],
+            "description": "Conditions on the `username` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "username_is_null": {
+            "default": null,
+            "description": "Whether the `username` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "website": {
+            "default": [],
+            "description": "Conditions on the `website` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "website_is_null": {
+            "default": null,
+            "description": "Whether the `website` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "zip": {
+            "default": [],
+            "description": "Conditions on the `zip` column.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "type": "array"
+          },
+          "zip_is_null": {
+            "default": null,
+            "description": "Whether the `zip` column is `NULL`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ProfileSort": {
+        "description": "The columns `GET /api/v1/profiles?sort=` takes, in `snake_case`.",
+        "enum": [
+          "id"
+        ],
+        "type": "string"
       },
       "SearchAccountsBody": {
         "additionalProperties": false,
@@ -3450,6 +4494,62 @@
           "sort": {
             "default": null,
             "description": "A `NoteSort` key, `created_at` unless given.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "SearchProfilesBody": {
+        "additionalProperties": false,
+        "description": "`POST /api/v1/profiles/search`'s body: `filter` matches rows by column (every\ncondition must hold), `sort` and `order` sort them, and `page` and\n`per_page` page them, as the list's query does.",
+        "properties": {
+          "filter": {
+            "default": {},
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProfileSearchFilter",
+                "description": "The conditions rows must meet."
+              }
+            ]
+          },
+          "order": {
+            "default": null,
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SortOrder",
+                "description": "The order, `desc` unless given."
+              }
+            ]
+          },
+          "page": {
+            "default": null,
+            "description": "The page, from 1.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "per_page": {
+            "default": null,
+            "description": "The rows per page: 20 unless given, at most 100.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "sort": {
+            "default": null,
+            "description": "A `ProfileSort` key, `id` unless given.",
             "type": [
               "string",
               "null"
@@ -3984,6 +5084,213 @@
           "title": {
             "default": null,
             "description": "The new value of the `title` column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "UpdateProfileDto": {
+        "description": "`PATCH /api/v1/profiles/{id}`'s body, checked by the rules of `UpdateProfile`.\nEvery field is optional: a field left out keeps its column's value, and\n`null` sets a nullable column to `NULL`.",
+        "properties": {
+          "bio": {
+            "default": null,
+            "description": "The new value of the `bio` column.\n\nRules: `minLength(3)`, `maxLength(10)`.",
+            "maxLength": 10,
+            "minLength": 3,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "card": {
+            "default": null,
+            "description": "The new value of the `card` column.\n\nRules: `creditCard`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "color": {
+            "default": null,
+            "description": "The new value of the `color` column.\n\nRules: `hexCode`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "contact": {
+            "default": null,
+            "description": "The new value of the `contact` column.\n\nTransforms: `normalizeEmail`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "country": {
+            "default": null,
+            "description": "The new value of the `country` column.\n\nRules: `in(SA, AE, EG)`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "default": null,
+            "description": "The new value of the `email` column.\n\nTransforms: `trim`, `toLowerCase`.\nRules: `email`.",
+            "format": "email",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "file_name": {
+            "default": null,
+            "description": "The new value of the `file_name` column.\n\nRules: `endsWith(.pdf)`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "first_name": {
+            "default": null,
+            "description": "The new value of the `first_name` column.\n\nRules: `alpha(allowSpaces)`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "handle": {
+            "default": null,
+            "description": "The new value of the `handle` column.\n\nRules: `alphaNumeric(allowDashes)`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "iban": {
+            "default": null,
+            "description": "The new value of the `iban` column.\n\nRules: `iban`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ip": {
+            "default": null,
+            "description": "The new value of the `ip` column.\n\nRules: `ipAddress(4)`.",
+            "format": "ipv4",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location": {
+            "default": null,
+            "description": "The new value of the `location` column.\n\nRules: `coordinates`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone": {
+            "default": null,
+            "description": "The new value of the `phone` column.\n\nRules: `mobile(ar-SA)`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pin": {
+            "default": null,
+            "description": "The new value of the `pin` column.\n\nRules: `fixedLength(4)`.",
+            "maxLength": 4,
+            "minLength": 4,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "plain": {
+            "default": null,
+            "description": "The new value of the `plain` column.\n\nRules: `ascii`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref_ulid": {
+            "default": null,
+            "description": "The new value of the `ref_ulid` column.\n\nRules: `ulid`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref_uuid": {
+            "default": null,
+            "description": "The new value of the `ref_uuid` column.\n\nRules: `uuid(4)`.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "shout": {
+            "default": null,
+            "description": "The new value of the `shout` column.\n\nTransforms: `toUpperCase`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sku": {
+            "default": null,
+            "description": "The new value of the `sku` column.\n\nRules: `startsWith(SKU-)`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "slug": {
+            "default": null,
+            "description": "The new value of the `slug` column.\n\nRules: `regex(^[a-z0-9-]+$)`.",
+            "pattern": "^[a-z0-9-]+$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "token": {
+            "default": null,
+            "description": "The new value of the `token` column.\n\nRules: `jwt`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "default": null,
+            "description": "The new value of the `username` column.\n\nRules: `notIn(admin, root)`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "website": {
+            "default": null,
+            "description": "The new value of the `website` column.\n\nRules: `url`.",
+            "format": "uri",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "zip": {
+            "default": null,
+            "description": "The new value of the `zip` column.\n\nRules: `postalCode(SA)`.",
             "type": [
               "string",
               "null"
@@ -8683,6 +9990,394 @@
         ]
       }
     },
+    "/api/v1/profiles": {
+      "get": {
+        "operationId": "list",
+        "parameters": [
+          {
+            "description": "The page, from 1. Defaults to 1.",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The rows a page holds, 1 to 100. Defaults to 20.",
+            "in": "query",
+            "name": "per_page",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ProfileSort"
+            }
+          },
+          {
+            "description": "The sort's direction. Defaults to `desc`.",
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_ProfileResponse"
+                }
+              }
+            },
+            "description": "One page of rows."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          }
+        },
+        "summary": "`GET /api/v1/profiles`: one page of rows, `200`.",
+        "tags": [
+          "profiles"
+        ]
+      },
+      "post": {
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProfileDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileResponse"
+                }
+              }
+            },
+            "description": "The row, created.",
+            "headers": {
+              "Location": {
+                "description": "The created row's URL.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A unique or foreign-key violation."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body breaks a rule or a check."
+          }
+        },
+        "summary": "`POST /api/v1/profiles`: creates a row, `201` with its `Location`.",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
+    "/api/v1/profiles/search": {
+      "post": {
+        "operationId": "search",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchProfilesBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_ProfileResponse"
+                }
+              }
+            },
+            "description": "One page of the rows the filter matches."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body breaks a rule or a check."
+          }
+        },
+        "summary": "`POST /api/v1/profiles/search`: one page of the rows the body's filter matches, `200`.",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
+    "/api/v1/profiles/{id}": {
+      "delete": {
+        "operationId": "remove",
+        "parameters": [
+          {
+            "description": "Profile id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The row, deleted."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          }
+        },
+        "summary": "`DELETE /api/v1/profiles/{id}`: deletes the row, `204`.",
+        "tags": [
+          "profiles"
+        ]
+      },
+      "get": {
+        "operationId": "get_one",
+        "parameters": [
+          {
+            "description": "Profile id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileResponse"
+                }
+              }
+            },
+            "description": "The row."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          }
+        },
+        "summary": "`GET /api/v1/profiles/{id}`: the row, `200`.",
+        "tags": [
+          "profiles"
+        ]
+      },
+      "patch": {
+        "operationId": "update",
+        "parameters": [
+          {
+            "description": "Profile id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileResponse"
+                }
+              }
+            },
+            "description": "The row, changed."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A malformed path, query or body."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such row, or not the caller's."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body breaks a rule or a check."
+          }
+        },
+        "summary": "`PATCH /api/v1/profiles/{id}`: changes the row, `200` with it.",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
     "/api/v1/tasks": {
       "get": {
         "operationId": "list",
@@ -9589,6 +11284,9 @@
     },
     {
       "name": "gadgets"
+    },
+    {
+      "name": "profiles"
     }
   ]
 }

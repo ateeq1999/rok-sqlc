@@ -20,8 +20,22 @@
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Config tests for each rule's parsing and each failure.
-- [ ] Generator tests for each rule's attribute or function, plus OpenAPI keywords.
-- [ ] `tests/api-app`: each transform is stored transformed, and each validation rule rejects with its code, against PostgreSQL.
+- [x] Config tests for each rule's parsing and each failure.
+- [x] Generator tests for each rule's attribute or function, plus OpenAPI keywords.
+- [x] `tests/api-app`: each transform is stored transformed, and each validation rule rejects with its code, against PostgreSQL.
+
+## Comments
+
+Resolved on branch `rok-sqlc-0-5-04`.
+
+- **Config:** `ApiConfig::rules` (`BTreeMap<table, BTreeMap<column, Vec<ApiRule>>>`), `ApiRule` public (`Text`, `Regex`, `In`, `NotIn`, `StartsWith`, `EndsWith`; `From<&str>`). `ApiKeys` reads strings and one-key inline tables (custom deserializer with a clear message) and layers by table, then by column. `src/api_rules.rs` parses and checks: unknown rule (lists all), bad arguments, duplicates, left-out rules (`confirmed`, `sameAs`, `notSameAs`, `activeUrl`), non-text or typed-id columns, managed or generated columns, unknown table or column, invalid `regex` (parsed with the new tool dependency `regex-syntax`).
+- **Native `validator` rules** (code overridden to the VineJS name): `email`, `url`, `ipAddress` (`ip`, `v4`/`v6`). **Generated `custom` functions** in `dto.rs` for all others; helpers (`check`, `letters`, `is_uuid`, `is_iban` with validator.js's 80 country formats, `is_credit_card` with Luhn, `is_coordinates`, `normalize_email`, ...) are emitted once per feature, only when used (`src/generator/api/rule_functions.rs`, `rule_helpers.rs`). `minLength`/`maxLength`/`fixedLength` are generated too: a field takes one `validator` `length`, which the schema's declared length already uses.
+- **Transforms:** `deserialize_with = "<col>_transformed"` through a generated `Transformed` trait (String, `Option`, and nullable `Option<Option>` keeping `null` = `Some(None)`); `default` added on optional create fields.
+- **Regex:** `regex`, `mobile`, `postalCode` use the `regex` crate (already a dependency of `validator`), compiled once in a `LazyLock`; the data layer's `mod.rs` hints `regex = "1"` only then.
+- **OpenAPI:** `format` (`email`, `uri`, `ipv4`, `ipv6`, `uuid`), `pattern`, `min_length`/`max_length`; every rule and transform is also listed in the field's doc (description).
+- **Deviations:** `mobile` needs a locale (16 carried; VineJS's default `any` isn't) and `postalCode` a country (CA, DE, ES, FR, GB, SA, US; IN's pattern needs look-ahead); `in` can't be an OpenAPI `enum` (utoipa 5 has no field `enum` attribute), so it is in the description; `url` follows `validator` (a scheme is required, unlike validator.js's default); `normalizeEmail` keeps a value with no `@` or an emptied local part as given (validator.js returns `@...`/`false`); lengths count chars, not UTF-16 units. All documented in docs/guide/configuring.md.
+- **Fixture:** `tests/api-app` gains `0005_profiles.sql` (public, a rule per column) and `tests/rules.rs` (each transform stored transformed, including on `PATCH` and `null`; each rule's 422 code). `regex = "1"` added to its Cargo.toml (one-line lock change). Expected OpenAPI document regenerated.
+- **Template:** `users.email = ["trim", "toLowerCase", "email"]`, `display_name = ["trim"]`. `email` is in no generated body (create skipped, immutable), so only `display_name`'s transform appears in `users/dto.rs`. The contract compares keywords strictly (a served extra keyword is a difference), but the template's rules add none to covered operations, so it is unchanged.
+- **Docs:** README reference and prose, configuring guide `rules` section, CHANGELOG, GLOSSARY ("String rule").

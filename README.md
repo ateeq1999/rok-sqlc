@@ -983,6 +983,10 @@ products = ["name", "sku"]
 
 [api.sort]                   # by table: number, date, time or text columns `sort` takes
 products = ["name", "price", "created_at"]
+
+[api.rules.users]            # by table, then text column: string rules (VineJS names)
+email  = ["trim", "toLowerCase", "email"]
+handle = ["alphaNumeric(allowDashes)", "minLength(3)", { regex = "^[a-z0-9-]+$" }]
 ```
 
 `[api]` configures the generated API features (ADR 0016). Without `output`
@@ -1023,6 +1027,25 @@ create body but not the update body: a `PATCH` naming it answers `422`
 (detail code `immutable`), and the document leaves it out of `UpdateXDto`.
 The data layer's `UpdateX` keeps it for your own code (a verified email
 change). A key, owner, tenant or managed column can't be immutable.
+
+String rules (`[api.rules]`) take VineJS's names
+(<https://vinejs.dev/docs/types/string>), by table and then by text
+column; a column's rules from the JSON payload replace the file's. A rule
+is a string (`"email"`, `"minLength(3)"`, `"in(SA, AE, EG)"`) or an
+inline table where a string can't carry the argument (`{ regex = "..." }`,
+and `{ in = [...] }`, `{ notIn = [...] }`, `{ startsWith = "..." }`,
+`{ endsWith = "..." }` for values with commas). The rules are `email`,
+`url`, `uuid`, `ulid`, `ipAddress`, `mobile`, `alpha`, `alphaNumeric`,
+`ascii`, `regex`, `in`, `notIn`, `startsWith`, `endsWith`, `minLength`,
+`maxLength`, `fixedLength`, `hexCode`, `iban`, `jwt`, `postalCode`,
+`creditCard` and `coordinates`; the transforms `trim`, `toLowerCase`,
+`toUpperCase` and `normalizeEmail` run while the body is read, so
+validation and the database see the transformed value. A failed rule is a
+`422 validation_failed` whose detail code is the rule's name. An unknown
+rule, bad arguments, a rule on a column that isn't plain text, and the
+rules left out (`confirmed`, `sameAs`, `notSameAs`, `activeUrl`) fail the
+run. `regex`, `mobile` and `postalCode` need the `regex` crate, which
+the data layer's `mod.rs` then names. See the configuring guide.
 
 `[modules]` renames a table's module, and its row struct, typed id and key
 struct follow the new name. That's how same-named tables of two schemas

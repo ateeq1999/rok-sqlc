@@ -276,6 +276,10 @@ pub fn plan_files_with_queries(
         queries,
         derives,
         extractors: &config.extractors,
+        uses_regex: config
+            .api
+            .as_ref()
+            .is_some_and(crate::api_rules::uses_regex),
     };
     if let Some(session) = session {
         files.push((output.join("session.rs"), session));

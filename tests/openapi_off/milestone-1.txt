@@ -46,7 +46,7 @@ ce3305b93dcca368 db/members/models.rs
 2ade8c16f3624ce6 db/members/read.rs
 cdcc1d6eca9270e3 db/members/relationships.rs
 d5c82bab7017b8c6 db/members/write.rs
-b350d7ec010948ec db/mod.rs
+8cb0af4ea5a460de db/mod.rs
 13610666f81f1d5d db/note_labels/filter.rs
 68ce56906ffd5831 db/note_labels/mod.rs
 ed4e247e1e7732e1 db/note_labels/models.rs
@@ -62,7 +62,13 @@ a920595f3bc58a64 db/notes/relationships.rs
 6790f4f40e69d84c db/notes/write.rs
 2e6c3c06aa9e042e db/nullable.rs
 af8de4a1f947d33a db/pool.rs
-4506a367a9cc2fc2 db/schema.rs
+a3a5f04093fa696a db/profiles/filter.rs
+b9f34b9955bf8795 db/profiles/listing.rs
+42868010a6753afc db/profiles/mod.rs
+ba56c37486235411 db/profiles/models.rs
+e7669f055e4b3599 db/profiles/read.rs
+38d6ca6bb1801414 db/profiles/write.rs
+8fe420413e066bfa db/schema.rs
 3da31d7b82b76047 db/search.rs
 1b5afc90dd4290ad db/task_labels/filter.rs
 73cf0dbe89d3ca5a db/task_labels/mod.rs
@@ -78,7 +84,7 @@ d64b658c69b6592e db/tasks/listing.rs
 02a9d57787758cb7 db/tasks/relationships.rs
 4ce97cdbe5bfd46d db/tasks/write.rs
 7ec1a75e729a1802 db/types.rs
-a2c078532482cfa0 features/README.md
+41c1bb76400321b6 features/README.md
 2cefd354c22a993f features/accounts/dto.rs
 945f9f38ec212d57 features/accounts/handlers.rs
 423f5047b7a31205 features/accounts/mod.rs
@@ -119,7 +125,7 @@ a5435b91d61e3291 features/gadgets/handlers.rs
 31aea3e6389f76b5 features/gadgets/routes.rs
 8848f79408dd3603 features/gadgets/service.rs
 1327177e8b9dcf67 features/gadgets/service_api.rs
-f707e0264e26ef00 features/generated.rs
+e83c8712dc5e78ea features/generated.rs
 7b59d3d5b46a33bf features/labels/dto.rs
 a0d498a7f2e1fcc6 features/labels/handlers.rs
 726bbd163b2d6ada features/labels/mod.rs
@@ -144,6 +150,14 @@ ec21f90ea90a70aa features/notes/repo.rs
 f7dd3273b1fedaa1 features/notes/routes.rs
 7b649ce2d5611bdb features/notes/service.rs
 f8f0727e75a5ea22 features/notes/service_api.rs
+6aee51f9ca5635d9 features/profiles/dto.rs
+ea9e9a971300c743 features/profiles/handlers.rs
+1e795c76ee4e9f03 features/profiles/mod.rs
+ac5cb023a3e0901c features/profiles/model.rs
+382cc1336ef4981a features/profiles/repo.rs
+c42d22e10603095c features/profiles/routes.rs
+3c189be26d37c9b5 features/profiles/service.rs
+4d161adb44e33a86 features/profiles/service_api.rs
 fe66b895a9fd5958 features/tasks/dto.rs
 4fd1d6b8ab61d8ce features/tasks/handlers.rs
 d59de4f9ede788a9 features/tasks/mod.rs

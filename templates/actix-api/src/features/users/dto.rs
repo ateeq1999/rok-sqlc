@@ -22,7 +22,9 @@ pub type ListUsersQuery = ListQuery<UserSort>;
 #[serde(default)]
 pub struct UpdateUserDto {
     /// The new value of the `display_name` column.
-    #[serde(deserialize_with = "crate::db::nullable::deserialize")]
+    ///
+    /// Transforms: `trim`.
+    #[serde(deserialize_with = "display_name_transformed")]
     pub display_name: Option<Option<String>>,
     /// The new value of the `role` column.
     pub role: Option<types::Role>,
@@ -105,5 +107,57 @@ impl From<User> for UserResponse {
             totp_enabled: row.totp_enabled,
             created_at: row.created_at,
         }
+    }
+}
+
+/// The `display_name` column's transforms: `trim`.
+fn display_name_transforms(value: &str) -> String {
+    value.trim().to_owned()
+}
+
+/// Deserializes the `display_name` column, transformed.
+fn display_name_transformed<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Transformed<'de>,
+{
+    T::transformed(deserializer, display_name_transforms)
+}
+
+/// A body field a column's transforms apply to: text, optional text, or
+/// nullable text, where `null` is `Some(None)`.
+trait Transformed<'de>: Sized {
+    /// Deserializes the field, transformed by `transform`.
+    fn transformed<D>(deserializer: D, transform: fn(&str) -> String) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>;
+}
+
+impl<'de> Transformed<'de> for String {
+    fn transformed<D>(deserializer: D, transform: fn(&str) -> String) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        serde::Deserialize::deserialize(deserializer).map(|value: String| transform(&value))
+    }
+}
+
+impl<'de> Transformed<'de> for Option<String> {
+    fn transformed<D>(deserializer: D, transform: fn(&str) -> String) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        serde::Deserialize::deserialize(deserializer)
+            .map(|value: Option<String>| value.map(|value| transform(&value)))
+    }
+}
+
+impl<'de> Transformed<'de> for Option<Option<String>> {
+    fn transformed<D>(deserializer: D, transform: fn(&str) -> String) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        serde::Deserialize::deserialize(deserializer)
+            .map(|value: Option<String>| Some(value.map(|value| transform(&value))))
     }
 }

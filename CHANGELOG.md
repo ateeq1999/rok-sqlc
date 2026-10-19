@@ -7,6 +7,20 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+### Added
+
+- `[api.rules]`: string rules and transforms by VineJS name, by table and
+  text column, in the config file and the JSON payload (`ApiConfig::rules`,
+  `ApiRule`). `CreateXDto` and `UpdateXDto` check them (`validator`'s
+  `email`, `url` and `ip`, otherwise functions generated into `dto.rs`),
+  a failed rule answering `422 validation_failed` with the rule's name as
+  the detail code; `trim`, `toLowerCase`, `toUpperCase` and
+  `normalizeEmail` apply while the body is read, so the transformed value
+  is stored. The OpenAPI document shows `format`, `pattern` and lengths.
+  `regex`, `mobile` and `postalCode` add a `regex = "1"` hint. The actix
+  template trims and lowercases `users.email` and trims `display_name`.
+- The tool depends on `regex-syntax`, to check `regex` patterns.
+
 ## [0.4.0] - 2026-10-19
 
 ### Breaking changes to the generated API

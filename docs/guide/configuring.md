@@ -230,6 +230,94 @@ The data layer's patch, `UpdateUser`, keeps the column, so your own code
 A key, owner or tenant column can't be immutable (no update changes it
 anyway), nor a managed or generated one (generated code never writes it).
 
+## `rules`
+
+```toml
+[api]
+output = "src/features"
+
+[api.rules.users]
+email   = ["trim", "toLowerCase", "email"]
+phone   = ["mobile(ar-SA, ar-AE)"]
+website = ["url"]
+handle  = ["alphaNumeric(allowDashes)", "minLength(3)", { regex = "^[a-z0-9-]+$" }]
+country = ["in(SA, AE, EG)"]
+```
+
+String rules and transforms for text columns, by
+[VineJS's names](https://vinejs.dev/docs/types/string). A rule is a string,
+with its arguments in parentheses, or an inline table where a string can't
+carry the argument: `{ regex = "..." }`, and `{ in = ["a,b", "c"] }`,
+`{ notIn = [...] }`, `{ startsWith = "a, b" }` and `{ endsWith = "..." }`
+for values with commas. Both bodies, `CreateUserDto` and `UpdateUserDto`,
+check them; a failed rule answers `422 validation_failed` under the field,
+with the rule's name as the detail code and an English message naming the
+column:
+
+```http
+HTTP/1.1 422 Unprocessable Entity
+content-type: application/json
+
+{"error":{"code":"validation_failed","message":"the request body failed validation","details":{"country":[{"code":"in","message":"country must be one of SA, AE, EG","params":{"value":"US"}}]}}}
+```
+
+| Rule | Checks |
+| --- | --- |
+| `email`, `url`, `ipAddress`, `ipAddress(4)`, `ipAddress(6)` | `validator`'s own `email`, `url` and `ip` rules (a URL needs a scheme) |
+| `uuid`, `uuid(4, 7)` | a UUID of any version 1 to 8 (or nil or max), or of the versions named |
+| `ulid` | 26 Crockford base32 characters, the first at most `7` |
+| `mobile(ar-SA, ...)`, `mobile(..., strictMode)` | validator.js's pattern of each locale named; `strictMode` needs a leading `+` |
+| `alpha`, `alphaNumeric` | ASCII letters (and digits), with `allowSpaces`, `allowDashes`, `allowUnderscores` |
+| `ascii` | one or more ASCII characters |
+| `{ regex = "..." }` | matches the pattern, in the `regex` crate's syntax |
+| `in(...)`, `notIn(...)` | is (or isn't) one of the values, case-sensitively |
+| `startsWith(...)`, `endsWith(...)` | starts (ends) with the text |
+| `minLength(n)`, `maxLength(n)`, `fixedLength(n)` | at least, at most or exactly `n` characters |
+| `hexCode` | `#` and 3, 4, 6 or 8 hex digits |
+| `iban` | validator.js's country formats and the mod-97 check |
+| `jwt` | three `.`-separated parts of URL-safe base64 |
+| `postalCode(SA, ...)` | validator.js's pattern of each country named |
+| `creditCard`, `creditCard(visa, amex)` | validator.js's card number shapes (of the providers named) and the Luhn check |
+| `coordinates` | `latitude,longitude` in decimal degrees |
+
+`mobile` takes the locales `ar-AE`, `ar-BH`, `ar-EG`, `ar-JO`, `ar-KW`,
+`ar-OM`, `ar-QA`, `ar-SA`, `de-DE`, `en-CA`, `en-GB`, `en-IN`, `en-US`,
+`es-ES`, `fr-FR` and `tr-TR`, and needs at least one (VineJS's default,
+every locale, isn't carried). `postalCode` takes `CA`, `DE`, `ES`, `FR`,
+`GB`, `SA` and `US`. `creditCard` takes `amex`, `dinersclub`,
+`discover`, `jcb`, `mastercard`, `unionpay` and `visa`. Lengths count
+characters, as the schema's own length checks do. Each check but `email`,
+`url` and `ipAddress` is a function generated into `dto.rs`; `regex`,
+`mobile` and `postalCode` match with the `regex` crate (which `validator`
+already depends on), so the data layer's `mod.rs` names `regex = "1"`.
+
+The transforms run while the body is read, in the order listed, so the
+checks and the database see the transformed value; `null` still clears a
+nullable column:
+
+- `trim`: leading and trailing whitespace removed;
+- `toLowerCase`, `toUpperCase`: Unicode case mapping;
+- `normalizeEmail`: validator.js's `normalizeEmail` with its defaults. The
+  domain is lowercased, and so is the local part. For `gmail.com` and
+  `googlemail.com`, the local part loses a `+` subaddress and its single
+  dots (a run of two or more stays), and the domain becomes `gmail.com`.
+  For iCloud (`icloud.com`, `me.com`) and Outlook.com's domains, the local
+  part loses a `+` subaddress; for Yahoo's, a `-` subaddress (the last
+  `-` and what follows). Yandex's domains become `yandex.ru`. A value with
+  no `@`, or whose local part would end up empty, is kept as given.
+
+The OpenAPI document shows what utoipa can: `format` (`email`, `uri`,
+`ipv4`, `ipv6`, `uuid`), `pattern`, `minLength` and `maxLength`. Every
+rule and transform is also listed in the field's description (an `in`
+list included: utoipa can't put `enum` on a `String` field).
+
+The run fails on an unknown rule (listing the valid ones), bad arguments,
+a rule given twice, a rule on a column that isn't plain text (a number, an
+enum, a typed id), on a managed or generated column, and on the rules left
+out: `confirmed`, `sameAs` and `notSameAs` (cross-field rules belong in
+hand-written request types) and `activeUrl` (it looks up DNS while
+validating).
+
 ## `search`
 
 ```toml
