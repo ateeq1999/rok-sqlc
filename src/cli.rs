@@ -345,8 +345,8 @@ fn generate(config: &Config) -> Result<()> {
     }
 }
 
-/// Prints what a run did: skipped or fatal tables and queries on stderr,
-/// planned or written files on stdout.
+/// Prints what a run did: skipped or fatal tables and queries, and the
+/// warnings, on stderr; planned or written files on stdout.
 fn print_report(config: &Config, report: &Report) {
     for failure in &report.table_failures {
         if config.lenient {
@@ -371,6 +371,9 @@ fn print_report(config: &Config, report: &Report) {
         } else {
             eprintln!("error: {failure}");
         }
+    }
+    for warning in &report.warnings {
+        eprintln!("warning: {warning}");
     }
     for path in &report.written {
         if config.dry_run {

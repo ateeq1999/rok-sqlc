@@ -26,6 +26,9 @@ pub struct Report {
     pub table_failures: Vec<TableFailure>,
     /// Unsupported queries: skipped when lenient, fatal otherwise.
     pub query_failures: Vec<QueryFailure>,
+    /// Problems the run found outside what it generates, such as a
+    /// scaffolded file using what the configuration stopped generating.
+    pub warnings: Vec<String>,
 }
 
 impl Report {

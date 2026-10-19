@@ -10,6 +10,7 @@
 use super::feature::{Endpoint, Feature};
 use super::layout::push_signature;
 use super::relations::Relation;
+use crate::generator::openapi::push_to_schema;
 use crate::generator::sql::{
     column_clause, first_placeholder, ident, key_order, live_condition, live_key_predicate,
     raw_block, scoped_key_predicate, str_literal, table_ref,
@@ -396,8 +397,10 @@ fn render_sort_enum(output: &mut String, feature: &Feature<'_>) {
         )],
     );
     output.push_str(
-        "#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]\n#[serde(rename_all = \"snake_case\")]\n",
+        "#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]\n",
     );
+    push_to_schema(output, feature.openapi);
+    output.push_str("#[serde(rename_all = \"snake_case\")]\n");
     output.push_str(&format!("pub enum {sort} {{\n"));
     for column in &feature.sort {
         push_doc(

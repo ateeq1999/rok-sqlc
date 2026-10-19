@@ -40,7 +40,7 @@ const UNFIT: &str = "deserialize";
 
 /// The wire standard's error body: `{"error": {"code", "message",
 /// "details"?}}`. Any error answer can use it, not only a rejected body.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ErrorBody {
     /// What went wrong.
     pub error: ErrorPayload,
@@ -61,17 +61,18 @@ impl ErrorBody {
     }
 }
 
-/// The `error` of an [`ErrorBody`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// The `error` of an `ErrorBody`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ErrorPayload {
-    /// A `snake_case` code for programs, such as [`BAD_REQUEST`],
-    /// [`PAYLOAD_TOO_LARGE`] or [`VALIDATION_FAILED`].
+    /// A `snake_case` code for programs, such as `BAD_REQUEST`,
+    /// `PAYLOAD_TOO_LARGE` or `VALIDATION_FAILED`.
     pub code: String,
     /// A message for people.
     pub message: String,
     /// The broken validation rules by field, as validator serializes them,
     /// when there are any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
     pub details: Option<ValidationErrors>,
 }
 

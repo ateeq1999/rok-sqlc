@@ -6,6 +6,7 @@
 use super::feature::Feature;
 use super::layout::{Uses, push_call, push_signature};
 use super::service::{data_args, own_params};
+use crate::generator::openapi::{condition_value_type, push_to_schema, push_value_type};
 use crate::generator::search::filter_columns;
 use crate::generator::sql::{column_clause, ident, key_order, raw_block, str_literal, table_ref};
 use crate::generator::{doc_name, push_doc, push_fn_head};
@@ -37,15 +38,19 @@ pub fn render_dto<'a>(
             "`per_page` page them, as the list's query does.",
         ],
     );
-    output.push_str(
-        "#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize, validator::Validate)]\n#[serde(default, deny_unknown_fields)]\n",
-    );
+    push_search_derives(output, feature);
     let default = feature
         .default_sort()
         .map(|column| column.sql_name.clone())
         .unwrap_or_default();
+    // The document's default for `filter`, which can't serialize its own.
+    let filter_default = if feature.openapi {
+        "    #[schema(default = json!({}))]\n"
+    } else {
+        ""
+    };
     output.push_str(&format!(
-        "pub struct {body} {{\n    /// The conditions rows must meet.\n    #[validate(nested)]\n    pub filter: {filter},\n    /// A [`{sort}`] key, `{default}` unless given.\n    #[validate(custom(function = \"sort_key\"))]\n    pub sort: Option<String>,\n    /// The order, `desc` unless given.\n    pub order: Option<SortOrder>,\n    /// The page, from 1.\n    pub page: Option<u32>,\n    /// The rows per page: 20 unless given, at most 100.\n    pub per_page: Option<u32>,\n}}\n"
+        "pub struct {body} {{\n    /// The conditions rows must meet.\n    #[validate(nested)]\n{filter_default}    pub filter: {filter},\n    /// A `{sort}` key, `{default}` unless given.\n    #[validate(custom(function = \"sort_key\"))]\n    pub sort: Option<String>,\n    /// The order, `desc` unless given.\n    pub order: Option<SortOrder>,\n    /// The page, from 1.\n    pub page: Option<u32>,\n    /// The rows per page: 20 unless given, at most 100.\n    pub per_page: Option<u32>,\n}}\n"
     ));
 
     let db_filter = feature.db_filter();
@@ -55,13 +60,11 @@ pub fn render_dto<'a>(
         output,
         0,
         &[
-            &format!("The search body's conditions by column: [`{db_filter}`] without its"),
+            &format!("The search body's conditions by column: `{db_filter}` without its"),
             "relationship filters. A hidden column can't be named.",
         ],
     );
-    output.push_str(
-        "#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize, validator::Validate)]\n#[serde(default, deny_unknown_fields)]\n",
-    );
+    push_search_derives(output, feature);
     output.push_str(&format!("pub struct {filter} {{\n"));
     let mut columns = Vec::new();
     let mut fields = Vec::new();
@@ -101,11 +104,13 @@ pub fn render_dto<'a>(
                 kind.type_name()
             ));
             push_doc(output, 4, &[&format!("Conditions on the {name} column.")]);
-            output.push_str(&format!(
-                "    pub {}: Vec<{}>,\n",
-                column.rust_name,
-                kind.condition_type(column)
-            ));
+            let field_type = format!("Vec<{}>", kind.condition_type(column));
+            push_value_type(
+                output,
+                feature.openapi,
+                condition_value_type(column, &field_type),
+            );
+            output.push_str(&format!("    pub {}: {field_type},\n", column.rust_name));
             fields.push(column.rust_name.clone());
         }
         if column.nullable {
@@ -172,6 +177,16 @@ pub fn render_dto<'a>(
         "fn sort_key(key: &str) -> Result<(), validator::ValidationError> {{\n    if {sort}::from_name(key).is_some() {{\n        Ok(())\n    }} else {{\n        Err(validator::ValidationError::new(\"sort_key\")\n            .with_message(\"not a sort key of this list\".into()))\n    }}\n}}\n"
     ));
     columns
+}
+
+/// The attributes of the search body and its filter, which deny unknown
+/// fields; with `feature.openapi`, they derive `ToSchema`.
+fn push_search_derives(output: &mut String, feature: &Feature<'_>) {
+    output.push_str(
+        "#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize, validator::Validate)]\n",
+    );
+    push_to_schema(output, feature.openapi);
+    output.push_str("#[serde(default, deny_unknown_fields)]\n");
 }
 
 /// The name serde gives `variant` under `rename_all = "snake_case"`.

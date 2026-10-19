@@ -7,45 +7,27 @@ use heck::ToSnakeCase;
 use super::feature::Feature;
 use super::handlers::{own_scope, push_answer};
 use super::layout::{Uses, push_call, push_signature};
-use super::relations::{Kind, Relation};
+use super::paths;
+use super::relations::{Action, Kind, Relation};
 use super::scope::{self, Extraction};
+use crate::generator::openapi::{push_into_params, push_to_schema};
 use crate::generator::{MAX_WIDTH, push_doc};
 
 /// The relation routes: `(path, method, handler)`.
 pub fn routes(feature: &Feature<'_>) -> Vec<(String, &'static str, String)> {
-    let key = feature.key_path();
-    let mut routes = Vec::new();
-    for relation in &feature.relations {
-        if let Kind::ToMany { .. } = relation.kind {
-            let path = format!("{key}/{}", relation.segment());
-            routes.push((path.clone(), "get", format!("list_{}", relation.name)));
-            if relation.syncs() {
-                routes.push((path.clone(), "put", format!("sync_{}", relation.name)));
-            }
-            if relation.writes().is_some() {
-                let other = format!("{path}/{{other}}");
-                if relation.attaches() {
-                    routes.push((other.clone(), "put", format!("attach_{}", relation.name)));
-                }
-                routes.push((other, "delete", format!("detach_{}", relation.name)));
-            }
-        }
-    }
-    routes
-}
-
-/// The to-one relations `?include=` embeds.
-fn includes<'r, 'a>(feature: &'r Feature<'a>) -> Vec<&'r Relation<'a>> {
     feature
         .relations
         .iter()
-        .filter(|relation| matches!(relation.kind, Kind::ToOne { .. }))
+        .flat_map(|relation| {
+            relation.actions().into_iter().map(move |action| {
+                (
+                    relation.path(feature, action),
+                    action.method(),
+                    relation.handler(action),
+                )
+            })
+        })
         .collect()
-}
-
-/// Whether `GET /{key}` takes `?include=`.
-pub fn has_includes(feature: &Feature<'_>) -> bool {
-    !includes(feature).is_empty()
 }
 
 /// Adds four spaces before each line of `text`.
@@ -120,7 +102,7 @@ pub fn render_get_one(output: &mut String, uses: &mut Uses, feature: &Feature<'_
     let own = own_scope(feature, uses);
     let mut arms = Vec::new();
     let mut extracts = false;
-    for relation in includes(feature) {
+    for relation in feature.includes() {
         let mut arm = String::new();
         let mut extract = String::new();
         let mut args = relation_args(feature, uses, relation, &mut extract);
@@ -234,16 +216,11 @@ pub fn render_handlers(output: &mut String, uses: &mut Uses, feature: &Feature<'
         if relation.target.module_name != feature.module() {
             uses.add(&format!("super::super::{response}"));
         }
-        let path = format!(
-            "{}{}/{}",
-            feature.url,
-            feature.key_path(),
-            relation.segment()
-        );
-        let base = |name: &str| {
+        let path = format!("{}{}", feature.url, relation.path(feature, Action::List));
+        let base = |action: Action| {
             let mut params = vec![format!("service: web::Data<{}>", feature.service())];
             params.extend(scope.params.iter().cloned());
-            (format!("pub async fn {name}_{}", relation.name), params)
+            (format!("pub async fn {}", relation.handler(action)), params)
         };
 
         output.push('\n');
@@ -255,7 +232,8 @@ pub fn render_handlers(output: &mut String, uses: &mut Uses, feature: &Feature<'
                 relation.name
             )],
         );
-        let (head, mut params) = base("list");
+        paths::push_relation(output, uses, feature, relation, Action::List);
+        let (head, mut params) = base(Action::List);
         params.push(format!("path: web::Path<{key}>"));
         push_signature(output, 0, &head, &params, "Result<HttpResponse, AppError>");
         let mut args = scope.args.clone();
@@ -300,7 +278,8 @@ pub fn render_handlers(output: &mut String, uses: &mut Uses, feature: &Feature<'
                     "rows `{\"ids\": [...]}` names, `204`.",
                 ],
             );
-            let (head, mut params) = base("sync");
+            paths::push_relation(output, uses, feature, relation, Action::Sync);
+            let (head, mut params) = base(Action::Sync);
             uses.add("crate::shared::validation::IdList");
             uses.add("crate::shared::validation::ValidatedJson");
             params.push(format!("path: web::Path<{key}>"));
@@ -313,17 +292,16 @@ pub fn render_handlers(output: &mut String, uses: &mut Uses, feature: &Feature<'
             push_call(output, 4, "", &callee, &args, ".await?;");
             output.push_str("    Ok(HttpResponse::NoContent().finish())\n}\n");
         }
-        let pairs = [(
-            "attach",
-            "PUT",
-            "pairs the row with the",
-            relation.attaches(),
-        )];
-        let unpairs = [("detach", "DELETE", "unpairs the row from the", true)];
-        for (name, method, what, served) in pairs.into_iter().chain(unpairs) {
-            if !served {
+        let pairings = [
+            (Action::Attach, "pairs the row with the"),
+            (Action::Detach, "unpairs the row from the"),
+        ];
+        let actions = relation.actions();
+        for (action, what) in pairings {
+            if !actions.contains(&action) {
                 continue;
             }
+            let method = action.method().to_uppercase();
             output.push('\n');
             push_doc(
                 output,
@@ -333,13 +311,14 @@ pub fn render_handlers(output: &mut String, uses: &mut Uses, feature: &Feature<'
                     relation.target.display_name()
                 )],
             );
-            let (head, mut params) = base(name);
+            paths::push_relation(output, uses, feature, relation, action);
+            let (head, mut params) = base(action);
             params.push(pair_path(&key, &other));
             push_signature(output, 0, &head, &params, "Result<HttpResponse, AppError>");
             output.push_str("    let (key, other) = path.into_inner();\n");
             let mut args = scope.args.clone();
             args.extend(["key".to_owned(), "other".to_owned()]);
-            let callee = format!("service.{name}_{}", relation.name);
+            let callee = format!("service.{}", relation.handler(action));
             push_call(output, 4, "", &callee, &args, ".await?;");
             output.push_str("    Ok(HttpResponse::NoContent().finish())\n}\n");
         }
@@ -349,7 +328,7 @@ pub fn render_handlers(output: &mut String, uses: &mut Uses, feature: &Feature<'
 /// The `dto.rs` items of the to-one relations: `?include=`'s query string
 /// and names, and each embedding's response.
 pub fn render_dto(output: &mut String, uses: &mut Uses, feature: &Feature<'_>) {
-    let includes = includes(feature);
+    let includes = feature.includes();
     if includes.is_empty() {
         return;
     }
@@ -365,6 +344,7 @@ pub fn render_dto(output: &mut String, uses: &mut Uses, feature: &Feature<'_>) {
         )],
     );
     output.push_str("#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]\n");
+    push_into_params(output, feature.openapi);
     output.push_str(&format!(
         "pub struct {} {{\n    /// The relationship to embed.\n    pub include: Option<{include}>,\n}}\n",
         feature.get_query()
@@ -375,7 +355,9 @@ pub fn render_dto(output: &mut String, uses: &mut Uses, feature: &Feature<'_>) {
         0,
         &["The to-one relationships `?include=` takes, in `snake_case`."],
     );
-    output.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]\n#[serde(rename_all = \"snake_case\")]\n");
+    output.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]\n");
+    push_to_schema(output, feature.openapi);
+    output.push_str("#[serde(rename_all = \"snake_case\")]\n");
     output.push_str(&format!("pub enum {include} {{\n"));
     for relation in &includes {
         push_doc(
@@ -403,6 +385,7 @@ pub fn render_dto(output: &mut String, uses: &mut Uses, feature: &Feature<'_>) {
             )],
         );
         output.push_str("#[derive(Debug, Clone, PartialEq, serde::Serialize)]\n");
+        push_to_schema(output, feature.openapi);
         output.push_str(&format!(
             "pub struct {} {{\n    /// The row.\n    #[serde(flatten)]\n    pub row: {},\n",
             relation.with_response(feature),

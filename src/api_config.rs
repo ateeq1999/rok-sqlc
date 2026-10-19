@@ -36,6 +36,11 @@ pub struct ApiConfig {
     pub prefix: String,
     /// Generate `POST /search` with per-field filters. Off by default.
     pub search_endpoint: bool,
+    /// Describe the API for its OpenAPI document: utoipa's `ToSchema` or
+    /// `IntoParams` on every type a feature exposes, and `ToSchema` on the
+    /// data layer's types inside them. On by default; off, nothing
+    /// generated mentions utoipa.
+    pub openapi: bool,
     /// Tables to generate no API feature for.
     pub exclude: Vec<String>,
     /// Endpoints to leave out, by table.
@@ -72,6 +77,7 @@ impl ApiConfig {
             db_path: Self::DEFAULT_DB_PATH.to_owned(),
             prefix: Self::DEFAULT_PREFIX.to_owned(),
             search_endpoint: false,
+            openapi: true,
             exclude: Vec::new(),
             skip: BTreeMap::new(),
             routes: BTreeMap::new(),

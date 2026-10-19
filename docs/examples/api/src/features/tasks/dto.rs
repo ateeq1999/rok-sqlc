@@ -14,11 +14,12 @@ pub use crate::db::tasks::listing::TaskSort;
 /// `sort` takes a [`TaskSort`], `created_at` unless given.
 pub type ListTasksQuery = ListQuery<TaskSort>;
 
-/// `POST /api/v1/tasks`'s body, checked by the rules of [`NewTask`].
+/// `POST /api/v1/tasks`'s body, checked by the rules of `NewTask`.
 /// A field for a defaulted column may be left out.
-#[derive(Debug, Clone, PartialEq, serde::Deserialize, validator::Validate)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, validator::Validate, utoipa::ToSchema)]
 pub struct CreateTaskDto {
     /// The `project_id` column.
+    #[schema(value_type = uuid::Uuid)]
     pub project_id: ProjectId,
     /// The `title` column.
     #[validate(length(max = 200, message = "title must be at most 200 characters"))]
@@ -44,13 +45,16 @@ impl CreateTaskDto {
     }
 }
 
-/// `PATCH /api/v1/tasks/{id}`'s body, checked by the rules of [`UpdateTask`].
+/// `PATCH /api/v1/tasks/{id}`'s body, checked by the rules of `UpdateTask`.
 /// Every field is optional: a field left out keeps its column's value, and
 /// `null` sets a nullable column to `NULL`.
-#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize, validator::Validate)]
+#[derive(
+    Debug, Clone, Default, PartialEq, serde::Deserialize, validator::Validate, utoipa::ToSchema,
+)]
 #[serde(default)]
 pub struct UpdateTaskDto {
     /// The new value of the `project_id` column.
+    #[schema(value_type = Option<uuid::Uuid>)]
     pub project_id: Option<ProjectId>,
     /// The new value of the `title` column.
     #[validate(length(max = 200, message = "title must be at most 200 characters"))]
@@ -74,13 +78,15 @@ impl From<UpdateTaskDto> for UpdateTask {
 }
 
 /// A `tasks` row as the API answers it.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, utoipa::ToSchema)]
 pub struct TaskResponse {
     /// The `id` column.
+    #[schema(value_type = uuid::Uuid)]
     pub id: TaskId,
     /// The `owner_id` column.
     pub owner_id: uuid::Uuid,
     /// The `project_id` column.
+    #[schema(value_type = uuid::Uuid)]
     pub project_id: ProjectId,
     /// The `title` column.
     pub title: String,
@@ -104,14 +110,15 @@ impl From<Task> for TaskResponse {
 }
 
 /// `GET /api/v1/tasks/{id}`'s query string: `?include=` embeds one to-one relationship.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct GetTaskQuery {
     /// The relationship to embed.
     pub include: Option<TaskInclude>,
 }
 
 /// The to-one relationships `?include=` takes, in `snake_case`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskInclude {
     /// The `project` relationship.
@@ -119,7 +126,7 @@ pub enum TaskInclude {
 }
 
 /// A `tasks` row with its `project`, as `?include=project` answers it.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, utoipa::ToSchema)]
 pub struct TaskWithProjectResponse {
     /// The row.
     #[serde(flatten)]

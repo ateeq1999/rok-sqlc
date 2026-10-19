@@ -5,6 +5,8 @@
 
 use actix_web::web;
 use sqlx::PgPool;
+use utoipa::openapi::Components;
+use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 
 #[path = "projects/mod.rs"]
 pub mod projects;
@@ -25,4 +27,58 @@ pub fn register_services(cfg: &mut web::ServiceConfig, pool: &PgPool) {
 pub fn configure_all(cfg: &mut web::ServiceConfig) {
     projects::routes(cfg);
     tasks::routes(cfg);
+}
+
+/// The `OpenAPI` document of every generated path and schema, with the
+/// `bearer_auth` security scheme. `crate::openapi::document` merges it into
+/// the hand-written `ApiDoc`.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        crate::shared::health::liveness,
+        crate::shared::health::readiness,
+        projects::handlers::list,
+        projects::handlers::create,
+        projects::handlers::get_one,
+        projects::handlers::update,
+        projects::handlers::remove,
+        projects::handlers::list_tasks,
+        tasks::handlers::list,
+        tasks::handlers::create,
+        tasks::handlers::get_one,
+        tasks::handlers::update,
+        tasks::handlers::remove,
+    ),
+    components(schemas(
+        crate::shared::pagination::SortOrder,
+        projects::dto::ProjectSort,
+        tasks::dto::TaskSort,
+        tasks::dto::TaskInclude,
+        tasks::dto::TaskWithProjectResponse,
+    )),
+    modifiers(&BearerAuth),
+    tags(
+        (name = "health"),
+        (name = "projects"),
+        (name = "tasks"),
+    ),
+)]
+pub struct GeneratedApiDoc;
+
+/// Adds the `bearer_auth` security scheme: a JWT as an HTTP bearer token.
+pub struct BearerAuth;
+
+impl utoipa::Modify for BearerAuth {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let description = "A JWT the application signed, sent as `Bearer <token>`.";
+        let scheme = HttpBuilder::new()
+            .scheme(HttpAuthScheme::Bearer)
+            .bearer_format("JWT")
+            .description(Some(description))
+            .build();
+        openapi
+            .components
+            .get_or_insert_with(Components::new)
+            .add_security_scheme("bearer_auth", SecurityScheme::Http(scheme));
+    }
 }

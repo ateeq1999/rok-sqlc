@@ -242,6 +242,7 @@ const QUERY_PARAM: &str = "query: &mut sqlx::QueryBuilder<sqlx::Postgres>";
 
 #[cfg(test)]
 mod tests {
+    use super::super::DeriveOptions;
     use super::super::test_support::{column, table};
     use super::*;
 
@@ -250,7 +251,7 @@ mod tests {
     fn search_code_names_query_builder_without_a_lifetime() {
         let filter = render_filter(&table(vec![column("id", "i64")], &["id"]), &[], false)
             .expect("an i64 column is filterable");
-        for rendered in [render_shared(false), filter] {
+        for rendered in [render_shared(DeriveOptions::default()), filter] {
             assert!(rendered.contains("QueryBuilder<"), "{rendered}");
             assert!(!rendered.contains("QueryBuilder<'"), "{rendered}");
         }
@@ -271,8 +272,11 @@ mod tests {
 
     #[test]
     fn serde_derives_shared_conditions_and_sorting_but_not_pages() {
-        assert!(!render_shared(false).contains("serde"));
-        let rendered = render_shared(true);
+        assert!(!render_shared(DeriveOptions::default()).contains("serde"));
+        let rendered = render_shared(DeriveOptions {
+            serde: true,
+            ..DeriveOptions::default()
+        });
         // Enums serialize their variants in snake_case, as JSON APIs expect.
         for item in [
             "pub enum Direction {",

@@ -20,6 +20,10 @@ _Avoid_: resource (that is the generated database module), controller, endpoint 
 The URL path under which an API feature's routes are mounted, such as `/users`.
 _Avoid_: resource path, prefix
 
+**API document**:
+The OpenAPI description of a generated API, served at `/api-docs/openapi.json`: every route of every API feature, who may call it, what it takes, and every answer it can give.
+_Avoid_: spec, Swagger file, snapshot (that is the schema snapshot)
+
 **Service**:
 The layer of an API feature between its handlers and its resource, where business rules, authorization, and side effects live. Written once by rok-sqlc as a starting point and owned by the user from then on.
 _Avoid_: use case, manager, repository (the resource plays that role)

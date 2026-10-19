@@ -4,6 +4,7 @@
 
 use super::feature::{Endpoint, Feature, Key};
 use super::layout::{Uses, push_call, push_signature};
+use super::paths;
 use super::relation_routes;
 use super::scope;
 use crate::generator::{FN_CALL_WIDTH, HEADER, MAX_WIDTH, push_doc};
@@ -135,12 +136,13 @@ fn render_handler(output: &mut String, uses: &mut Uses, feature: &Feature<'_>, e
     if endpoint == Endpoint::Update && feature.version.is_some() {
         doc.push("`If-Match` must hold the row's current `ETag`.".to_owned());
     }
-    let includes = endpoint == Endpoint::GetOne && relation_routes::has_includes(feature);
+    let includes = endpoint == Endpoint::GetOne && !feature.includes().is_empty();
     if includes {
         doc.push("`?include=` embeds a to-one relationship.".to_owned());
     }
     let doc: Vec<&str> = doc.iter().map(String::as_str).collect();
     push_doc(output, 0, &doc);
+    paths::push_endpoint(output, uses, feature, endpoint);
     if includes {
         relation_routes::render_get_one(output, uses, feature);
         return;
@@ -266,6 +268,7 @@ fn render_lookup(
             lookup.column.sql_name
         )],
     );
+    paths::push_lookup(output, uses, feature, lookup);
     let scope = own_scope(feature, uses);
     let mut params = vec![format!("service: web::Data<{}>", feature.service())];
     params.extend(scope.params);

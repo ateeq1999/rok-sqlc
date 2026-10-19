@@ -46,22 +46,35 @@ pub fn serde_derives(serde: bool) -> &'static [&'static str] {
 
 /// What a run's `derive` asks of the generated items: serde's derives
 /// (ADR 0013), and `validator::Validate` with its rules on create inputs and
-/// update patches (ADR 0015).
+/// update patches (ADR 0015), and with `[api] openapi`, utoipa's
+/// `ToSchema` on the types an API feature exposes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DeriveOptions {
     /// `derive = ["serde"]`.
     pub serde: bool,
     /// `derive = ["validate"]`.
     pub validate: bool,
+    /// `api.output` with `[api] openapi` on: the typed ids and enums derive
+    /// `utoipa::ToSchema`.
+    pub openapi: bool,
 }
 
 impl DeriveOptions {
-    /// The options `derive` lists.
-    pub fn of(derive: &[Derive]) -> Self {
+    /// The options `derive` lists, and `openapi`.
+    pub fn of(derive: &[Derive], openapi: bool) -> Self {
         DeriveOptions {
             serde: derive.contains(&Derive::Serde),
             validate: derive.contains(&Derive::Validate),
+            openapi,
         }
+    }
+
+    /// The derives of a typed id or an enum, which the API may expose:
+    /// serde's, then `utoipa::ToSchema` with `openapi`.
+    pub fn value_derives(self) -> Vec<&'static str> {
+        let mut derives = serde_derives(self.serde).to_vec();
+        derives.extend(super::openapi::to_schema(self.openapi));
+        derives
     }
 
     /// The derives a create input or update patch adds: serde's, then
@@ -73,6 +86,18 @@ impl DeriveOptions {
         }
         derives
     }
+}
+
+/// `template` with the first `pattern` replaced by `with`. A template
+/// written without `pattern` is a bug in the template or in its patch, so a
+/// debug build panics instead of leaving the text silently unpatched; each
+/// patched template has a unit test running its patches.
+pub fn replace_once(template: &str, pattern: &str, with: &str) -> String {
+    debug_assert!(
+        template.contains(pattern),
+        "the template no longer holds {pattern:?}"
+    );
+    template.replacen(pattern, with, 1)
 }
 
 /// Adds `extra` derives to the `#[derive(...)]` line `output` ends with, laid
@@ -92,14 +117,14 @@ pub fn push_derives(output: &mut String, extra: &[&str]) {
         .to_owned();
     output.truncate(start);
     let derives = format!("{derives}, {}", extra.join(", "));
-    // Like a use list, rustfmt keeps the list on one line only up to 98
-    // columns, then on one indented line up to 99, then one per line.
+    // rustfmt keeps the list on one line only up to 96 columns, then on one
+    // indented line up to 100, then one per line.
     let one_line = format!("#[derive({derives})]");
     let packed = format!("    {derives},");
-    if one_line.len() < MAX_WIDTH - 1 {
+    if one_line.len() <= MAX_WIDTH - 4 {
         output.push_str(&one_line);
         output.push('\n');
-    } else if packed.len() < MAX_WIDTH {
+    } else if packed.len() <= MAX_WIDTH {
         output.push_str(&format!("#[derive(\n{packed}\n)]\n"));
     } else {
         output.push_str("#[derive(\n");

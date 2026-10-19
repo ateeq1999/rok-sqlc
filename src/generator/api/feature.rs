@@ -143,6 +143,8 @@ pub struct Feature<'a> {
     pub db_path: &'a str,
     /// The feature's URL: the prefix and the route base, `/api/v1/notes`.
     pub url: String,
+    /// The OpenAPI tag: the route base without its leading slash, `notes`.
+    pub tag: String,
     pub key: Option<Key<'a>>,
     /// The endpoints served, in [`Endpoint::ALL`] order.
     pub endpoints: Vec<Endpoint>,
@@ -177,6 +179,9 @@ pub struct Feature<'a> {
     /// Whether the data layer's filter can fail (it has relationship
     /// fields), so pushing its `WHERE` clause takes a `?`.
     pub filter_fallible: bool,
+    /// Whether the types the feature exposes derive utoipa's `ToSchema` or
+    /// `IntoParams` (`[api] openapi`).
+    pub openapi: bool,
 }
 
 impl<'a> Feature<'a> {
@@ -250,6 +255,7 @@ impl<'a> Feature<'a> {
             table,
             db_path: &api.db_path,
             url: format!("{}{base}", api.prefix.trim_end_matches('/')),
+            tag: base.trim_start_matches('/').to_owned(),
             key,
             endpoints,
             search,
@@ -263,6 +269,7 @@ impl<'a> Feature<'a> {
             lookups,
             relations: Vec::new(),
             filter_fallible: !filter_relationships(table, tables).is_empty(),
+            openapi: api.openapi,
         }))
     }
 

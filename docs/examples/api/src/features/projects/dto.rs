@@ -12,9 +12,9 @@ pub use crate::db::projects::listing::ProjectSort;
 /// `sort` takes a [`ProjectSort`], `created_at` unless given.
 pub type ListProjectsQuery = ListQuery<ProjectSort>;
 
-/// `POST /api/v1/projects`'s body, checked by the rules of [`NewProject`].
+/// `POST /api/v1/projects`'s body, checked by the rules of `NewProject`.
 /// A field for a defaulted column may be left out.
-#[derive(Debug, Clone, PartialEq, serde::Deserialize, validator::Validate)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, validator::Validate, utoipa::ToSchema)]
 pub struct CreateProjectDto {
     /// The `name` column.
     #[validate(length(max = 80, message = "name must be at most 80 characters"))]
@@ -40,10 +40,12 @@ impl CreateProjectDto {
     }
 }
 
-/// `PATCH /api/v1/projects/{id}`'s body, checked by the rules of [`UpdateProject`].
+/// `PATCH /api/v1/projects/{id}`'s body, checked by the rules of `UpdateProject`.
 /// Every field is optional: a field left out keeps its column's value, and
 /// `null` sets a nullable column to `NULL`.
-#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize, validator::Validate)]
+#[derive(
+    Debug, Clone, Default, PartialEq, serde::Deserialize, validator::Validate, utoipa::ToSchema,
+)]
 #[serde(default)]
 pub struct UpdateProjectDto {
     /// The new value of the `name` column.
@@ -68,9 +70,10 @@ impl From<UpdateProjectDto> for UpdateProject {
 }
 
 /// A `projects` row as the API answers it.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, utoipa::ToSchema)]
 pub struct ProjectResponse {
     /// The `id` column.
+    #[schema(value_type = uuid::Uuid)]
     pub id: ProjectId,
     /// The `owner_id` column.
     pub owner_id: uuid::Uuid,

@@ -167,12 +167,36 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
 }
 ```
 
-A handler extracts the caller, the path, the query and a validated body,
-calls one service method, and maps the row to its response:
+A handler carries `#[utoipa::path]`, documenting exactly the statuses it
+can answer, then extracts the caller, the path, the query and a validated
+body, calls one service method, and maps the row to its response:
 
 <!-- source: docs/examples/api/src/features/tasks/handlers.rs -->
 ```rust
 /// `POST /api/v1/tasks`: creates a row, `201` with its `Location`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/tasks",
+    tag = "tasks",
+    operation_id = "create",
+    request_body = CreateTaskDto,
+    responses(
+        (
+            status = 201,
+            description = "The row, created.",
+            body = TaskResponse,
+            headers(
+                ("Location" = String, description = "The created row's URL."),
+            ),
+        ),
+        (status = 400, description = "A malformed path, query or body.", body = ErrorBody),
+        (status = 401, description = "No valid bearer token.", body = ErrorBody),
+        (status = 409, description = "A unique or foreign-key violation.", body = ErrorBody),
+        (status = 413, description = "The body is over the limit.", body = ErrorBody),
+        (status = 422, description = "The body breaks a rule or a check.", body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+)]
 pub async fn create(
     service: web::Data<TasksService>,
     user: AuthUser,
@@ -189,15 +213,18 @@ pub async fn create(
 
 `dto.rs` holds the bodies. Their validation rules come from the schema
 (`VARCHAR(200)` gives `length(max = 200)`), and an owned table's owner
-column is left out: the service sets it from the caller.
+column is left out: the service sets it from the caller. Each body derives
+utoipa's `ToSchema` for the OpenAPI document, which shows a typed id as its
+inner type.
 
 <!-- source: docs/examples/api/src/features/tasks/dto.rs -->
 ```rust
-/// `POST /api/v1/tasks`'s body, checked by the rules of [`NewTask`].
+/// `POST /api/v1/tasks`'s body, checked by the rules of `NewTask`.
 /// A field for a defaulted column may be left out.
-#[derive(Debug, Clone, PartialEq, serde::Deserialize, validator::Validate)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, validator::Validate, utoipa::ToSchema)]
 pub struct CreateTaskDto {
     /// The `project_id` column.
+    #[schema(value_type = uuid::Uuid)]
     pub project_id: ProjectId,
     /// The `title` column.
     #[validate(length(max = 200, message = "title must be at most 200 characters"))]

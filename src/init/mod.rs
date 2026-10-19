@@ -6,7 +6,8 @@
 //! `pub`) with a thin `src/main.rs` that starts it, so generated code the
 //! application does not use yet never warns. The skeleton refers to paths
 //! that generation fills in: `crate::features::{register_services,
-//! configure_all}` from the generated `features/generated.rs`,
+//! configure_all, GeneratedApiDoc}` from the generated
+//! `features/generated.rs`,
 //! `crate::shared::{health, pagination, response, tenant, validation}`, and
 //! `crate::db::pool::{PoolSettings, init_pool}`.
 
@@ -33,6 +34,7 @@ const TEMPLATES: &[(&str, &str)] = &[
     ),
     ("src/lib.rs", include_str!("templates/lib.rs")),
     ("src/main.rs", include_str!("templates/main.rs")),
+    ("src/openapi.rs", include_str!("templates/openapi.rs")),
     (
         "src/shared/auth.rs",
         include_str!("templates/shared/auth.rs"),

@@ -118,7 +118,7 @@ impl<K> Sort<K> {
 }
 
 /// A condition on a number, decimal, date, or time column.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Ordered<T> {
     /// Equal to the value.
@@ -134,6 +134,7 @@ pub enum Ordered<T> {
     /// Greater than or equal to the value.
     Ge(T),
     /// Between the two values, inclusive on both ends.
+    #[schema(value_type = Value)]
     Between(T, T),
     /// Equal to one of the values.
     In(Vec<T>),
@@ -170,7 +171,7 @@ impl<T> Ordered<T> {
 }
 
 /// A condition on a boolean or UUID column.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Equality<T> {
     /// Equal to the value.
@@ -291,7 +292,7 @@ pub fn correlate(
 
 /// A condition on a text column. The substring variants match their
 /// argument literally: `%`, `_`, and `\` in it are escaped.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Text {
     /// Equal to the text.

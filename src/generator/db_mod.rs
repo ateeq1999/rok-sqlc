@@ -60,6 +60,13 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
 ",
         );
     }
+    if derives.openapi {
+        output.push_str(&format!(
+            "//   {}\n",
+            super::openapi::dependency_hint(tables)
+        ));
+        output.push_str(super::openapi::SWAGGER_UI_HINT);
+    }
     output.push('\n');
     // Sorted the way rustfmt sorts `mod` declarations.
     let mut modules: Vec<&str> = tables
@@ -251,6 +258,7 @@ mod tests {
                 derives: DeriveOptions {
                     serde,
                     validate: false,
+                    openapi: false,
                 },
                 extractors: &[],
             },
@@ -308,6 +316,7 @@ mod tests {
                     derives: DeriveOptions {
                         serde: true,
                         validate,
+                        openapi: false,
                     },
                     extractors: &[],
                 },

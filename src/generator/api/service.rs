@@ -66,29 +66,37 @@ pub fn render_api(feature: &Feature<'_>) -> String {
     output.push_str("    fn pool(&self) -> &PgPool;\n");
     output.push_str(&body);
     output.push_str("}\n");
-    if feature.key.is_some() {
+    // Each error helper only when a method calls it: `-D warnings` rejects
+    // dead code, and a list-only feature reads no row by key.
+    if calls(&body, "not_found") {
         output.push_str(&format!(
             "\n/// The `404` of a key no `{}` row has.\nfn not_found() -> AppError {{\n    AppError::NotFound(\"no `{}` row has this key\".to_owned())\n}}\n",
             feature.table.display_name(),
             feature.table.display_name(),
         ));
     }
-    if feature
-        .relations
-        .iter()
-        .any(|relation| relation.writes().is_some())
-    {
+    if calls(&body, "not_found_in") {
         output.push_str(
             "\n/// The `404` naming a related `table`: no row of it the caller may see has\n/// this key, or none is paired with the row.\nfn not_found_in(table: &str) -> AppError {\n    AppError::NotFound(format!(\"no `{table}` row has this key\"))\n}\n",
         );
     }
-    if feature.version.is_some() && feature.serves(Endpoint::Update) {
+    if calls(&body, "stale") {
         output.push_str(&format!(
             "\n/// The `412` of an `If-Match` that isn't the `{}` row's version.\nfn stale() -> AppError {{\n    AppError::VersionConflict(\"the row has changed since this version\".to_owned())\n}}\n",
             feature.table.display_name(),
         ));
     }
     output
+}
+
+/// Whether the generated `body` calls the function `name`: `name(...)`, or
+/// `name` handed to `ok_or_else`.
+fn calls(body: &str, name: &str) -> bool {
+    body.match_indices(name).any(|(at, _)| {
+        let before = body[..at].chars().next_back();
+        let after = body[at + name.len()..].chars().next();
+        !before.is_some_and(|c| c.is_alphanumeric() || c == '_') && matches!(after, Some('(' | ')'))
+    })
 }
 
 /// The key argument the data layer takes: the key, or a borrow of it.

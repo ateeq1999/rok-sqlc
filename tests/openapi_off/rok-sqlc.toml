@@ -1,0 +1,54 @@
+# `tests/api_openapi.rs`: `tests/api-app`'s migrations and API settings,
+# with `openapi = false`. `milestone-1.txt` is what milestone 1's binary
+# (commit a685022, before OpenAPI) generated from this file without the
+# `openapi` key, which it didn't know.
+
+schema = "migrations"
+output = "src/db"
+derive = ["serde", "validate"]
+extractors = ["actix_web"]
+
+[conventions]
+primary_key_ids = "uuid_v7"
+tenant_column = "tenant_id"
+version_column = "revision"
+soft_delete_column = "deleted_at"
+
+[relationships.notes]
+members = "memberships"
+
+[api]
+output = "src/features"
+search_endpoint = true
+openapi = false
+
+[api.skip]
+labels = ["remove"]
+
+[api.routes]
+audit_events = "/audit-log"
+
+[api.access]
+notes = "public"
+members = "public"
+audit_events = "public"
+labels = "public"
+drafts = "public"
+gadgets = "public"
+accounts = "admin"
+documents = "admin"
+
+[api.owner]
+tasks = "owner_id"
+documents = "owner_id"
+
+[api.hidden]
+accounts = ["password_hash"]
+documents = ["secret"]
+
+[api.search]
+notes = ["title", "body"]
+labels = ["name"]
+
+[api.sort]
+notes = ["title", "priority", "created_at"]

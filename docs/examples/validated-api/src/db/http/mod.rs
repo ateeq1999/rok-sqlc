@@ -62,11 +62,11 @@ impl ErrorBody {
     }
 }
 
-/// The `error` of an [`ErrorBody`].
+/// The `error` of an `ErrorBody`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ErrorPayload {
-    /// A `snake_case` code for programs, such as [`BAD_REQUEST`],
-    /// [`PAYLOAD_TOO_LARGE`] or [`VALIDATION_FAILED`].
+    /// A `snake_case` code for programs, such as `BAD_REQUEST`,
+    /// `PAYLOAD_TOO_LARGE` or `VALIDATION_FAILED`.
     pub code: String,
     /// A message for people.
     pub message: String,

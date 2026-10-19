@@ -112,6 +112,32 @@ the *generated* API count as breaking (see ADR 0012).
   yours. The README gains a "Generated APIs" section. Their samples come
   from `docs/examples/api`, a project started with `init`, which the test
   suite regenerates, compiles and runs `check-arch` on.
+- The OpenAPI document of generated API features (ADR 0016), with utoipa 5
+  and utoipa-swagger-ui 9, on by default and off with `[api] openapi =
+  false` (`ApiConfig::openapi`), which leaves output with no utoipa at all.
+  Every type a feature exposes derives `ToSchema` (query strings
+  `IntoParams`), as do the data layer's typed ids, enums, sort keys, search
+  conditions and `ErrorBody`. Every generated handler carries
+  `#[utoipa::path]`: its absolute path, a tag per feature (the route base),
+  the handler's name as operation id, its params and body,
+  `security(("bearer_auth" = []))` when it needs a caller, and exactly the
+  statuses it answers, each error with `ErrorBody`. `generated.rs` gains
+  `GeneratedApiDoc` and the `BearerAuth` modifier (HTTP bearer, JWT).
+  `init` scaffolds `src/openapi.rs` (`ApiDoc` for hand-written paths and
+  `document()`, merging the generated document in), and its `app.rs`
+  serves `/api-docs/openapi.json` and Swagger UI at `/docs/`. The
+  dependency hints add `utoipa` (with the features the columns need) and
+  `utoipa-swagger-ui` with `vendored`, so builds need no network. Health's
+  handlers are `liveness` and `readiness`, the target document's
+  operation ids. The guide gains an OpenAPI page.
+- A list takes and documents `q` only when its table has `[api.search]`
+  columns: the others' query string is the new shared `PageQuery`, which
+  has no `q` (an unknown parameter is ignored, as before). The `bearer_auth`
+  scheme has a description, and no OpenAPI description shows rustdoc link
+  syntax.
+- With `[api] openapi = false`, `rok-sqlc g` warns while the scaffolded
+  `src/openapi.rs` still uses `GeneratedApiDoc` (`Report::warnings` in the
+  library), and the OpenAPI guide lists the scaffolded lines to remove.
 
 ## [0.3.0] - 2026-10-17
 

@@ -13,9 +13,27 @@ use super::service::ProjectsService;
 use super::service_api::ProjectsServiceApi;
 use crate::error::AppError;
 use crate::shared::auth::AuthUser;
+use crate::shared::response::{ErrorBody, PaginatedResponse};
 use crate::shared::validation::ValidatedJson;
 
 /// `GET /api/v1/projects`: one page of rows, `200`.
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects",
+    tag = "projects",
+    operation_id = "list",
+    params(ListProjectsQuery),
+    responses(
+        (
+            status = 200,
+            description = "One page of rows.",
+            body = PaginatedResponse<ProjectResponse>,
+        ),
+        (status = 400, description = "A malformed path, query or body.", body = ErrorBody),
+        (status = 401, description = "No valid bearer token.", body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+)]
 pub async fn list(
     service: web::Data<ProjectsService>,
     user: AuthUser,
@@ -27,6 +45,29 @@ pub async fn list(
 }
 
 /// `POST /api/v1/projects`: creates a row, `201` with its `Location`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects",
+    tag = "projects",
+    operation_id = "create",
+    request_body = CreateProjectDto,
+    responses(
+        (
+            status = 201,
+            description = "The row, created.",
+            body = ProjectResponse,
+            headers(
+                ("Location" = String, description = "The created row's URL."),
+            ),
+        ),
+        (status = 400, description = "A malformed path, query or body.", body = ErrorBody),
+        (status = 401, description = "No valid bearer token.", body = ErrorBody),
+        (status = 409, description = "A unique or foreign-key violation.", body = ErrorBody),
+        (status = 413, description = "The body is over the limit.", body = ErrorBody),
+        (status = 422, description = "The body breaks a rule or a check.", body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+)]
 pub async fn create(
     service: web::Data<ProjectsService>,
     user: AuthUser,
@@ -41,6 +82,20 @@ pub async fn create(
 }
 
 /// `GET /api/v1/projects/{id}`: the row, `200`.
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{id}",
+    tag = "projects",
+    operation_id = "get_one",
+    params(("id" = uuid::Uuid, Path, description = "The `id` column.")),
+    responses(
+        (status = 200, description = "The row.", body = ProjectResponse),
+        (status = 400, description = "A malformed path, query or body.", body = ErrorBody),
+        (status = 401, description = "No valid bearer token.", body = ErrorBody),
+        (status = 404, description = "No such row, or not the caller's.", body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+)]
 pub async fn get_one(
     service: web::Data<ProjectsService>,
     user: AuthUser,
@@ -52,6 +107,23 @@ pub async fn get_one(
 }
 
 /// `PATCH /api/v1/projects/{id}`: changes the row, `200` with it.
+#[utoipa::path(
+    patch,
+    path = "/api/v1/projects/{id}",
+    tag = "projects",
+    operation_id = "update",
+    params(("id" = uuid::Uuid, Path, description = "The `id` column.")),
+    request_body = UpdateProjectDto,
+    responses(
+        (status = 200, description = "The row, changed.", body = ProjectResponse),
+        (status = 400, description = "A malformed path, query or body.", body = ErrorBody),
+        (status = 401, description = "No valid bearer token.", body = ErrorBody),
+        (status = 404, description = "No such row, or not the caller's.", body = ErrorBody),
+        (status = 413, description = "The body is over the limit.", body = ErrorBody),
+        (status = 422, description = "The body breaks a rule or a check.", body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+)]
 pub async fn update(
     service: web::Data<ProjectsService>,
     user: AuthUser,
@@ -65,6 +137,21 @@ pub async fn update(
 }
 
 /// `DELETE /api/v1/projects/{id}`: deletes the row, `204`.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/projects/{id}",
+    tag = "projects",
+    operation_id = "remove",
+    params(("id" = uuid::Uuid, Path, description = "The `id` column.")),
+    responses(
+        (status = 204, description = "The row, deleted."),
+        (status = 400, description = "A malformed path, query or body.", body = ErrorBody),
+        (status = 401, description = "No valid bearer token.", body = ErrorBody),
+        (status = 404, description = "No such row, or not the caller's.", body = ErrorBody),
+        (status = 409, description = "A unique or foreign-key violation.", body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+)]
 pub async fn remove(
     service: web::Data<ProjectsService>,
     user: AuthUser,
@@ -76,6 +163,20 @@ pub async fn remove(
 }
 
 /// `GET /api/v1/projects/{id}/tasks`: the row's `tasks`, `200` with a JSON array.
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{id}/tasks",
+    tag = "projects",
+    operation_id = "list_tasks",
+    params(("id" = uuid::Uuid, Path, description = "The `id` column.")),
+    responses(
+        (status = 200, description = "The related rows.", body = Vec<TaskResponse>),
+        (status = 400, description = "A malformed path, query or body.", body = ErrorBody),
+        (status = 401, description = "No valid bearer token.", body = ErrorBody),
+        (status = 404, description = "No such row, or not the caller's.", body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+)]
 pub async fn list_tasks(
     service: web::Data<ProjectsService>,
     user: AuthUser,

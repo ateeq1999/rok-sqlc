@@ -34,7 +34,7 @@ fn example_dirs() -> [PathBuf; 4] {
 }
 
 /// The guide's pages, which must all exist.
-const GUIDE_PAGES: [&str; 3] = ["index.md", "architecture.md", "layout.md"];
+const GUIDE_PAGES: [&str; 4] = ["index.md", "architecture.md", "layout.md", "openapi.md"];
 
 /// Every document whose samples are checked, as (repository-relative path,
 /// text): the README, then every Markdown page of `docs/guide/`.

@@ -101,6 +101,9 @@ async fn a_table_without_a_key_gets_list_and_create_under_its_route_base() {
     assert_eq!(list.body["items"][0]["action"], "logout");
     let list = get(&db, "/api/v1/audit-log?sort=created_at&order=asc").await;
     assert_eq!(list.body["items"][0]["action"], "login");
+    // No search columns: `q` is an unknown parameter, ignored like any other.
+    let list = get(&db, "/api/v1/audit-log?q=nothing-matches").await;
+    assert_eq!(list.body["total"], 2, "{list:?}");
 
     // No `/{id}` routes, and not the default route base.
     assert_eq!(

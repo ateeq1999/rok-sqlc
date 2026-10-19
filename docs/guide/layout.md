@@ -19,7 +19,7 @@ behaves differently when you run `rok-sqlc g` again:
 |---|---|---|
 | `rok-sqlc.toml` | scaffolded | `init` |
 | `AGENTS.md` | scaffolded | `init` |
-| `src/lib.rs`, `src/main.rs`, `src/app.rs`, `src/config.rs`, `src/error.rs` | scaffolded | `init` |
+| `src/lib.rs`, `src/main.rs`, `src/app.rs`, `src/config.rs`, `src/error.rs`, `src/openapi.rs` | scaffolded | `init` |
 | `src/shared/mod.rs`, `src/shared/auth.rs` | scaffolded | `init` |
 | `src/shared/response.rs`, `pagination.rs`, `validation.rs`, `tenant.rs`, `health.rs` | generated | `g` |
 | `src/db/**` (rows, typed ids, SQL, `pool.rs`, `queries.rs`) | generated | `g` |

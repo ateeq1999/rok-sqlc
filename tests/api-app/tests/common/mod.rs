@@ -255,3 +255,39 @@ pub fn assert_error(answer: &Answer, status: StatusCode, code: &str) {
         "{answer:?}"
     );
 }
+
+/// `GET uri` against the whole application, over a pool that never
+/// connects: the document and Swagger UI need no database. Returns the
+/// status, the `Content-Type` and `Location` headers, and the body.
+pub async fn fetch(uri: &str) -> (StatusCode, String, String, Vec<u8>) {
+    let pool = PgPool::connect_lazy("postgres://localhost/unused").expect("a well-formed URL");
+    let keys = web::Data::new(JwtKeys::new("unused"));
+    let app = App::new().configure(move |cfg| configure(cfg, &pool, &keys));
+    let app = actix_test::init_service(app).await;
+    let request = actix_test::TestRequest::get().uri(uri).to_request();
+    let response = actix_test::call_service(&app, request).await;
+    let status = response.status();
+    let header = |name| {
+        response
+            .headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let content_type = header(header::CONTENT_TYPE);
+    let location = header(header::LOCATION);
+    let body = actix_test::read_body(response).await.to_vec();
+    (status, content_type, location, body)
+}
+
+/// The served OpenAPI document, `/api-docs/openapi.json`.
+pub async fn document() -> Value {
+    let (status, content_type, _, body) = fetch("/api-docs/openapi.json").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        content_type.starts_with("application/json"),
+        "{content_type}"
+    );
+    serde_json::from_slice(&body).expect("a JSON document")
+}

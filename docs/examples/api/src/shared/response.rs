@@ -9,7 +9,7 @@ use super::pagination::Pagination;
 pub use crate::db::http::{ErrorBody, ErrorPayload};
 
 /// One page of a list: `{"items", "page", "per_page", "total"}`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PaginatedResponse<T> {
     /// The page's rows.
     pub items: Vec<T>,

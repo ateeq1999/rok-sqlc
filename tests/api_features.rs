@@ -140,7 +140,10 @@ fn each_table_but_join_tables_and_excluded_ones_gets_a_feature() -> Result<()> {
             "{generated}"
         );
     }
-    assert!(!generated.contains("tags"), "{generated}");
+    // No `tags` or `post_tags` module (`tags(...)` is the document's).
+    for absent in ["mod tags;", "mod post_tags;", "tags::"] {
+        assert!(!generated.contains(absent), "{absent}\n{generated}");
+    }
     assert!(
         generated.contains("pub fn register_services(cfg: &mut web::ServiceConfig, pool: &PgPool)")
     );
@@ -196,6 +199,31 @@ fn a_table_without_a_key_serves_list_and_create_and_skips_drop_methods() -> Resu
     let listing = project.read("src/db/posts/listing.rs")?;
     assert!(!listing.contains("list_matching"), "{listing}");
     assert!(listing.contains("pub async fn attach_tags"), "{listing}");
+    Ok(())
+}
+
+/// A feature serving only its list declares no `404` helper, which nothing
+/// would call: `-D warnings` rejects dead code.
+#[test]
+fn a_list_only_feature_declares_no_unused_helper() -> Result<()> {
+    let project = Project::new(SCHEMA)?;
+    let mut config = project.config();
+    api(&mut config).skip.insert(
+        "users".into(),
+        vec![
+            ApiEndpoint::Create,
+            ApiEndpoint::GetOne,
+            ApiEndpoint::Update,
+            ApiEndpoint::Remove,
+        ],
+    );
+    rok_sqlc::generate(&config)?;
+    let service = project.read("src/features/users/service_api.rs")?;
+    assert!(service.contains("async fn list("), "{service}");
+    assert!(!service.contains("not_found"), "{service}");
+    // A feature reading its rows by key keeps it.
+    let service = project.read("src/features/posts/service_api.rs")?;
+    assert!(service.contains("fn not_found() -> AppError"), "{service}");
     Ok(())
 }
 
