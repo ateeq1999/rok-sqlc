@@ -8,16 +8,18 @@
 
 #![allow(dead_code, reason = "each test file uses some of the helpers")]
 
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use actix_api::app::{AppState, configure};
+use actix_api::config::Config;
 use actix_api::db::schema::SCHEMA_SQL;
 use actix_api::db::types::Role;
 use actix_api::db::users::models::NewUser;
 use actix_api::db::users::write;
-use actix_api::shared::mail::{Mail, MemoryMailer, Outbox, Sender, Templates};
+use actix_api::shared::mail::{Mail, MemoryMailer, Outbox, Sender};
 use actix_api::shared::security::jwt::JwtKeys;
 use actix_web::http::{Method, StatusCode, header};
 use actix_web::{App, test, web};
@@ -95,7 +97,8 @@ impl Answer {
 }
 
 /// Sends `method uri`, with the bearer `token` and the JSON `body` when
-/// given, to the whole application over `pool`.
+/// given, to the whole application over `pool`, built afresh from
+/// [`state`] (so its rate limit starts empty).
 pub async fn call(
     pool: &PgPool,
     token: Option<&str>,
@@ -103,8 +106,19 @@ pub async fn call(
     uri: &str,
     body: Option<Value>,
 ) -> Result<Answer, Box<dyn std::error::Error>> {
-    let state = state(pool);
-    let app = test::init_service(App::new().configure(|cfg| configure(cfg, &state))).await;
+    call_with(&state(pool)?, token, method, uri, body).await
+}
+
+/// Sends `method uri` like [`call`], to the application over `state`:
+/// calls sharing a state share its rate limit.
+pub async fn call_with(
+    state: &AppState,
+    token: Option<&str>,
+    method: Method,
+    uri: &str,
+    body: Option<Value>,
+) -> Result<Answer, Box<dyn std::error::Error>> {
+    let app = test::init_service(App::new().configure(|cfg| configure(cfg, state))).await;
     let mut request = test::TestRequest::default().method(method).uri(uri);
     if let Some(token) = token {
         request = request.insert_header((header::AUTHORIZATION, format!("Bearer {token}")));
@@ -168,14 +182,34 @@ pub async fn user(pool: &PgPool) -> Result<String, Box<dyn std::error::Error>> {
     Ok(account(pool, Role::User).await?.1)
 }
 
+/// The settings the test application runs with: [`SECRET`] for 1h tokens,
+/// links under [`APP_URL`] and the defaults, with `overrides` (such as
+/// `("REQUIRE_VERIFIED_EMAIL", "false")`) set on top.
+pub fn config(overrides: &[(&str, &str)]) -> Result<Config, Box<dyn std::error::Error>> {
+    let mut vars: HashMap<&str, &str> = HashMap::from([
+        ("DATABASE_URL", "postgres://unused"),
+        ("JWT_SECRET", SECRET),
+        ("JWT_TTL", "3600"),
+        ("APP_URL", APP_URL),
+    ]);
+    vars.extend(overrides.iter().copied());
+    Ok(Config::from_vars(|name| {
+        vars.get(name).map(|value| (*value).to_owned())
+    })?)
+}
+
 /// The application's state over `pool`, as the tests configure it.
-pub fn state(pool: &PgPool) -> AppState {
-    AppState {
-        pool: pool.clone(),
-        keys: keys(),
-        outbox: web::Data::new(Outbox::new()),
-        templates: web::Data::new(Templates::new(APP_URL)),
-    }
+pub fn state(pool: &PgPool) -> Result<AppState, Box<dyn std::error::Error>> {
+    state_with(pool, &[])
+}
+
+/// The application's state over `pool`, with the settings `overrides` (see
+/// [`config`]).
+pub fn state_with(
+    pool: &PgPool,
+    overrides: &[(&str, &str)],
+) -> Result<AppState, Box<dyn std::error::Error>> {
+    Ok(AppState::new(pool.clone(), &config(overrides)?))
 }
 
 /// Delivers every due mail in `pool`'s outbox, as the sender would, and
@@ -195,4 +229,63 @@ pub fn mailed_token(mail: &Mail) -> Option<String> {
         .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
         .collect();
     (!token.is_empty()).then_some(token)
+}
+
+/// A password the sign-up helpers use: within the policy, and not one a
+/// breach check knows.
+pub const PASSWORD: &str = "a long and unusual passphrase";
+
+/// Signs `email` up with `password` (`POST /auth/register`), verifies it
+/// with the mailed link, and signs in: the new account's bearer token. The
+/// outbox is delivered (and its mail dropped) on the way.
+pub async fn register_verified(
+    pool: &PgPool,
+    email: &str,
+    password: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let credentials = serde_json::json!({"email": email, "password": password});
+    let register = "/api/v1/auth/register";
+    let answer = call(
+        pool,
+        None,
+        Method::POST,
+        register,
+        Some(credentials.clone()),
+    )
+    .await?;
+    if answer.status != StatusCode::CREATED {
+        return Err(format!("register answered {}: {}", answer.status, answer.body).into());
+    }
+    let address = email.trim().to_lowercase();
+    let link = mailed(pool)
+        .await?
+        .iter()
+        .rev()
+        .find(|mail| mail.to == address)
+        .and_then(mailed_token)
+        .ok_or("no verification mail")?;
+    let body = serde_json::json!({"token": link});
+    let answer = call(
+        pool,
+        None,
+        Method::POST,
+        "/api/v1/auth/email/verify",
+        Some(body),
+    )
+    .await?;
+    if answer.status != StatusCode::OK {
+        return Err(format!("verify answered {}: {}", answer.status, answer.body).into());
+    }
+    let answer = call(
+        pool,
+        None,
+        Method::POST,
+        "/api/v1/auth/login",
+        Some(credentials),
+    )
+    .await?;
+    match answer.body["access_token"].as_str() {
+        Some(token) => Ok(token.to_owned()),
+        None => Err(format!("login answered {}: {}", answer.status, answer.body).into()),
+    }
 }

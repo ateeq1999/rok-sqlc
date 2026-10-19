@@ -5,5 +5,7 @@
 //! `configure_all`, which `app.rs` calls. Declare a hand-written feature
 //! here (`pub mod <name>;`) and mount it in `app.rs`.
 
+pub mod account;
+pub mod auth;
 mod generated;
 pub use generated::*;

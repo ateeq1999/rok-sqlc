@@ -116,6 +116,20 @@ can answer.
 The scaffolded `src/error.rs` maps each `AppError` variant to its code and
 status. It is yours: add a variant there for a new error case.
 
+The actix template (`init --template actix`) adds four for its account
+flows:
+
+| Code | Status | When |
+|---|---|---|
+| `invalid_token` | 400 | a mailed link's token is unknown, expired or already used |
+| `wrong_password` | 400 | the current password a flow asks for again doesn't match |
+| `breached_password` | 400 | a new password appears in a known data breach (`BREACH_CHECK=true`) |
+| `too_many_requests` | 429 | over the `/auth` rate limit, `AUTH_RATE_LIMIT` requests a minute per IP; `Retry-After` gives the seconds to wait |
+
+These `400`s are flow failures. A body of the wrong shape (an email that
+isn't one, a password outside 8 to 128 characters) is still a `422
+validation_failed`, and a sign-in with bad credentials a `401`.
+
 <!-- source: docs/examples/api/src/error.rs -->
 ```rust
     pub fn code(&self) -> &'static str {

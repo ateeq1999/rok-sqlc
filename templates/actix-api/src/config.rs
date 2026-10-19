@@ -17,7 +17,7 @@
 //! | `MAIL_FROM` | `Actix API <no-reply@localhost>` | the sender of every mail |
 //! | `BREACH_CHECK` | `false` | reject passwords Have I Been Pwned knows |
 //! | `TRUST_PROXY` | `false` | take the client IP from `X-Forwarded-For` |
-//! | `AUTH_RATE_LIMIT` | 20 | requests per minute per IP on `/auth` |
+//! | `AUTH_RATE_LIMIT` | 20 | requests per minute per IP on `/auth` (`0`: off) |
 //! | `DB_MAX_CONNECTIONS` | 20 | pool size |
 //! | `DB_MIN_CONNECTIONS` | 5 | idle connections kept open |
 //! | `DB_ACQUIRE_TIMEOUT_SECS` | 3 | wait for a connection |
@@ -95,7 +95,8 @@ pub struct Config {
     pub breach_check: bool,
     /// `TRUST_PROXY`: take the client IP from `X-Forwarded-For`.
     pub trust_proxy: bool,
-    /// `AUTH_RATE_LIMIT`: requests per minute per IP on `/auth`.
+    /// `AUTH_RATE_LIMIT`: requests per minute per IP on `/auth`; `0` turns
+    /// the limit off.
     pub auth_rate_limit: u32,
     /// The pool's size and timeouts, `DB_*`.
     pub pool: PoolSettings,

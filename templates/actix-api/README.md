@@ -27,7 +27,16 @@ You need PostgreSQL and Rust 1.94 or newer.
    `/health/ready`, the OpenAPI document at `/api-docs/openapi.json` and
    Swagger UI at `/docs/`.
 
-Every route but health needs `Authorization: Bearer <token>`: an HS256 JWT
+Sign up with `POST /api/v1/auth/register` (`{"email", "password"}`, 8 to 128
+characters), follow the link mailed to you (`MAIL_TRANSPORT=log` logs it;
+`RUST_LOG=debug` shows the body), or post its token to
+`/api/v1/auth/email/verify`, then sign in with `POST /api/v1/auth/login`.
+Five wrong passwords in a row lock an account for 15 minutes, and every
+`/auth` route is limited to `AUTH_RATE_LIMIT` requests a minute per IP.
+`GET /api/v1/auth/me` and `GET`/`PATCH /api/v1/users/me` are the signed-in
+user's own account.
+
+Every other route but health needs `Authorization: Bearer <token>`: an HS256 JWT
 signed with `JWT_SECRET`, with `sub` (the user's id), `role` (`user` or
 `admin`), `tv` (the account's `token_version`) and `exp`.
 `src/shared/auth.rs` verifies it, then checks the account on every request:
@@ -38,8 +47,10 @@ tools the account flows use: argon2id password hashing, single-use tokens
 and issuing the JWT. `src/shared/mail/` sends mail through an outbox: a
 flow writes its message as an `outbound_mail` row on its own transaction,
 and a sender task started by `app.rs` delivers it (SMTP, or the log when
-`MAIL_TRANSPORT=log`), retrying with backoff. Signing in is not part of the
-template yet; see below.
+`MAIL_TRANSPORT=log`), retrying with backoff. `src/features/auth/`
+(sign-up, sign-in, email verification) and `src/features/account/` (the
+signed-in user's account) are hand-written features in the generated
+layout, and yours.
 
 ## Dependencies
 
@@ -53,11 +64,14 @@ argon2 = "0.6"
 async-trait = "0.1"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
+governor = { version = "0.10", default-features = false, features = ["std"] }
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 lettre = { version = "0.11", default-features = false, features = ["builder", "hostname", "smtp-transport", "tokio1-rustls-tls"] }
 rand = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha1 = "0.11"
 sha2 = "0.11"
 sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "derive", "uuid", "chrono", "json"] }
 thiserror = "2"
@@ -106,9 +120,10 @@ test needs no database. The lints in `Cargo.toml` deny `unwrap`, `expect`,
   `mod.rs` and each feature's `service.rs`.
 - **Yours** (first line `Scaffolded once`, or no header): `rok-sqlc.toml`,
   `migrations/`, `queries/`, `src/{lib,main,app,config,error,openapi}.rs`,
-  `src/shared/{mod,auth}.rs`, `src/shared/security/`, `src/shared/mail/`,
-  `src/features/mod.rs`, each feature's `service.rs` (business rules go
-  there), `tests/`, and this README.
+  `src/shared/{mod,auth,rate_limit}.rs`, `src/shared/security/`,
+  `src/shared/mail/`, `src/features/mod.rs`, the hand-written
+  `src/features/{auth,account}/`, each feature's `service.rs` (business
+  rules go there), `tests/`, and this README.
 
 `queries/` holds hand-written SQL, one file per feature: `rok-sqlc g` turns
 `queries/auth.sql` into `src/db/queries/auth.rs`, one function per query.
@@ -144,7 +159,7 @@ Change the schema with a new migration, adjust `rok-sqlc.toml`, run
   carrying an older one is rejected.
 
 `tests/contract.rs` lists the differences that remain, each with its
-reason: `avatar_url` (uploads), and the `?permanent=` and list `sort`/`order`
+reason: `avatar_url` (uploads, on every `UserResponse`), and the `?permanent=` and list `sort`/`order`
 parameters every generated API has.
 
 ## Coming next
@@ -152,10 +167,9 @@ parameters every generated API has.
 A later rok-sqlc release ports the rest of the axum starter as hand-written
 features on top of this one:
 
-- authentication: register, sign in and JWT issuing, two-factor (TOTP and
-  recovery codes), password reset and change, email verification and
-  change, invitations, OAuth, passkeys and QR sign-in;
-- `POST /users` with a password, `/users/me`, and the business rules of
+- authentication: two-factor (TOTP and recovery codes), password reset
+  and change, email change, invitations, OAuth, passkeys and QR sign-in;
+- `POST /users` with a password, and the business rules of
   `update` and `remove` (not yourself, not the last admin);
 - uploads: avatars (`avatar_url`) and `media`;
 - `api-keys` (create returning the key once, revoke, an unpaginated list);

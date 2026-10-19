@@ -2,6 +2,7 @@
 
 //! Functions for the annotated queries in the query file.
 
+use super::super::auth_tokens::models::AuthTokenId;
 use super::super::types;
 use super::super::users::models::UserId;
 
@@ -73,6 +74,191 @@ where
         "#,
     )
     .bind(email)
+    .fetch_optional(executor)
+    .await
+}
+
+/// Runs the `CreateUser` query (`:one`).
+/// Fails with `sqlx::Error::RowNotFound` when no row matches.
+pub async fn create_user<'e, E>(
+    executor: E,
+    id: UserId,
+    email: &str,
+    password_hash: Option<&str>,
+) -> Result<super::super::users::models::User, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query_as::<_, super::super::users::models::User>(
+        r#"
+        INSERT INTO users (id, email, password_hash)
+        VALUES ($1, $2, $3)
+        RETURNING *
+        "#,
+    )
+    .bind(id)
+    .bind(email)
+    .bind(password_hash)
+    .fetch_one(executor)
+    .await
+}
+
+/// Runs the `RecordFailedLogin` query (`:exec`).
+pub async fn record_failed_login<'e, E>(
+    executor: E,
+    id: UserId,
+    max_failures: i32,
+    lock_minutes: i32,
+) -> Result<(), sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query(
+        r#"
+        UPDATE users
+        SET failed_logins = CASE WHEN failed_logins + 1 >= $2 THEN 0 ELSE failed_logins + 1 END,
+            locked_until = CASE
+                WHEN failed_logins + 1 >= $2 THEN now() + make_interval(mins => $3)
+                ELSE locked_until
+            END
+        WHERE id = $1
+        "#,
+    )
+    .bind(id)
+    .bind(max_failures)
+    .bind(lock_minutes)
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Runs the `ClearFailedLogins` query (`:exec`).
+pub async fn clear_failed_logins<'e, E>(executor: E, id: UserId) -> Result<(), sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query(
+        r#"
+        UPDATE users
+        SET failed_logins = 0, locked_until = NULL
+        WHERE id = $1 AND (failed_logins <> 0 OR locked_until IS NOT NULL)
+        "#,
+    )
+    .bind(id)
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Runs the `MarkEmailVerified` query (`:execrows`).
+/// Returns the number of affected rows.
+pub async fn mark_email_verified<'e, E>(executor: E, id: UserId) -> Result<u64, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    let result = sqlx::query(
+        r#"
+        UPDATE users
+        SET email_verified = true
+        WHERE id = $1 AND deleted_at IS NULL
+        "#,
+    )
+    .bind(id)
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// Runs the `RevokeTokens` query (`:exec`).
+pub async fn revoke_tokens<'e, E>(
+    executor: E,
+    user_id: UserId,
+    purpose: types::AuthTokenPurpose,
+) -> Result<(), sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query(
+        r#"
+        UPDATE auth_tokens
+        SET used_at = now()
+        WHERE user_id = $1 AND purpose = $2 AND used_at IS NULL
+        "#,
+    )
+    .bind(user_id)
+    .bind(purpose)
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Parameters of `insert_token`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct InsertTokenParams {
+    /// Bound to `$1`.
+    pub id: AuthTokenId,
+    /// Bound to `$2`.
+    pub user_id: UserId,
+    /// Bound to `$3`.
+    pub purpose: types::AuthTokenPurpose,
+    /// Bound to `$4`.
+    pub token_hash: String,
+    /// Bound to `$5`.
+    pub new_email: Option<String>,
+    /// Bound to `$6`.
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Runs the `InsertToken` query (`:exec`).
+pub async fn insert_token<'e, E>(executor: E, params: InsertTokenParams) -> Result<(), sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query(
+        r#"
+        INSERT INTO auth_tokens (id, user_id, purpose, token_hash, new_email, expires_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        "#,
+    )
+    .bind(params.id)
+    .bind(params.user_id)
+    .bind(params.purpose)
+    .bind(params.token_hash)
+    .bind(params.new_email)
+    .bind(params.expires_at)
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// A row returned by `consume_token`.
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+pub struct ConsumeTokenRow {
+    /// The `user_id` column.
+    pub user_id: UserId,
+    /// The `new_email` column.
+    pub new_email: Option<String>,
+}
+
+/// Runs the `ConsumeToken` query (`:maybe_one`).
+pub async fn consume_token<'e, E>(
+    executor: E,
+    token_hash: &str,
+    purpose: types::AuthTokenPurpose,
+) -> Result<Option<ConsumeTokenRow>, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query_as::<_, ConsumeTokenRow>(
+        r#"
+        UPDATE auth_tokens
+        SET used_at = now()
+        WHERE token_hash = $1 AND purpose = $2 AND used_at IS NULL AND expires_at > now()
+        RETURNING user_id, new_email
+        "#,
+    )
+    .bind(token_hash)
+    .bind(purpose)
     .fetch_optional(executor)
     .await
 }

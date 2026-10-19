@@ -4,7 +4,7 @@
 //! the wire standard's body, `{"error": {"code", "message", "details"?}}`.
 //! A new error case is a variant here, never an error type in a feature.
 
-use actix_web::http::StatusCode;
+use actix_web::http::{StatusCode, header};
 use actix_web::{HttpResponse, ResponseError};
 use sqlx::error::ErrorKind;
 use validator::ValidationErrors;
@@ -21,6 +21,18 @@ pub enum AppError {
     /// `400 bad_request`: a malformed body, path or query.
     #[error("{0}")]
     BadRequest(String),
+    /// `400 invalid_token`: a mailed link's token that is unknown, expired
+    /// or already used.
+    #[error("{0}")]
+    InvalidToken(String),
+    /// `400 wrong_password`: the current password a flow asks for again
+    /// doesn't match.
+    #[error("{0}")]
+    WrongPassword(String),
+    /// `400 breached_password`: a new password found in a known breach
+    /// (`BREACH_CHECK`).
+    #[error("{0}")]
+    BreachedPassword(String),
     /// `401 unauthorized`: no valid credentials.
     #[error("{0}")]
     Unauthorized(String),
@@ -52,6 +64,13 @@ pub enum AppError {
     /// `412 version_conflict`: a stale `If-Match`.
     #[error("{0}")]
     VersionConflict(String),
+    /// `429 too_many_requests`: over the rate limit. Answered with
+    /// `Retry-After`, the seconds until the next request is allowed.
+    #[error("too many requests; retry in {retry_after_secs}s")]
+    TooManyRequests {
+        /// Seconds until the caller may try again.
+        retry_after_secs: u64,
+    },
     /// `500 internal_error`: anything else. Logged with `tracing` when
     /// answered; the caller gets a generic message.
     #[error("internal error: {0}")]
@@ -64,6 +83,9 @@ impl AppError {
     pub fn code(&self) -> &'static str {
         match self {
             AppError::BadRequest(_) => "bad_request",
+            AppError::InvalidToken(_) => "invalid_token",
+            AppError::WrongPassword(_) => "wrong_password",
+            AppError::BreachedPassword(_) => "breached_password",
             AppError::Unauthorized(_) => "unauthorized",
             AppError::Forbidden(_) => "forbidden",
             AppError::NotFound(_) => "not_found",
@@ -72,6 +94,7 @@ impl AppError {
             AppError::Validation { .. } => "validation_failed",
             AppError::PreconditionRequired(_) => "precondition_required",
             AppError::VersionConflict(_) => "version_conflict",
+            AppError::TooManyRequests { .. } => "too_many_requests",
             AppError::Internal(_) => "internal_error",
         }
     }
@@ -80,7 +103,10 @@ impl AppError {
 impl ResponseError for AppError {
     fn status_code(&self) -> StatusCode {
         match self {
-            AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            AppError::BadRequest(_)
+            | AppError::InvalidToken(_)
+            | AppError::WrongPassword(_)
+            | AppError::BreachedPassword(_) => StatusCode::BAD_REQUEST,
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
@@ -89,6 +115,7 @@ impl ResponseError for AppError {
             AppError::Validation { .. } => StatusCode::UNPROCESSABLE_ENTITY,
             AppError::PreconditionRequired(_) => StatusCode::PRECONDITION_REQUIRED,
             AppError::VersionConflict(_) => StatusCode::PRECONDITION_FAILED,
+            AppError::TooManyRequests { .. } => StatusCode::TOO_MANY_REQUESTS,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -102,7 +129,11 @@ impl ResponseError for AppError {
             AppError::Validation { message, details } => (message.clone(), details.clone()),
             other => (other.to_string(), None),
         };
-        HttpResponse::build(self.status_code()).json(ErrorBody {
+        let mut response = HttpResponse::build(self.status_code());
+        if let AppError::TooManyRequests { retry_after_secs } = self {
+            response.insert_header((header::RETRY_AFTER, retry_after_secs.to_string()));
+        }
+        response.json(ErrorBody {
             error: ErrorPayload {
                 code: self.code().to_owned(),
                 message,

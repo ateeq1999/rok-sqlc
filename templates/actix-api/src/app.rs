@@ -8,12 +8,18 @@ use actix_web::{App, HttpServer, web};
 use sqlx::PgPool;
 use utoipa_swagger_ui::SwaggerUi;
 
+use std::sync::Arc;
+
 use crate::config::Config;
 use crate::db::pool::init_pool;
+use crate::features::account::{self, AccountService};
+use crate::features::auth::{self, AuthService};
 use crate::features::{configure_all, register_services};
 use crate::openapi::document;
 use crate::shared::health;
 use crate::shared::mail::{Outbox, Sender, Templates, transport};
+use crate::shared::rate_limit::RateLimit;
+use crate::shared::security::breach::{self, BreachCheck};
 use crate::shared::security::jwt::JwtKeys;
 
 /// What every worker shares, built once: by [`run`], or by a test.
@@ -27,6 +33,14 @@ pub struct AppState {
     pub outbox: web::Data<Outbox>,
     /// The messages flows enqueue, with links under `APP_URL`.
     pub templates: web::Data<Templates>,
+    /// Checks new passwords against known breaches (`BREACH_CHECK`); a
+    /// test swaps in its own.
+    pub breach: Arc<dyn BreachCheck>,
+    /// The per-IP limit on `/auth` (`AUTH_RATE_LIMIT`, `TRUST_PROXY`),
+    /// one for every worker.
+    pub rate_limit: RateLimit,
+    /// `REQUIRE_VERIFIED_EMAIL`.
+    pub require_verified_email: bool,
 }
 
 impl AppState {
@@ -38,6 +52,9 @@ impl AppState {
             keys: web::Data::new(JwtKeys::new(&config.jwt_secret, config.jwt_ttl)),
             outbox: web::Data::new(Outbox::new()),
             templates: web::Data::new(Templates::new(&config.app_url)),
+            breach: breach::from_config(config),
+            rate_limit: RateLimit::per_minute(config.auth_rate_limit, config.trust_proxy),
+            require_verified_email: config.require_verified_email,
         }
     }
 }
@@ -73,7 +90,8 @@ pub async fn run(config: Config) -> std::io::Result<()> {
 /// outbox and templates as app data, every feature's service,
 /// `/health/live` and `/health/ready`, the `OpenAPI` document at
 /// `/api-docs/openapi.json` with Swagger UI at `/docs/`, and every feature's
-/// routes. Tests build the same application with
+/// routes: the hand-written `account` and `auth` first, so that
+/// `/users/me` is not taken for `/users/{id}`. Tests build the same application with
 /// `actix_web::test::init_service(App::new().configure(...))`.
 pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
     cfg.app_data(web::Data::new(state.pool.clone()))
@@ -81,8 +99,19 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
         .app_data(state.outbox.clone())
         .app_data(state.templates.clone());
     register_services(cfg, &state.pool);
+    cfg.app_data(web::Data::new(AccountService::new(state.pool.clone())))
+        .app_data(web::Data::new(AuthService {
+            pool: state.pool.clone(),
+            keys: state.keys.clone().into_inner(),
+            outbox: state.outbox.clone().into_inner(),
+            templates: state.templates.clone().into_inner(),
+            breach: state.breach.clone(),
+            require_verified_email: state.require_verified_email,
+        }));
     health::routes(cfg);
     cfg.service(web::redirect("/docs", "/docs/").see_other())
         .service(SwaggerUi::new("/docs/{_:.*}").url("/api-docs/openapi.json", document()));
+    account::routes(cfg, &state.rate_limit);
+    auth::routes(cfg, &state.rate_limit);
     configure_all(cfg);
 }
