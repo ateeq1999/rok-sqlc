@@ -4,7 +4,9 @@ Every generated API describes itself: with `[api] output` set, `rok-sqlc g`
 annotates each generated handler and type for
 [utoipa](https://docs.rs/utoipa/5), and the scaffolded `app.rs` serves the
 document at `/api-docs/openapi.json` with Swagger UI at `/docs/`. The
-samples on this page come from [`docs/examples/api`](../examples/api).
+samples on this page come from [`docs/examples/api`](../examples/api),
+except those showing a scaffolded file as `init` writes it, which come from
+`init`'s templates in `src/init/templates/`.
 
 `[api] openapi = false` turns all of it off. The generated files then
 mention no utoipa, exactly as before the document existed. The files
@@ -79,7 +81,7 @@ as `liveness` and `readiness`.
 lists your own handlers and schemas, and `document()` merges the generated
 document into it, titled and versioned after your crate:
 
-<!-- source: docs/examples/api/src/openapi.rs -->
+<!-- source: src/init/templates/openapi.rs -->
 ```rust
 /// Your hand-written paths and schemas: list a handler carrying
 /// `#[utoipa::path]` in `paths(...)`, and a type deriving `ToSchema` that
@@ -104,14 +106,16 @@ pub fn document() -> utoipa::openapi::OpenApi {
 A hand-written handler documents itself the way the generated ones do:
 annotate it with `#[utoipa::path(...)]`, give it a tag (a new one goes in
 `ApiDoc`'s `tags(...)`), and add `security(("bearer_auth" = []))` when it
-takes `AuthUser` or `AdminUser`. Then name it in `paths(...)`.
+takes `AuthUser` or `AdminUser`. Then name it in `paths(...)`. The
+example's hand-written `stats` feature does exactly this; [Customizing the
+generated API](customizing.md#a-hand-written-feature) walks through it.
 
 ## Serving the document
 
 The scaffolded `app.rs` mounts both routes. `/docs` redirects to `/docs/`,
 where Swagger UI lives:
 
-<!-- source: docs/examples/api/src/app.rs -->
+<!-- source: src/init/templates/app.rs -->
 ```rust
 pub fn configure(cfg: &mut web::ServiceConfig, pool: &PgPool, keys: &web::Data<JwtKeys>) {
     cfg.app_data(web::Data::new(pool.clone()))

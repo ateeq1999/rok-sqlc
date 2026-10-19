@@ -1082,15 +1082,26 @@ they describe a run rather than a project. A run with no schema (no
 With `[api] output` set, rok-sqlc generates an actix-web API on top of the
 data layer: one **API feature** per table, with routes, thin handlers,
 request and response bodies, and a service where business rules go. It
-follows one architecture, described in the guide
-([`docs/guide/`](docs/guide/index.md)):
+follows one architecture. The [API guide](docs/guide/index.md) covers it
+from the first command to production:
 
+- [Getting started](docs/guide/getting-started.md): from `rok-sqlc init`
+  (or `init --template actix`) to a running API and Swagger UI;
+- [Configuring API features](docs/guide/configuring.md): every `[api]` key
+  and the conventions that shape the API;
 - [Architecture guidelines](docs/guide/architecture.md): the layout, the
   rules `check-arch` enforces, services, transactions and ports;
 - [Generated and scaffolded files](docs/guide/layout.md): which files are
   rok-sqlc's, which are yours, and what regeneration does to each;
+- [Customizing the generated API](docs/guide/customizing.md): overrides,
+  ports and hand-written features;
+- [The wire standard](docs/guide/wire-standard.md): every status, error
+  code, body and header;
 - [The OpenAPI document](docs/guide/openapi.md): what is generated, your
-  hand-written paths, and serving it.
+  hand-written paths, and serving it;
+- [Testing an API](docs/guide/testing.md), [Deploying](docs/guide/deploying.md),
+  [After a schema change](docs/guide/after-a-schema-change.md) and
+  [Troubleshooting](docs/guide/troubleshooting.md).
 
 The workflow is three commands: `rok-sqlc init` scaffolds the application
 skeleton once, `rok-sqlc g` generates `src/db/`, `src/shared/` and
@@ -1144,7 +1155,7 @@ derives `ToSchema`, and `src/features/generated.rs` gathers them in
 paths and schemas go in the scaffolded `src/openapi.rs`, whose `ApiDoc`
 the generated document merges into:
 
-<!-- source: docs/examples/api/src/openapi.rs -->
+<!-- source: src/init/templates/openapi.rs -->
 ```rust
 #[derive(OpenApi)]
 #[openapi(paths(), components(schemas()))]

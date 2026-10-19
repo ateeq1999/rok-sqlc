@@ -13,6 +13,7 @@ use crate::db::pool::init_pool;
 use crate::db::projects::models::ProjectId;
 use crate::error::AppError;
 use crate::features::projects::ProjectsService;
+use crate::features::stats::{self, StatsService};
 use crate::features::tasks::service::ProjectTasks;
 use crate::features::{configure_all, register_services};
 use crate::openapi::document;
@@ -46,6 +47,9 @@ pub fn configure(cfg: &mut web::ServiceConfig, pool: &PgPool, keys: &web::Data<J
     cfg.service(web::redirect("/docs", "/docs/").see_other())
         .service(SwaggerUi::new("/docs/{_:.*}").url("/api-docs/openapi.json", document()));
     configure_all(cfg);
+    // The hand-written stats feature: its service, then its routes.
+    cfg.app_data(web::Data::new(StatsService::new(pool.clone())));
+    stats::routes(cfg);
 }
 
 /// The tasks feature's [`ProjectTasks`] port, answered by the projects

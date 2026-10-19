@@ -476,7 +476,8 @@ section lists every route.
 - **Shared:** unit tests.
 
 A feature is done with one service test per business rule and one API test
-per route you changed: the happy path plus one failure.
+per route you changed: the happy path plus one failure. [Testing an
+API](testing.md) shows both kinds.
 
 ## 11. Adding a feature
 
@@ -488,9 +489,10 @@ per route you changed: the happy path plus one failure.
 4. Put its business rules in the new `service.rs`, add error variants to
    `error.rs`, write tests, and run the checks.
 
-A hand-written feature (one with no table) uses the same eight files,
-declared with `pub mod <name>;` in `features/mod.rs` and mounted in
-`app.rs`.
+A hand-written feature (one with no table) uses the same files (those it
+needs of the eight, and no others), declared with `pub mod <name>;` in
+`features/mod.rs` and mounted in `app.rs`; the example's `stats` feature is
+one ([Customizing](customizing.md#a-hand-written-feature)).
 
 ## 12. Automated checks
 

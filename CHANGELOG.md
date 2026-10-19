@@ -148,6 +148,12 @@ the *generated* API count as breaking (see ADR 0012).
   only one is `actix`), each file only when absent and without its
   generated files, and prints the next steps. An unknown name lists the
   valid ones.
+- The rest of the API guide: getting started, configuring API features,
+  customizing the generated API, the wire standard, testing, deploying,
+  after a schema change, and troubleshooting, linked from the README.
+  `docs/examples/api` gains a hand-written feature (`stats`, with its own
+  OpenAPI path) and service and API tests with `#[sqlx::test]`, which the
+  test suite runs when `ROK_SQLC_TEST_DATABASE_URL` is set.
 
 ## [0.3.0] - 2026-10-17
 

@@ -13,7 +13,11 @@ use crate::features::GeneratedApiDoc;
 /// no path refers to in `components(schemas(...))`. Where yours and the
 /// generated document name the same path or schema, yours wins.
 #[derive(OpenApi)]
-#[openapi(paths(), components(schemas()))]
+#[openapi(
+    paths(crate::features::stats::handlers::summary),
+    components(schemas()),
+    tags((name = "stats", description = "The caller's statistics.")),
+)]
 pub struct ApiDoc;
 
 /// The whole document: [`ApiDoc`] with every generated path and schema
