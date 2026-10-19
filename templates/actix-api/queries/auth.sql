@@ -71,6 +71,28 @@ SET used_at = now()
 WHERE token_hash = $1 AND purpose = $2 AND used_at IS NULL AND expires_at > now()
 RETURNING user_id, new_email;
 
+-- name: ResetPassword :execrows
+-- A reset (or invitation) link redeemed for the live account `$1`: its
+-- new password hash, every older session signed out, the failures and any
+-- lock forgotten. `$3` (an invitation) also marks the email verified, since
+-- the link reached it.
+-- param: $3 verify_email bool
+UPDATE users
+SET password_hash = $2,
+    token_version = token_version + 1,
+    failed_logins = 0,
+    locked_until = NULL,
+    email_verified = email_verified OR $3
+WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: ChangePassword :execrows
+-- The live account `$1` chose a new password: its hash, and every session
+-- (the current one included) signed out.
+UPDATE users
+SET password_hash = $2,
+    token_version = token_version + 1
+WHERE id = $1 AND deleted_at IS NULL;
+
 -- name: ChangeEmail :execrows
 -- The live account `$1` confirmed `$2` as its new email, which it now owns
 -- (verified). A live account already using it, whatever its case, is a

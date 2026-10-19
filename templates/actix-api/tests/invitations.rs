@@ -8,20 +8,23 @@ use std::sync::Arc;
 
 use actix_api::app::AuditLog;
 use actix_api::db::audit_log_entry::read as audit_log;
-use actix_api::db::types::AuthTokenPurpose;
 use actix_api::error::AppError;
 use actix_api::features::audit_log_entry::AuditLogEntryService;
-use actix_api::features::auth::service::{AuditEntry, AuditTrail, consume_token};
+use actix_api::features::auth::service::{AuditEntry, AuditTrail};
 use actix_web::http::{Method, StatusCode};
 use serde_json::json;
 use sqlx::PgConnection;
-use support::{Database, TestResult, account, call, call_with, mailed, mailed_token, state, user};
+use support::{
+    Database, PASSWORD, TestResult, account, call, call_with, mailed, mailed_token, state, user,
+};
 use uuid::Uuid;
 
 const INVITE: &str = "/api/v1/auth/invitations";
+const RESET: &str = "/api/v1/auth/password/reset";
+const LOGIN: &str = "/api/v1/auth/login";
 
 #[actix_web::test]
-async fn an_admin_invites_someone_who_gets_a_link_and_an_audit_row() -> TestResult {
+async fn an_invitee_sets_a_password_with_the_link_and_signs_in_verified() -> TestResult {
     let Some(db) = Database::fresh().await? else {
         return Ok(());
     };
@@ -46,10 +49,28 @@ async fn an_admin_invites_someone_who_gets_a_link_and_an_audit_row() -> TestResu
     assert_eq!(mail.len(), 1, "{mail:?}");
     assert_eq!(mail[0].to, "guest@example.com");
     let link = mailed_token(&mail[0]).ok_or("no invitation link")?;
-    let mut conn = db.pool.acquire().await?;
-    let spent = consume_token(&mut conn, &link, AuthTokenPurpose::Invitation).await?;
-    assert_eq!(Uuid::from(spent.user_id), guest);
-    drop(conn);
+
+    // The invitee sets a password with the link, which verifies the email,
+    // and signs in.
+    let body = json!({"token": link, "new_password": PASSWORD});
+    let answer = call(&db.pool, None, Method::POST, RESET, Some(body)).await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    let credentials = json!({"email": "guest@example.com", "password": PASSWORD});
+    let answer = call(&db.pool, None, Method::POST, LOGIN, Some(credentials)).await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    let session = answer.body["access_token"].as_str().ok_or("no session")?;
+    let answer = call(
+        &db.pool,
+        Some(session),
+        Method::GET,
+        "/api/v1/auth/me",
+        None,
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    assert_eq!(answer.body["id"], guest.to_string());
+    assert_eq!(answer.body["email_verified"], true);
+    assert_eq!(answer.body["has_password"], true);
     db.drop().await
 }
 

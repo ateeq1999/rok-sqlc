@@ -21,6 +21,9 @@ pub fn routes(cfg: &mut web::ServiceConfig, limit: &RateLimit) {
                 "/email/verification/resend",
                 web::post().to(handlers::resend),
             )
+            .route("/password/forgot", web::post().to(handlers::forgot))
+            .route("/password/reset", web::post().to(handlers::reset))
+            .route("/password/change", web::post().to(handlers::change))
             .route("/email/change", web::post().to(handlers::request_change))
             .route(
                 "/email/change/confirm",
