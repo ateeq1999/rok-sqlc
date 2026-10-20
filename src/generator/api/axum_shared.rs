@@ -1,18 +1,15 @@
 //! The shared tools `rok-sqlc g` regenerates in `shared/` that axum needs
 //! of its own (0.7, decision A2): `health.rs`, `tenant.rs`, and the head of
-//! `validation.rs`, whose `IdList` and `FieldFailures` are actix-web's.
+//! `validation.rs`, which ends with the same `IdList` and `FieldFailures`
+//! as actix-web's ([`SHARED_ITEMS`]).
 //! `pagination.rs` and `response.rs` are the same for both frameworks.
 
-use super::shared::VALIDATION;
+use super::shared_validation::SHARED_ITEMS;
 
-/// Where `validation.rs`' framework-free items start.
-const SHARED_ITEMS: &str = "/// The body of a many-to-many sync";
-
-/// axum's `validation.rs`: [`VALIDATION_HEAD`], then actix-web's
-/// framework-free items.
+/// axum's `validation.rs`: [`VALIDATION_HEAD`], then the framework-free
+/// [`SHARED_ITEMS`].
 pub fn validation() -> String {
-    let at = VALIDATION.find(SHARED_ITEMS).unwrap_or(VALIDATION.len());
-    format!("{VALIDATION_HEAD}{}", &VALIDATION[at..])
+    format!("{VALIDATION_HEAD}{SHARED_ITEMS}")
 }
 
 pub(super) const HEALTH: &str = r#"//! `GET /health/live` and `GET /health/ready`, outside the API prefix.

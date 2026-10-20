@@ -3,7 +3,10 @@
 //! collects the field failures of a write's pre-checks (`exists`,
 //! `unique`) into one `422`.
 
-pub(super) const VALIDATION: &str = r#"//! Reading a request: validated JSON bodies, the wire standard's `400` for a
+/// The head of actix-web's `validation.rs`: its imports, the path and
+/// query configs answering a malformed path or query with the wire
+/// standard's `400`, and `IfMatch`.
+const ACTIX_HEAD: &str = r#"//! Reading a request: validated JSON bodies, the wire standard's `400` for a
 //! malformed path or query, a versioned row's `If-Match`, and a
 //! many-to-many sync's list of keys; and [`FieldFailures`], the failures of
 //! a write's pre-checks.
@@ -81,7 +84,11 @@ fn if_match<T: FromStr>(req: &HttpRequest) -> Result<T, AppError> {
     })
 }
 
-/// The body of a many-to-many sync, `{"ids": [...]}`: the keys of the
+"#;
+
+/// The framework-free items both frameworks' `validation.rs` end with:
+/// `IdList` and `FieldFailures`.
+pub(super) const SHARED_ITEMS: &str = r#"/// The body of a many-to-many sync, `{"ids": [...]}`: the keys of the
 /// related rows to pair with, and no others.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, validator::Validate)]
 pub struct IdList<T> {
@@ -147,3 +154,25 @@ impl FieldFailures {
     }
 }
 "#;
+
+/// actix-web's `validation.rs`: [`ACTIX_HEAD`], then [`SHARED_ITEMS`].
+pub(super) fn actix() -> String {
+    format!("{ACTIX_HEAD}{SHARED_ITEMS}")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn each_framework_s_validation_ends_with_the_shared_items() {
+        for text in [super::actix(), super::super::axum_shared::validation()] {
+            for item in [
+                "pub struct IdList<T> {",
+                "pub struct FieldFailures(ValidationErrors);",
+                "pub fn into_result(self) -> Result<(), AppError> {",
+            ] {
+                assert!(text.contains(item), "missing {item}:\n{text}");
+            }
+            assert!(text.ends_with(super::SHARED_ITEMS));
+        }
+    }
+}

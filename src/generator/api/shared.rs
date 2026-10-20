@@ -14,7 +14,7 @@ use super::axum_shared;
 use crate::generator::HEADER;
 use crate::{ApiConfig, ApiFramework};
 
-pub(super) use super::shared_validation::VALIDATION;
+pub(super) use super::shared_validation::actix as actix_validation;
 
 /// The data-layer path the templates are written against.
 const TEMPLATE_DB_PATH: &str = "crate::db::";
@@ -37,7 +37,7 @@ pub fn render(output: &Path, api: &ApiConfig, features: &[Feature<'_>]) -> Vec<(
     let shared = shared_dir(api);
     let mut files = vec![(output.join("pool.rs"), file(POOL))];
     let (health, tenant, validation) = match api.framework {
-        ApiFramework::Actix => (HEALTH, TENANT, VALIDATION.to_owned()),
+        ApiFramework::Actix => (HEALTH, TENANT, actix_validation()),
         ApiFramework::Axum => (
             axum_shared::HEALTH,
             axum_shared::TENANT,

@@ -148,7 +148,7 @@ fn sort_schema<S: utoipa::ToSchema>() -> utoipa::openapi::RefOr<utoipa::openapi:
 
 #[cfg(test)]
 mod tests {
-    use super::super::shared::{HEALTH, PAGINATION, RESPONSE, VALIDATION};
+    use super::super::shared::{HEALTH, PAGINATION, RESPONSE, actix_validation};
     use super::*;
 
     #[test]
@@ -206,7 +206,7 @@ mod tests {
         let text = describe("response.rs", RESPONSE);
         let page = "utoipa::ToSchema)]\npub struct PaginatedResponse<T> {";
         assert!(text.contains(page), "{text}");
-        let text = describe("validation.rs", VALIDATION);
+        let text = describe("validation.rs", &actix_validation());
         let id_list = "validator::Validate, utoipa::ToSchema,\n)]\npub struct IdList<T> {";
         assert!(text.contains(id_list), "{text}");
     }
