@@ -6,7 +6,8 @@
 //!
 //! To share more, add a path to [`SHARED`]: a directory (every file under
 //! it, on both sides) or a file. A feature listed in [`FEATURES`] shares
-//! its [`FEATURE_FILES`] that exist in either template.
+//! its [`FEATURE_FILES`] that exist in either template; a hand-written
+//! feature listed in [`HAND_WRITTEN`], its [`HAND_WRITTEN_FILES`].
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -37,12 +38,26 @@ const FEATURE_FILES: &[&str] = &[
     "service_api.rs",
 ];
 
+/// The hand-written features (the M5 account flows) whose [`HAND_WRITTEN_FILES`]
+/// both templates share: they have no `model.rs`, `repo.rs` or
+/// `service_api.rs`.
+const HAND_WRITTEN: &[&str] = &["auth", "account"];
+
+/// The files of a hand-written feature no framework shows through.
+const HAND_WRITTEN_FILES: &[&str] = &["dto.rs", "service.rs"];
+
 /// The paths, relative to a template, that [`SHARED`], [`FEATURES`] and
-/// [`FEATURE_FILES`] name.
+/// [`FEATURE_FILES`] (and [`HAND_WRITTEN`] and
+/// [`HAND_WRITTEN_FILES`]) name.
 fn shared_paths() -> Vec<String> {
     let mut paths: Vec<String> = SHARED.iter().map(|path| (*path).to_owned()).collect();
     for feature in FEATURES {
         for file in FEATURE_FILES {
+            paths.push(format!("src/features/{feature}/{file}"));
+        }
+    }
+    for feature in HAND_WRITTEN {
+        for file in HAND_WRITTEN_FILES {
             paths.push(format!("src/features/{feature}/{file}"));
         }
     }

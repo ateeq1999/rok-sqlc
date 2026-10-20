@@ -5,5 +5,7 @@
 //! `routes`, which `app.rs` uses. Declare a hand-written feature here
 //! (`pub mod <name>;`) and merge its router in `app.rs`.
 
+pub mod account;
+pub mod auth;
 mod generated;
 pub use generated::*;

@@ -12,7 +12,7 @@ use crate::db::users::models::{User, UserId};
 use crate::db::users::read as users;
 use crate::error::AppError;
 
-/// The `account` service, registered as app data by `app.rs`.
+/// The `account` service, built by `app.rs`.
 pub struct AccountService {
     /// The pool the service reads and writes through.
     pub pool: PgPool,

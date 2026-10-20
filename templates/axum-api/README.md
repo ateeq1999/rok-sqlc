@@ -32,6 +32,45 @@ You need PostgreSQL and Rust 1.94 or newer.
    Swagger UI at `/docs/`. Ctrl+C or `SIGTERM` stops it gracefully:
    requests in flight finish, then the mail sender stops.
 
+## Accounts
+
+The account flows are hand-written features, yours to change:
+`src/features/auth/` and `src/features/account/`. rok-sqlc's guide
+documents each one, the settings, sending real mail and adding a flow
+([Accounts and sign-in](https://github.com/ateeq1999/rok-sqlc/blob/main/docs/guide/auth.md)).
+
+- **Sign-up.** `POST /api/v1/auth/register` (`{"email", "password"}`, 8 to
+  128 characters) creates the account and mails a verification link. Its
+  token goes to `POST /api/v1/auth/email/verify`; a signed-in user asks for
+  a new link with `POST /api/v1/auth/email/verification/resend`. With
+  `MAIL_TRANSPORT=log` (the default) the mail is logged, and
+  `RUST_LOG=debug` shows its body.
+- **Sign-in.** `POST /api/v1/auth/login` answers a session token. Five
+  wrong passwords in a row lock an account for 15 minutes, and an
+  unverified email is a `403` while `REQUIRE_VERIFIED_EMAIL=true`.
+- **Passwords.** `POST /api/v1/auth/password/forgot` (`{"email"}`, always
+  `202`) mails a link valid an hour, and `POST /api/v1/auth/password/reset`
+  (`{"token", "new_password"}`) sets the new password and lifts any lock. A
+  signed-in user changes theirs with `POST /api/v1/auth/password/change`
+  (`{"current_password", "new_password"}`) and gets a notice by mail. Both
+  sign every older session out. `BREACH_CHECK=true` refuses passwords Have
+  I Been Pwned knows.
+- **Email change.** `POST /api/v1/auth/email/change`
+  (`{"current_password", "new_email"}`, `202`) mails a notice to the old
+  address and, when the new one is free, a link to it;
+  `POST /api/v1/auth/email/change/confirm` (`{"token"}`) moves the account.
+- **Invitations.** An admin's `POST /api/v1/auth/invitations` (`{"email",
+  "display_name"?, "role"?}`) creates an account with no password, records
+  it in the audit log, and mails a link valid 7 days; the invitee sets a
+  password with it through `POST /api/v1/auth/password/reset`.
+- **The account.** `GET /api/v1/auth/me` and `GET`/`PATCH
+  /api/v1/users/me` are the signed-in user's own.
+
+Every `/auth` route is limited to `AUTH_RATE_LIMIT` requests a minute per
+IP (`429` past it). A flow refusing a well-formed request answers `400`
+with `invalid_token`, `wrong_password` or `breached_password`; a body of the
+wrong shape answers `422`.
+
 ## The server
 
 `src/app.rs` is the only wiring file. `AppState` (`#[derive(FromRef)]`)
@@ -44,7 +83,7 @@ timeout (`408`) and a 2 MiB body limit (`413`). `serve` runs it with the
 mail sender beside it (`tokio::spawn`), both stopped by the same shutdown
 signal.
 
-Every route but health needs `Authorization: Bearer <token>`: an HS256
+Every other route but health needs `Authorization: Bearer <token>`: an HS256
 JWT signed with `JWT_SECRET`, with `sub` (the user's id), `role` (`user`
 or `admin`), `tv` (the account's `token_version`) and `exp`.
 `src/shared/auth.rs`'s `AuthUser` and `AdminUser` verify it, then check
@@ -137,8 +176,9 @@ and rate-limit tests need no database. The lints in `Cargo.toml` deny
 - **Yours** (first line `Scaffolded once`, or no header): `rok-sqlc.toml`,
   `migrations/`, `queries/`, `src/{lib,main,app,config,error,openapi}.rs`,
   `src/shared/{mod,auth,rate_limit}.rs`, `src/shared/security/`,
-  `src/shared/mail/`, `src/features/mod.rs`, each feature's `service.rs`
-  (business rules go there), `tests/`, and this README.
+  `src/shared/mail/`, `src/features/mod.rs`, the hand-written
+  `src/features/{auth,account}/`, each feature's `service.rs` (business
+  rules go there), `tests/`, and this README.
 
 `queries/` holds hand-written SQL, one file per feature: `rok-sqlc g` turns
 `queries/auth.sql` into `src/db/queries/auth.rs`, one function per query.
@@ -163,6 +203,8 @@ Change the schema with a new migration, adjust `rok-sqlc.toml`, run
 - `deleted_at` is the soft-delete column: `DELETE /users/{id}` marks the row.
 - `email` is immutable (`[api.immutable]`): set when an account is created,
   never by `PATCH /users/{id}`, which answers `422` when its body names it.
+  An email changes through `POST /api/v1/auth/email/change` and the link
+  it mails to the new address.
 - `audit_log` is generated as the `audit_log_entry` module
   (`AuditLogEntryResponse`), served at `/audit-log`, read-only.
 - `[api.search]` and `[api.sort]` give the users list its `q` and
@@ -183,4 +225,5 @@ reason: `avatar_url` (uploads, on every `UserResponse`), and the
 The framework-independent files are the same in both templates, byte for
 byte: `migrations/`, `queries/`, `src/shared/security/`, `src/shared/mail/`
 and each feature's `dto.rs`, `model.rs`, `repo.rs`, `service.rs` and
-`service_api.rs`. rok-sqlc's repository checks that they stay so.
+`service_api.rs`, the hand-written `auth` and `account` included: the
+account flows differ only in their handlers and routes. rok-sqlc's repository checks that they stay so.

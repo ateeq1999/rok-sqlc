@@ -1,0 +1,285 @@
+// Scaffolded once by rok-sqlc; this file is yours. It is never regenerated. See docs/guide/architecture.md.
+
+//! The `auth` handlers: each parses the request, calls one
+//! [`AuthService`] method, and answers. One function per endpoint.
+
+use std::sync::Arc;
+
+use axum::Json;
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+
+use super::dto::{
+    ChangeEmailDto, ChangePasswordDto, CredentialsDto, ForgotPasswordDto, InviteUserDto,
+    LoginResponse, MessageResponse, ResetPasswordDto, UserResponse, VerifyEmailDto,
+};
+use super::service::AuthService;
+use crate::error::AppError;
+use crate::shared::auth::{AdminUser, AuthUser};
+use crate::shared::response::ErrorBody;
+use crate::shared::validation::ValidatedJson;
+
+/// `POST /api/v1/auth/register`: a new account, `201`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/register",
+    tag = "auth",
+    operation_id = "register",
+    request_body = CredentialsDto,
+    responses(
+        (status = 201, description = "Account created; a verification email was sent", body = UserResponse),
+        (status = 400, description = "Password has appeared in a known breach (`breached_password`), or a malformed body", body = ErrorBody),
+        (status = 409, description = "Email already registered", body = ErrorBody),
+        (status = 422, description = "Not an email, or a password outside 8 to 128 characters", body = ErrorBody),
+        (status = 429, description = "Too many requests from this IP", body = ErrorBody),
+    ),
+)]
+pub async fn register(
+    State(service): State<Arc<AuthService>>,
+    body: ValidatedJson<CredentialsDto>,
+) -> Result<Response, AppError> {
+    let user = service.register(body.into_inner()).await?;
+    Ok((StatusCode::CREATED, Json(UserResponse::from(user))).into_response())
+}
+
+/// `POST /api/v1/auth/login`: a session, `200`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/login",
+    tag = "auth",
+    operation_id = "login",
+    request_body = CredentialsDto,
+    responses(
+        (status = 200, description = "Either a session (access_token) or, for a two-factor-enabled account, requires_totp + pending_token", body = LoginResponse),
+        (status = 400, description = "A malformed body", body = ErrorBody),
+        (status = 401, description = "Invalid email/password, or the account is temporarily locked", body = ErrorBody),
+        (status = 403, description = "Account disabled or email not verified", body = ErrorBody),
+        (status = 422, description = "Not an email, or a password outside 8 to 128 characters", body = ErrorBody),
+        (status = 429, description = "Too many requests from this IP", body = ErrorBody),
+    ),
+)]
+pub async fn login(
+    State(service): State<Arc<AuthService>>,
+    body: ValidatedJson<CredentialsDto>,
+) -> Result<Response, AppError> {
+    let session = service.login(body.into_inner()).await?;
+    Ok(Json(LoginResponse::Session(session)).into_response())
+}
+
+/// `POST /api/v1/auth/email/verify`: verifies the email a link was mailed
+/// to, `200`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/email/verify",
+    tag = "auth",
+    operation_id = "verify",
+    request_body = VerifyEmailDto,
+    responses(
+        (status = 200, description = "Email verified", body = MessageResponse),
+        (status = 400, description = "Link is invalid, expired or already used (`invalid_token`), or a malformed body", body = ErrorBody),
+        (status = 422, description = "An empty token", body = ErrorBody),
+        (status = 429, description = "Too many requests from this IP", body = ErrorBody),
+    ),
+)]
+pub async fn verify(
+    State(service): State<Arc<AuthService>>,
+    body: ValidatedJson<VerifyEmailDto>,
+) -> Result<Response, AppError> {
+    service.verify_email(&body.token).await?;
+    Ok(Json(MessageResponse::new("email verified")).into_response())
+}
+
+/// `POST /api/v1/auth/email/verification/resend`: mails a new verification
+/// link, `202`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/email/verification/resend",
+    tag = "auth",
+    operation_id = "resend",
+    responses(
+        (status = 202, description = "Accepted; a no-op if already verified", body = MessageResponse),
+        (status = 401, description = "No valid bearer token", body = ErrorBody),
+        (status = 429, description = "Too many requests from this IP", body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+)]
+pub async fn resend(
+    State(service): State<Arc<AuthService>>,
+    caller: AuthUser,
+) -> Result<Response, AppError> {
+    service.resend_verification(caller.id.into()).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(MessageResponse::new(
+            "a new verification link is on its way, unless the email is already verified",
+        )),
+    )
+        .into_response())
+}
+
+/// `POST /api/v1/auth/password/forgot`: mails a reset link if the address
+/// is registered, `202` either way.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/password/forgot",
+    tag = "auth",
+    operation_id = "forgot",
+    request_body = ForgotPasswordDto,
+    responses(
+        (status = 202, description = "Always accepted, whether or not the address is registered", body = MessageResponse),
+        (status = 400, description = "A malformed body", body = ErrorBody),
+        (status = 422, description = "Not an email", body = ErrorBody),
+        (status = 429, description = "Too many requests from this IP", body = ErrorBody),
+    ),
+)]
+pub async fn forgot(
+    State(service): State<Arc<AuthService>>,
+    body: ValidatedJson<ForgotPasswordDto>,
+) -> Result<Response, AppError> {
+    service.forgot_password(body.into_inner()).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(MessageResponse::new(
+            "if the address is registered, a reset link is on its way",
+        )),
+    )
+        .into_response())
+}
+
+/// `POST /api/v1/auth/password/reset`: sets a new password with a reset
+/// or invitation link, `200`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/password/reset",
+    tag = "auth",
+    operation_id = "reset",
+    request_body = ResetPasswordDto,
+    responses(
+        (status = 200, description = "Password updated", body = MessageResponse),
+        (status = 400, description = "Link is invalid, expired or already used (`invalid_token`), the password has appeared in a known breach (`breached_password`), or a malformed body", body = ErrorBody),
+        (status = 422, description = "An empty token, or a password outside 8 to 128 characters", body = ErrorBody),
+        (status = 429, description = "Too many requests from this IP", body = ErrorBody),
+    ),
+)]
+pub async fn reset(
+    State(service): State<Arc<AuthService>>,
+    body: ValidatedJson<ResetPasswordDto>,
+) -> Result<Response, AppError> {
+    service.reset_password(body.into_inner()).await?;
+    Ok(Json(MessageResponse::new("password updated")).into_response())
+}
+
+/// `POST /api/v1/auth/password/change`: replaces the signed-in user's
+/// password and signs every session out, `200`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/password/change",
+    tag = "auth",
+    operation_id = "change",
+    request_body = ChangePasswordDto,
+    responses(
+        (status = 200, description = "Password updated; every session, this one included, is signed out", body = MessageResponse),
+        (status = 400, description = "Wrong current password (`wrong_password`), the new one has appeared in a known breach (`breached_password`), or a malformed body", body = ErrorBody),
+        (status = 401, description = "No valid bearer token", body = ErrorBody),
+        (status = 422, description = "A new password outside 8 to 128 characters", body = ErrorBody),
+        (status = 429, description = "Too many requests from this IP", body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+)]
+pub async fn change(
+    State(service): State<Arc<AuthService>>,
+    caller: AuthUser,
+    body: ValidatedJson<ChangePasswordDto>,
+) -> Result<Response, AppError> {
+    service
+        .change_password(caller.id.into(), body.into_inner())
+        .await?;
+    Ok(Json(MessageResponse::new("password updated; sign in again")).into_response())
+}
+
+/// `POST /api/v1/auth/email/change`: mails a link to confirm a new email
+/// address, `202`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/email/change",
+    tag = "auth",
+    operation_id = "request_change",
+    request_body = ChangeEmailDto,
+    responses(
+        (status = 202, description = "Confirmation link sent to the new address", body = MessageResponse),
+        (status = 400, description = "The current password is wrong (`wrong_password`), or a malformed body", body = ErrorBody),
+        (status = 401, description = "No valid bearer token", body = ErrorBody),
+        (status = 422, description = "Not an email", body = ErrorBody),
+        (status = 429, description = "Too many requests from this IP", body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+)]
+pub async fn request_change(
+    State(service): State<Arc<AuthService>>,
+    caller: AuthUser,
+    body: ValidatedJson<ChangeEmailDto>,
+) -> Result<Response, AppError> {
+    service
+        .request_email_change(caller.id.into(), body.into_inner())
+        .await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(MessageResponse::new(
+            "a confirmation link is on its way to the new address, unless it is taken",
+        )),
+    )
+        .into_response())
+}
+
+/// `POST /api/v1/auth/email/change/confirm`: moves the account to the
+/// address a link was mailed to, `200`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/email/change/confirm",
+    tag = "auth",
+    operation_id = "confirm_change",
+    request_body = VerifyEmailDto,
+    responses(
+        (status = 200, description = "Email address updated", body = MessageResponse),
+        (status = 400, description = "Link is invalid, expired or already used, or the address was taken meanwhile (`invalid_token`), or a malformed body", body = ErrorBody),
+        (status = 422, description = "An empty token", body = ErrorBody),
+        (status = 429, description = "Too many requests from this IP", body = ErrorBody),
+    ),
+)]
+pub async fn confirm_change(
+    State(service): State<Arc<AuthService>>,
+    body: ValidatedJson<VerifyEmailDto>,
+) -> Result<Response, AppError> {
+    service.confirm_email_change(&body.token).await?;
+    Ok(Json(MessageResponse::new("email address updated")).into_response())
+}
+
+/// `POST /api/v1/auth/invitations`: an admin invites someone, `201`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/invitations",
+    tag = "auth",
+    operation_id = "invite",
+    request_body = InviteUserDto,
+    responses(
+        (status = 201, description = "Account created; a \"set your password\" link was emailed", body = UserResponse),
+        (status = 400, description = "A malformed body", body = ErrorBody),
+        (status = 401, description = "No valid bearer token", body = ErrorBody),
+        (status = 403, description = "The caller is not an admin", body = ErrorBody),
+        (status = 409, description = "Email already registered", body = ErrorBody),
+        (status = 422, description = "Not an email, or a display name over 100 characters", body = ErrorBody),
+        (status = 429, description = "Too many requests from this IP", body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+)]
+pub async fn invite(
+    State(service): State<Arc<AuthService>>,
+    caller: AdminUser,
+    body: ValidatedJson<InviteUserDto>,
+) -> Result<Response, AppError> {
+    let user = service
+        .invite(caller.0.id.into(), body.into_inner())
+        .await?;
+    Ok((StatusCode::CREATED, Json(UserResponse::from(user))).into_response())
+}

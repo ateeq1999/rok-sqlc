@@ -13,7 +13,25 @@ use crate::features::GeneratedApiDoc;
 /// no path refers to in `components(schemas(...))`. Where yours and the
 /// generated document name the same path or schema, yours wins.
 #[derive(OpenApi)]
-#[openapi(paths(), components(schemas()))]
+#[openapi(
+    paths(
+        crate::features::auth::handlers::register,
+        crate::features::auth::handlers::login,
+        crate::features::auth::handlers::verify,
+        crate::features::auth::handlers::resend,
+        crate::features::auth::handlers::forgot,
+        crate::features::auth::handlers::reset,
+        crate::features::auth::handlers::change,
+        crate::features::account::handlers::auth_me,
+        crate::features::account::handlers::get_me,
+        crate::features::account::handlers::update_me,
+        crate::features::auth::handlers::request_change,
+        crate::features::auth::handlers::confirm_change,
+        crate::features::auth::handlers::invite,
+    ),
+    components(schemas()),
+    tags((name = "auth")),
+)]
 pub struct ApiDoc;
 
 /// The whole document: [`ApiDoc`] with every generated path and schema

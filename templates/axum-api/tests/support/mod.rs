@@ -233,3 +233,61 @@ pub fn mailed_token(mail: &Mail) -> Option<String> {
         .collect();
     (!token.is_empty()).then_some(token)
 }
+/// A password the sign-up helpers use: within the policy, and not one a
+/// breach check knows.
+pub const PASSWORD: &str = "a long and unusual passphrase";
+
+/// Signs `email` up with `password` (`POST /auth/register`), verifies it
+/// with the mailed link, and signs in: the new account's bearer token. The
+/// outbox is delivered (and its mail dropped) on the way.
+pub async fn register_verified(
+    pool: &PgPool,
+    email: &str,
+    password: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let credentials = serde_json::json!({"email": email, "password": password});
+    let register = "/api/v1/auth/register";
+    let answer = call(
+        pool,
+        None,
+        Method::POST,
+        register,
+        Some(credentials.clone()),
+    )
+    .await?;
+    if answer.status != StatusCode::CREATED {
+        return Err(format!("register answered {}: {}", answer.status, answer.body).into());
+    }
+    let address = email.trim().to_lowercase();
+    let link = mailed(pool)
+        .await?
+        .iter()
+        .rev()
+        .find(|mail| mail.to == address)
+        .and_then(mailed_token)
+        .ok_or("no verification mail")?;
+    let body = serde_json::json!({"token": link});
+    let answer = call(
+        pool,
+        None,
+        Method::POST,
+        "/api/v1/auth/email/verify",
+        Some(body),
+    )
+    .await?;
+    if answer.status != StatusCode::OK {
+        return Err(format!("verify answered {}: {}", answer.status, answer.body).into());
+    }
+    let answer = call(
+        pool,
+        None,
+        Method::POST,
+        "/api/v1/auth/login",
+        Some(credentials),
+    )
+    .await?;
+    match answer.body["access_token"].as_str() {
+        Some(token) => Ok(token.to_owned()),
+        None => Err(format!("login answered {}: {}", answer.status, answer.body).into()),
+    }
+}

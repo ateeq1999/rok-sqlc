@@ -10,10 +10,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, FromRef};
 use axum::http::StatusCode;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
@@ -22,7 +23,13 @@ use tower_http::trace::TraceLayer;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::config::Config;
+use crate::db::audit_log_entry::models::NewAuditLogEntry;
 use crate::db::pool::init_pool;
+use crate::error::AppError;
+use crate::features::account::{self, AccountService};
+use crate::features::audit_log_entry::AuditLogEntryService;
+use crate::features::auth::service::{AuditEntry, AuditTrail};
+use crate::features::auth::{self, AuthService};
 use crate::features::{Services, register_services, routes};
 use crate::openapi::document;
 use crate::shared::health;
@@ -63,6 +70,9 @@ pub struct AppState {
     /// `REQUIRE_VERIFIED_EMAIL`.
     #[from_ref(skip)]
     pub require_verified_email: bool,
+    /// Where `auth` records what admins do: the `audit_log` feature, or a
+    /// test's own.
+    pub audit: Arc<dyn AuditTrail>,
 }
 
 impl AppState {
@@ -71,6 +81,7 @@ impl AppState {
     pub fn new(pool: PgPool, config: &Config) -> Self {
         AppState {
             services: register_services(&pool),
+            audit: Arc::new(AuditLog(AuditLogEntryService::new(pool.clone()))),
             pool,
             keys: Arc::new(JwtKeys::new(&config.jwt_secret, config.jwt_ttl)),
             outbox: Outbox::new(),
@@ -124,7 +135,8 @@ pub async fn serve(
 
 /// The whole application over `state`: `/health/live` and
 /// `/health/ready`, the `OpenAPI` document at `/api-docs/openapi.json` with
-/// Swagger UI at `/docs/`, every feature's routes, and the middleware:
+/// Swagger UI at `/docs/`, every feature's routes (the hand-written `account` and
+/// `auth`, their `/auth` routes behind `state.rate_limit`), and the middleware:
 /// tracing, request ids (`x-request-id`), CORS, a timeout and a body
 /// limit. Tests drive the same router.
 ///
@@ -134,6 +146,8 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .merge(health::routes())
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", document()))
+        .merge(account::routes(&state.rate_limit))
+        .merge(auth::routes(&state.rate_limit))
         .merge(routes())
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .layer(TimeoutLayer::with_status_code(
@@ -176,4 +190,51 @@ async fn shutdown_signal() {
         () = terminate => {}
     }
     tracing::info!("shutting down");
+}
+
+/// `auth`'s service, built from `state` for each request that takes it, so
+/// a test's changes to `state` (its `breach` or `audit`) apply.
+impl FromRef<AppState> for Arc<AuthService> {
+    fn from_ref(state: &AppState) -> Self {
+        Arc::new(AuthService {
+            pool: state.pool.clone(),
+            keys: state.keys.clone(),
+            outbox: Arc::new(state.outbox.clone()),
+            templates: state.templates.clone(),
+            breach: state.breach.clone(),
+            require_verified_email: state.require_verified_email,
+            audit: state.audit.clone(),
+        })
+    }
+}
+
+/// `account`'s service, over `state`'s pool.
+impl FromRef<AppState> for Arc<AccountService> {
+    fn from_ref(state: &AppState) -> Self {
+        Arc::new(AccountService::new(state.pool.clone()))
+    }
+}
+
+/// `auth`'s [`AuditTrail`] port onto the `audit_log` feature: each entry is
+/// written by [`AuditLogEntryService::create_in`] on the flow's own
+/// connection, so it commits with the change it records.
+pub struct AuditLog(pub AuditLogEntryService);
+
+#[async_trait]
+impl AuditTrail for AuditLog {
+    async fn record_in(&self, conn: &mut PgConnection, entry: AuditEntry) -> Result<(), AppError> {
+        self.0
+            .create_in(
+                conn,
+                NewAuditLogEntry {
+                    id: None,
+                    actor_user_id: entry.actor,
+                    target_user_id: entry.target,
+                    action: entry.action,
+                    details: None,
+                },
+            )
+            .await?;
+        Ok(())
+    }
 }

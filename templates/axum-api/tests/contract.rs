@@ -35,17 +35,28 @@ use tower::ServiceExt;
 /// The target document.
 const TARGET: &str = include_str!("spec/openapi.json");
 
-/// The target operations the application covers: the generated features'
-/// and health. The account flows (`/auth/...`, `/users/me`) come with the
-/// `auth` and `account` features.
+/// The target operations the application covers.
 const COVERED: &[(&str, &str)] = &[
     ("get", "/api/v1/users"),
     ("get", "/api/v1/users/{id}"),
     ("patch", "/api/v1/users/{id}"),
     ("delete", "/api/v1/users/{id}"),
     ("get", "/api/v1/audit-log"),
+    ("post", "/api/v1/auth/register"),
+    ("post", "/api/v1/auth/login"),
+    ("post", "/api/v1/auth/email/verify"),
+    ("post", "/api/v1/auth/email/verification/resend"),
+    ("get", "/api/v1/auth/me"),
+    ("get", "/api/v1/users/me"),
+    ("patch", "/api/v1/users/me"),
     ("get", "/health/live"),
     ("get", "/health/ready"),
+    ("post", "/api/v1/auth/password/forgot"),
+    ("post", "/api/v1/auth/password/reset"),
+    ("post", "/api/v1/auth/password/change"),
+    ("post", "/api/v1/auth/email/change"),
+    ("post", "/api/v1/auth/email/change/confirm"),
+    ("post", "/api/v1/auth/invitations"),
 ];
 
 /// The differences the application still has, and why.
@@ -63,6 +74,22 @@ const KNOWN: &[(&str, &str)] = &[
         "`avatar_url` comes with uploads (a later release)",
     ),
     (
+        "POST /api/v1/auth/register: response 201: properties: target has `avatar_url`, served has not",
+        "`avatar_url` comes with uploads (a later release)",
+    ),
+    (
+        "GET /api/v1/auth/me: response 200: properties: target has `avatar_url`, served has not",
+        "`avatar_url` comes with uploads (a later release)",
+    ),
+    (
+        "GET /api/v1/users/me: response 200: properties: target has `avatar_url`, served has not",
+        "`avatar_url` comes with uploads (a later release)",
+    ),
+    (
+        "PATCH /api/v1/users/me: response 200: properties: target has `avatar_url`, served has not",
+        "`avatar_url` comes with uploads (a later release)",
+    ),
+    (
         "DELETE /api/v1/users/{id}: parameter `permanent` (query): served has it, target has not",
         "every generated soft-delete `DELETE` takes `?permanent=true` (ADR 0016)",
     ),
@@ -73,6 +100,10 @@ const KNOWN: &[(&str, &str)] = &[
     (
         "GET /api/v1/audit-log: parameter `order` (query): served has it, target has not",
         "every generated list takes `order` (ADR 0016)",
+    ),
+    (
+        "POST /api/v1/auth/invitations: response 201: properties: target has `avatar_url`, served has not",
+        "`avatar_url` comes with uploads (a later release)",
     ),
 ];
 
@@ -499,6 +530,11 @@ async fn a_mismatch_breaks_the_contract_with_a_readable_list()
             "GET /api/v1/users/{id}: response 200: properties.email.type: target \"string\", served \"integer\"",
             "PATCH /api/v1/users/{id}: response 200: properties.email.type: target \"string\", served \"integer\"",
             "GET /api/v1/audit-log: operationId: target \"list\", served \"entries\"",
+            "POST /api/v1/auth/register: response 201: properties.email.type: target \"string\", served \"integer\"",
+            "GET /api/v1/auth/me: response 200: properties.email.type: target \"string\", served \"integer\"",
+            "GET /api/v1/users/me: response 200: properties.email.type: target \"string\", served \"integer\"",
+            "PATCH /api/v1/users/me: response 200: properties.email.type: target \"string\", served \"integer\"",
+            "POST /api/v1/auth/invitations: response 201: properties.email.type: target \"string\", served \"integer\"",
         ]
     );
     Ok(())
