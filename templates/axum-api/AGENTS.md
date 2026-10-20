@@ -23,7 +23,7 @@ src/
 ├─ error.rs       AppError and its HTTP mapping, shared by all features
 ├─ db/            generated data layer: rows, typed ids, enums, all SQL, pool.rs
 ├─ shared/        tools with no business meaning (auth.rs, security/, mail/
-│                 and rate_limit.rs are yours; response, pagination, validation,
+│                 and rate_limit/ are yours; response, pagination, validation,
 │                 tenant, health are generated)
 └─ features/
    ├─ mod.rs        `mod generated; pub use generated::*;` plus hand-written features

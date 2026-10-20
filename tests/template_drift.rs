@@ -23,6 +23,9 @@ const SHARED: &[&str] = &[
     // All of `shared/mail`: the sender is started (`tokio::spawn` or
     // actix's runtime) and stopped by each template's `app.rs`.
     "src/shared/mail",
+    // The rate limit's counting and `client_ip`; each `rate_limit/mod.rs`
+    // is the framework's middleware around it.
+    "src/shared/rate_limit/limiter.rs",
 ];
 
 /// The features whose framework-independent files both templates share.

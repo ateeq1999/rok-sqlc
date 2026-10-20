@@ -149,8 +149,8 @@ test needs no database. The lints in `Cargo.toml` deny `unwrap`, `expect`,
   `mod.rs` and each feature's `service.rs`.
 - **Yours** (first line `Scaffolded once`, or no header): `rok-sqlc.toml`,
   `migrations/`, `queries/`, `src/{lib,main,app,config,error,openapi}.rs`,
-  `src/shared/{mod,auth,rate_limit}.rs`, `src/shared/security/`,
-  `src/shared/mail/`, `src/features/mod.rs`, the hand-written
+  `src/shared/{mod,auth}.rs`, `src/shared/rate_limit/`,
+  `src/shared/security/`, `src/shared/mail/`, `src/features/mod.rs`, the hand-written
   `src/features/{auth,account}/`, each feature's `service.rs` (business
   rules go there), `tests/`, and this README.
 

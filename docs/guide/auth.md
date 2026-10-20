@@ -26,7 +26,7 @@ A plain `rok-sqlc init` has none of this, only the `AuthUser` and
 | `src/shared/auth.rs` | the `AuthUser` and `AdminUser` extractors |
 | `src/shared/security/` | argon2id passwords, single-use tokens, the JWT, the breach check |
 | `src/shared/mail/` | the `Mailer` port, its SMTP and log transports, the messages, the outbox and its sender |
-| `src/shared/rate_limit.rs` | the per-IP limit on `/auth` |
+| `src/shared/rate_limit/` | the per-IP limit on `/auth`: `limiter.rs` counts, `mod.rs` is the framework's middleware |
 | `queries/auth.sql` | the `auth` feature's SQL (`db::queries::auth`) |
 | `queries/account.sql` | the `account` feature's SQL |
 | `queries/session.sql`, `queries/mail.sql` | the session check and the outbox, for `shared/` |

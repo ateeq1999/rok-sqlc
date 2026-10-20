@@ -98,8 +98,8 @@ change applies at once.
   message as an `outbound_mail` row on its own transaction, and the sender
   delivers it (SMTP, or the log), retrying with backoff; after five
   failures a row is `dead`, and loses its bodies and the link in them.
-- `src/shared/rate_limit.rs` is `RateLimit`, a tower `Layer` over
-  `governor`: `AUTH_RATE_LIMIT` requests a minute per client IP, then
+- `src/shared/rate_limit/` is `RateLimit`, a tower `Layer` (`mod.rs`) over
+  `governor` (`limiter.rs`, the same in both templates): `AUTH_RATE_LIMIT` requests a minute per client IP, then
   `429 too_many_requests` with `Retry-After`. The IP is the peer, or with
   `TRUST_PROXY=true` the last `X-Forwarded-For` address. Wrap routes in
   `state.rate_limit.clone()`.
@@ -175,8 +175,8 @@ and rate-limit tests need no database. The lints in `Cargo.toml` deny
   `mod.rs` and each feature's `service.rs`.
 - **Yours** (first line `Scaffolded once`, or no header): `rok-sqlc.toml`,
   `migrations/`, `queries/`, `src/{lib,main,app,config,error,openapi}.rs`,
-  `src/shared/{mod,auth,rate_limit}.rs`, `src/shared/security/`,
-  `src/shared/mail/`, `src/features/mod.rs`, the hand-written
+  `src/shared/{mod,auth}.rs`, `src/shared/rate_limit/`,
+  `src/shared/security/`, `src/shared/mail/`, `src/features/mod.rs`, the hand-written
   `src/features/{auth,account}/`, each feature's `service.rs` (business
   rules go there), `tests/`, and this README.
 
