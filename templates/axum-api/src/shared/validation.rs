@@ -28,7 +28,8 @@ pub use crate::db::http::BodyRejection;
 pub use crate::db::http::axum::ValidatedJson;
 
 /// The path's parameters, as axum's `Path` reads them: a path that doesn't
-/// parse, such as `/notes/not-a-uuid`, is a `400` with `bad_request`.
+/// parse, such as `/notes/not-a-uuid`, is a `400` with `bad_request`; a
+/// route that doesn't provide them is a `500`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Path<T>(pub T);
 
@@ -42,16 +43,19 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, AppError> {
         match axum::extract::Path::<T>::from_request_parts(parts, state).await {
             Ok(axum::extract::Path(value)) => Ok(Path(value)),
-            Err(rejection) => Err(AppError::BadRequest(path_message(&rejection))),
+            Err(rejection) => Err(path_error(rejection)),
         }
     }
 }
 
-/// Why a path didn't parse: `Path deserialize error: ` and the value's
-/// failure, such as `can not parse "abc" to a i64`.
-fn path_message(rejection: &PathRejection) -> String {
-    let PathRejection::FailedToDeserializePathParams(failed) = rejection else {
-        return rejection.body_text();
+/// A path that didn't parse is the caller's `400`: `Path deserialize
+/// error: ` and the value's failure, such as `can not parse "abc" to a
+/// i64`. A path axum can't read at all (a route without the parameters its
+/// handler takes, or a type no path holds) is a wiring bug: a `500`, its
+/// detail logged.
+fn path_error(rejection: PathRejection) -> AppError {
+    let PathRejection::FailedToDeserializePathParams(failed) = &rejection else {
+        return AppError::Internal(Box::new(rejection));
     };
     let why = match failed.kind() {
         ErrorKind::Message(message) | ErrorKind::DeserializeError { message, .. } => {
@@ -71,9 +75,12 @@ fn path_message(rejection: &PathRejection) -> String {
             expected_type,
             ..
         } => format!("can not parse {value:?} to a {expected_type}"),
-        _ => return rejection.body_text(),
+        ErrorKind::InvalidUtf8InPathParam { .. } => {
+            return AppError::BadRequest(rejection.body_text());
+        }
+        _ => return AppError::Internal(Box::new(rejection)),
     };
-    format!("Path deserialize error: {why}")
+    AppError::BadRequest(format!("Path deserialize error: {why}"))
 }
 
 /// The query string, as axum's `Query` reads it: a query string that

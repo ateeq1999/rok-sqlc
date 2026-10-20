@@ -169,6 +169,26 @@ async fn a_malformed_path_says_why_as_actix_web_does() {
     }
 }
 
+/// A path axum can't read at all is a wiring bug, not the caller's: a
+/// route without the parameters its handler takes, or with more of them,
+/// is a `500` with the generic message, its detail logged.
+#[tokio::test]
+async fn a_path_the_route_doesnt_provide_is_a_500() {
+    async fn one(Path(id): Path<i64>) -> String {
+        id.to_string()
+    }
+    let app = Router::new()
+        .route("/none", get(one))
+        .route("/two/{a}/{b}", get(one));
+    for uri in ["/none", "/two/1/2"] {
+        let (status, body) = get_body(app.clone(), uri, None).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{uri}");
+        let body: Value = serde_json::from_slice(&body).expect("a JSON body");
+        assert_eq!(body["error"]["code"], "internal_error", "{uri}");
+        assert_eq!(body["error"]["message"], "something went wrong", "{uri}");
+    }
+}
+
 /// The tenant the test middleware stores.
 #[derive(Debug, Clone, PartialEq)]
 struct Org(String);
