@@ -27,38 +27,43 @@ fn copied_files(template: &Path) -> Result<BTreeMap<PathBuf, String>> {
 
 #[test]
 fn init_template_copies_the_templates_files_but_the_generated_ones() -> Result<()> {
-    let dir = TempDir::new()?;
-    let project = dir.path().join("app");
-    let output = run_binary(&["init", "-t", "actix", project.to_str().unwrap_or_default()]);
-    assert_success(&output);
+    for (name, template) in [
+        ("actix", actix_template()),
+        ("axum", common::manifest_dir().join("templates/axum-api")),
+    ] {
+        let dir = TempDir::new()?;
+        let project = dir.path().join("app");
+        let output = run_binary(&["init", "-t", name, project.to_str().unwrap_or_default()]);
+        assert_success(&output);
 
-    let expected = copied_files(&actix_template())?;
-    assert!(
-        expected.contains_key(Path::new("rok-sqlc.toml"))
-            && expected.contains_key(Path::new("Cargo.lock")),
-        "{expected:?}"
-    );
-    assert!(
-        read_tree(&actix_template())?
-            .values()
-            .any(|text| common::is_generated(text)),
-        "the template holds generated files to leave out"
-    );
-    assert_eq!(read_tree(&project)?, expected);
+        let expected = copied_files(&template)?;
+        assert!(
+            expected.contains_key(Path::new("rok-sqlc.toml"))
+                && expected.contains_key(Path::new("Cargo.lock")),
+            "{name}: {expected:?}"
+        );
+        assert!(
+            read_tree(&template)?
+                .values()
+                .any(|text| common::is_generated(text)),
+            "the {name} template holds generated files to leave out"
+        );
+        assert_eq!(read_tree(&project)?, expected, "{name}");
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for file in expected.keys() {
-        assert!(
-            stdout.contains(&format!("scaffolded {}", shown(&project.join(file)))),
-            "{} not reported:\n{stdout}",
-            file.display()
-        );
-    }
-    for step in ["rok-sqlc g", "cargo run"] {
-        assert!(
-            stdout.contains(step),
-            "next step `{step}` missing:\n{stdout}"
-        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for file in expected.keys() {
+            assert!(
+                stdout.contains(&format!("scaffolded {}", shown(&project.join(file)))),
+                "{name}: {} not reported:\n{stdout}",
+                file.display()
+            );
+        }
+        for step in ["rok-sqlc g", "cargo run"] {
+            assert!(
+                stdout.contains(step),
+                "{name}: next step `{step}` missing:\n{stdout}"
+            );
+        }
     }
     Ok(())
 }
@@ -85,11 +90,11 @@ fn init_template_keeps_existing_files() -> Result<()> {
 #[test]
 fn init_template_rejects_an_unknown_name_listing_the_valid_ones() -> Result<()> {
     let dir = TempDir::new()?;
-    let output = run_binary_in(dir.path(), &["init", "-t", "axum"]);
+    let output = run_binary_in(dir.path(), &["init", "-t", "rocket"]);
     assert!(!output.status.success(), "an unknown template must fail");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("axum") && stderr.contains("actix"),
+        stderr.contains("rocket") && stderr.contains("actix, axum"),
         "{stderr}"
     );
     assert!(read_tree(dir.path())?.is_empty(), "nothing written");

@@ -5,7 +5,6 @@
 //! parameters. Hashing is slow on purpose, so [`hash`] and [`verify`] run
 //! on the blocking thread pool, never on the server's workers.
 
-use actix_web::web;
 use argon2::Argon2;
 use argon2::password_hash::phc::PasswordHash;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
@@ -37,7 +36,7 @@ pub fn within_policy(password: &str) -> bool {
 /// The argon2id hash of `password`, as a PHC string for
 /// `users.password_hash`.
 pub async fn hash(password: String) -> Result<String, AppError> {
-    web::block(move || {
+    tokio::task::spawn_blocking(move || {
         Argon2::default()
             .hash_password(password.as_bytes())
             .map(|hashed| hashed.to_string())
@@ -52,7 +51,7 @@ pub async fn hash(password: String) -> Result<String, AppError> {
 /// checks against [`DUMMY_HASH`], which never matches, so the call costs
 /// the same either way.
 pub async fn verify(password: String, stored: Option<String>) -> Result<bool, AppError> {
-    web::block(move || {
+    tokio::task::spawn_blocking(move || {
         let known = stored.is_some();
         let stored = stored.unwrap_or_else(|| DUMMY_HASH.to_owned());
         let matches = PasswordHash::new(&stored).is_ok_and(|parsed| {
@@ -70,7 +69,7 @@ pub async fn verify(password: String, stored: Option<String>) -> Result<bool, Ap
 mod tests {
     use super::*;
 
-    #[actix_web::test]
+    #[tokio::test]
     async fn a_hash_verifies_its_password_and_no_other() -> Result<(), AppError> {
         let hashed = hash("correct horse".to_owned()).await?;
         assert!(hashed.starts_with("$argon2id$"), "{hashed}");
@@ -79,7 +78,7 @@ mod tests {
         Ok(())
     }
 
-    #[actix_web::test]
+    #[tokio::test]
     async fn an_unknown_account_is_verified_against_the_dummy_hash_and_fails()
     -> Result<(), AppError> {
         assert!(!verify("correct horse".to_owned(), None).await?);
@@ -88,7 +87,7 @@ mod tests {
 
     /// The dummy hash costs what a real one does: same algorithm and
     /// parameters as [`hash`] writes.
-    #[actix_web::test]
+    #[tokio::test]
     async fn the_dummy_hash_has_the_parameters_of_a_real_one() -> Result<(), AppError> {
         let real = hash("anything".to_owned()).await?;
         let params = |phc: &str| phc.rsplitn(3, '$').nth(2).map(str::to_owned);

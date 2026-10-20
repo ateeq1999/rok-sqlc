@@ -1,0 +1,186 @@
+# axum-api
+
+A complete axum API made by [rok-sqlc](https://github.com/ateeq1999/rok-sqlc)
+from one schema: the `users` and `audit_log` part of the axum starter's
+OpenAPI document (`tests/spec/openapi.json`), with the same wire standard,
+routes and schemas. `tests/contract.rs` checks the document this application
+serves against that one, operation by operation. It is the actix template
+(`rok-sqlc init --template actix`) on axum 0.8: the same schema, queries,
+services, security and mail code, with axum handlers, routes and
+extractors.
+
+Start one with:
+
+```sh
+rok-sqlc init --template axum my-api
+cd my-api
+rok-sqlc g
+```
+
+## Running it
+
+You need PostgreSQL and Rust 1.94 or newer.
+
+1. Create a database and apply `migrations/` to it, for example with
+   `sqlx migrate run` ([sqlx-cli](https://crates.io/crates/sqlx-cli)) or
+   `psql` on each file of `migrations/` in order.
+2. Set `DATABASE_URL` and `JWT_SECRET`, at least 32 bytes (`openssl rand
+   -base64 48`). `.env.example` lists every setting; `src/config.rs` reads
+   them from the environment.
+3. `cargo run`. The API is under `/api/v1`, health at `/health/live` and
+   `/health/ready`, the OpenAPI document at `/api-docs/openapi.json` and
+   Swagger UI at `/docs/`. Ctrl+C or `SIGTERM` stops it gracefully:
+   requests in flight finish, then the mail sender stops.
+
+## The server
+
+`src/app.rs` is the only wiring file. `AppState` (`#[derive(FromRef)]`)
+holds the pool, the generated features' `Services`, the JWT keys, the mail
+outbox and templates, the breach check and the rate limit; a handler takes
+any of them with `State<...>`. `router(state)` merges health, Swagger UI
+and every feature's `routes()`, under tower-http's tracing, request ids
+(`x-request-id`), CORS (same origin until you allow yours), a 30-second
+timeout (`408`) and a 2 MiB body limit (`413`). `serve` runs it with the
+mail sender beside it (`tokio::spawn`), both stopped by the same shutdown
+signal.
+
+Every route but health needs `Authorization: Bearer <token>`: an HS256
+JWT signed with `JWT_SECRET`, with `sub` (the user's id), `role` (`user`
+or `admin`), `tv` (the account's `token_version`) and `exp`.
+`src/shared/auth.rs`'s `AuthUser` and `AdminUser` verify it, then check
+the account on every request (`queries/session.sql`): a disabled or
+deleted account, or a token issued before the account's `token_version`
+was bumped, is a `401`, and the role is read from the database, so a role
+change applies at once.
+
+- `src/shared/security/` holds argon2id password hashing, single-use
+  tokens (only their SHA-256 is stored), the JWT and the breach check.
+- `src/shared/mail/` sends mail through an outbox: a flow writes its
+  message as an `outbound_mail` row on its own transaction, and the sender
+  delivers it (SMTP, or the log), retrying with backoff; after five
+  failures a row is `dead`, and loses its bodies and the link in them.
+- `src/shared/rate_limit.rs` is `RateLimit`, a tower `Layer` over
+  `governor`: `AUTH_RATE_LIMIT` requests a minute per client IP, then
+  `429 too_many_requests` with `Retry-After`. The IP is the peer, or with
+  `TRUST_PROXY=true` the last `X-Forwarded-For` address. Wrap routes in
+  `state.rate_limit.clone()`.
+
+## Dependencies
+
+The template's `Cargo.toml` has them. Starting from a package of your own
+(`init --template` keeps an existing `Cargo.toml`), add these:
+
+```toml
+[dependencies]
+argon2 = "0.6"
+async-trait = "0.1"
+axum = { version = "0.8", features = ["macros"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+governor = { version = "0.10", default-features = false, features = ["std"] }
+jsonwebtoken = { version = "11", features = ["rust_crypto"] }
+lettre = { version = "0.11", default-features = false, features = ["builder", "hostname", "smtp-transport", "tokio1-rustls-tls"] }
+rand = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_path_to_error = "0.1"
+sha1 = "0.11"
+sha2 = "0.11"
+sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "derive", "uuid", "chrono", "json"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "request-id", "timeout", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+utoipa = { version = "5", features = ["chrono", "uuid"] }
+utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }
+uuid = { version = "1", features = ["v7", "serde"] }
+validator = { version = "0.21", features = ["derive"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+```
+
+## Checks
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+DATABASE_URL=postgres://... cargo test   # each test makes and drops its own schema
+rok-sqlc g --check                       # the generated code matches the schema
+rok-sqlc check-arch                      # the layout and rules of AGENTS.md
+```
+
+Without `DATABASE_URL`, the API tests print a note and pass; the contract
+and rate-limit tests need no database. The lints in `Cargo.toml` deny
+`unwrap`, `expect`, `panic`, `todo` and leftover debugging.
+
+## What is generated, and what is yours
+
+`AGENTS.md` and `src/features/README.md` explain the layout. In short:
+
+- **Generated** (first line `@generated`; `rok-sqlc g` rewrites them, never
+  edit them): `src/db/` (the data layer), `src/shared/{health,pagination,
+  response,tenant,validation}.rs`, and every file of `src/features/` but
+  `mod.rs` and each feature's `service.rs`.
+- **Yours** (first line `Scaffolded once`, or no header): `rok-sqlc.toml`,
+  `migrations/`, `queries/`, `src/{lib,main,app,config,error,openapi}.rs`,
+  `src/shared/{mod,auth,rate_limit}.rs`, `src/shared/security/`,
+  `src/shared/mail/`, `src/features/mod.rs`, each feature's `service.rs`
+  (business rules go there), `tests/`, and this README.
+
+`queries/` holds hand-written SQL, one file per feature: `rok-sqlc g` turns
+`queries/auth.sql` into `src/db/queries/auth.rs`, one function per query.
+Only the feature of that name calls it, whatever tables its queries touch;
+`check-arch` reports another feature that does. A file named after no
+feature is anyone's: `queries/session.sql` (the check `AuthUser` makes)
+and `queries/mail.sql` (the outbox) serve `src/shared/`.
+
+Change the schema with a new migration, adjust `rok-sqlc.toml`, run
+`rok-sqlc g`, and the features follow.
+
+## How the schema meets the target
+
+- `role` is a PostgreSQL enum, so the schema `Role` is `user` or `admin`.
+- `has_password` is a generated column (`password_hash IS NOT NULL`).
+- `password_hash`, `totp_secret`, `avatar_key`, `failed_logins`,
+  `locked_until`, `token_version`, `updated_at` and `deleted_at` are hidden
+  (`[api.hidden]`): no response carries them.
+- The columns the server sets are managed (`[conventions]
+  managed_columns`), so no request body takes them; a trigger keeps
+  `updated_at` current.
+- `deleted_at` is the soft-delete column: `DELETE /users/{id}` marks the row.
+- `email` is immutable (`[api.immutable]`): set when an account is created,
+  never by `PATCH /users/{id}`, which answers `422` when its body names it.
+- `audit_log` is generated as the `audit_log_entry` module
+  (`AuditLogEntryResponse`), served at `/audit-log`, read-only.
+- `[api.search]` and `[api.sort]` give the users list its `q` and
+  `UserSort` (`created_at`, `email`).
+- `media` and `api_keys` are in the schema for the features to come, and
+  `auth_tokens` (single-use mailed tokens) and `outbound_mail` (the mail
+  outbox) for the account flows; none has a generated API (`[api]
+  exclude`).
+- `token_version` is bumped to sign an account out everywhere: a token
+  carrying an older one is rejected.
+
+`tests/contract.rs` lists the differences that remain, each with its
+reason: `avatar_url` (uploads, on every `UserResponse`), and the
+`?permanent=` and list `sort`/`order` parameters every generated API has.
+
+## Shared with the actix template
+
+The framework-independent files are the same in both templates, byte for
+byte: `migrations/`, `queries/`, `src/shared/security/`, `src/shared/mail/`
+and each feature's `dto.rs`, `model.rs`, `repo.rs`, `service.rs` and
+`service_api.rs`. rok-sqlc's repository checks that they stay so.

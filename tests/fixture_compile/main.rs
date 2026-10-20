@@ -11,9 +11,11 @@ mod common;
 
 mod actix_template;
 mod api_app;
+mod axum_template;
 mod fixture_app;
 mod init;
 mod init_axum;
+mod template_project;
 
 use std::path::Path;
 use std::process::Command;

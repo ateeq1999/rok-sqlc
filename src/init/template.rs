@@ -43,10 +43,16 @@ struct Template {
 }
 
 /// The templates `--template` names.
-const TEMPLATES: &[Template] = &[Template {
-    name: "actix",
-    dir: "actix-api",
-}];
+const TEMPLATES: &[Template] = &[
+    Template {
+        name: "actix",
+        dir: "actix-api",
+    },
+    Template {
+        name: "axum",
+        dir: "axum-api",
+    },
+];
 
 /// The names `--template` takes.
 pub fn names() -> impl Iterator<Item = &'static str> {
@@ -263,10 +269,10 @@ mod tests {
 
     #[test]
     fn an_unknown_template_lists_the_valid_ones() {
-        let err = files("axum").err().map(|err| err.to_string());
+        let err = files("rocket").err().map(|err| err.to_string());
         assert_eq!(
             err.as_deref(),
-            Some("unknown template `axum`; the templates are: actix")
+            Some("unknown template `rocket`; the templates are: actix, axum")
         );
     }
 }
