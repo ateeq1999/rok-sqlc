@@ -2,14 +2,17 @@
 
 //! The `auth` routes, under `/api/v1/auth`, behind the per-IP rate limit.
 
-use actix_web::web;
+use actix_web::{HttpResponse, web};
 
 use super::handlers;
+use crate::error::AppError;
 use crate::shared::rate_limit::RateLimit;
 
 /// Mounts every `auth` endpoint under `/api/v1/auth`, each request counted
 /// against `limit`. `app.rs` mounts the `account` feature's
-/// `/api/v1/auth/me` first, so this scope doesn't swallow it.
+/// `/api/v1/auth/me` first, so this scope doesn't swallow it. An unknown
+/// path under the scope, or a known one asked with the wrong method,
+/// answers the standard `404`, and counts.
 pub fn routes(cfg: &mut web::ServiceConfig, limit: &RateLimit) {
     cfg.service(
         web::scope("/api/v1/auth")
@@ -29,6 +32,13 @@ pub fn routes(cfg: &mut web::ServiceConfig, limit: &RateLimit) {
                 "/email/change/confirm",
                 web::post().to(handlers::confirm_change),
             )
-            .route("/invitations", web::post().to(handlers::invite)),
+            .route("/invitations", web::post().to(handlers::invite))
+            .default_service(web::to(no_such_route)),
     );
+}
+
+/// An unknown path or method under `/api/v1/auth`: the wire standard's
+/// `404`.
+async fn no_such_route() -> Result<HttpResponse, AppError> {
+    Err(AppError::NotFound("no such route".to_owned()))
 }

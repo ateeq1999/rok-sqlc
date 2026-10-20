@@ -154,3 +154,29 @@ async fn the_auth_routes_answer_429_past_the_rate_limit() -> TestResult {
     assert_eq!(answer.status, StatusCode::UNAUTHORIZED, "{}", answer.body);
     db.drop().await
 }
+
+#[actix_web::test]
+async fn every_request_under_auth_counts_against_the_rate_limit() -> TestResult {
+    let Some(db) = Database::fresh().await? else {
+        return Ok(());
+    };
+    let state = state_with(&db.pool, &[("AUTH_RATE_LIMIT", "3")])?;
+    // An unknown path under `/auth` is the standard `404`, and counts.
+    for _ in 0..2 {
+        let answer = call_with(&state, None, Method::GET, "/api/v1/auth/nothing", None).await?;
+        assert_eq!(answer.status, StatusCode::NOT_FOUND, "{}", answer.body);
+        assert_eq!(answer.code(), "not_found");
+    }
+    // So does a known path asked with the wrong method, answered alike.
+    let answer = call_with(&state, None, Method::GET, LOGIN, None).await?;
+    assert_eq!(answer.status, StatusCode::NOT_FOUND, "{}", answer.body);
+    assert_eq!(answer.code(), "not_found");
+    let answer = call_with(&state, None, Method::GET, "/api/v1/auth/nothing", None).await?;
+    assert_eq!(
+        answer.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        answer.body
+    );
+    db.drop().await
+}
