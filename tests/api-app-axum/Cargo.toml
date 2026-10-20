@@ -5,9 +5,14 @@ edition = "2024"
 rust-version = "1.94"
 publish = false
 
-# `tests/api-app` for axum (`[api] framework = "axum"`). For now it pins the
-# dependency versions every axum project `tests/fixture_compile/` builds
-# resolves against, through its `Cargo.lock`.
+# An application built the way `rok-sqlc init --framework axum` lays one
+# out: `tests/api-app` for axum (`[api] framework = "axum"`, 0.7 decision
+# A7). `tests/fixture_compile/` in rok-sqlc scaffolds the skeleton with
+# `init --framework axum` and generates `tests/api-app/migrations/` into
+# `src/db/`, `src/shared/` and `src/features/`, then checks and tests this
+# crate with `tests/api-app`'s suites (`tests/api-suite/`). Its `Cargo.lock`
+# pins the versions every axum project `tests/fixture_compile/` builds
+# resolves against.
 
 [dependencies]
 # What the axum skeleton and the generated API need (`init --framework
@@ -31,3 +36,7 @@ utoipa = { version = "5", features = ["chrono", "decimal", "uuid"] }
 utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }
 uuid = { version = "1", features = ["v7", "serde"] }
 validator = { version = "0.21", features = ["derive"] }
+
+[dev-dependencies]
+# Drives the router in the tests (`ServiceExt::oneshot`).
+tower = { version = "0.5", features = ["util"] }

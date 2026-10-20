@@ -19,3 +19,13 @@ tests/api-app/src/features/*/*
 !tests/api-app/src/features/drafts/service.rs
 templates/actix-api/Cargo.toml
 templates/actix-api/target/
+# `tests/fixture_compile/` scaffolds (`rok-sqlc init --framework axum`),
+# copies and generates these.
+tests/api-app-axum/src/app.rs
+tests/api-app-axum/src/main.rs
+tests/api-app-axum/src/config.rs
+tests/api-app-axum/src/error.rs
+tests/api-app-axum/src/openapi.rs
+tests/api-app-axum/src/db/
+tests/api-app-axum/src/shared/
+tests/api-app-axum/src/features/

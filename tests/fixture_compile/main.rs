@@ -11,6 +11,7 @@ mod common;
 
 mod actix_template;
 mod api_app;
+mod api_app_axum;
 mod axum_template;
 mod fixture_app;
 mod init;

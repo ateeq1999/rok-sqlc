@@ -61,9 +61,13 @@ pub async fn liveness() -> Response {
 pub async fn readiness(State(pool): State<PgPool>) -> Response {
     match check_health(&pool).await {
         Ok(()) => Json(Status { status: "ready" }).into_response(),
-        Err(_) => {
-            let body = ErrorBody::new(SERVICE_UNAVAILABLE, "the database is not reachable");
-            (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
-        }
+        Err(_) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorBody::new(
+                SERVICE_UNAVAILABLE,
+                "the database is not reachable",
+            )),
+        )
+            .into_response(),
     }
 }

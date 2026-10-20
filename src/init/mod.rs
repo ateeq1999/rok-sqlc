@@ -99,7 +99,10 @@ pub(crate) fn plan(dir: &Path, krate: &str, framework: ApiFramework) -> Vec<(Pat
                 .replace("\r\n", "\n")
                 .replace(CRATE_PLACEHOLDER, krate)
                 .replace(WIRING_PLACEHOLDER, wiring)
-                .replace(RULES_PLACEHOLDER, &crate::check_arch::rules_markdown());
+                .replace(
+                    RULES_PLACEHOLDER,
+                    &crate::check_arch::rules_markdown(framework),
+                );
             let contents = if path.ends_with(".rs") {
                 format!("{SCAFFOLD_HEADER}\n\n{text}")
             } else {

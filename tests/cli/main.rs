@@ -13,6 +13,7 @@ mod api;
 mod api_framework;
 mod api_rules;
 mod check_arch;
+mod check_arch_axum;
 mod collisions;
 mod config;
 mod derives;
