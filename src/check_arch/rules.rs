@@ -233,4 +233,24 @@ mod tests {
             "architecture.md does not say: {scope}"
         );
     }
+
+    /// Each template's `AGENTS.md` states the rules `check-arch` checks for
+    /// its framework.
+    #[test]
+    fn each_templates_agents_md_states_its_frameworks_rules() {
+        for (template, framework) in [
+            ("actix-api", ApiFramework::Actix),
+            ("axum-api", ApiFramework::Axum),
+        ] {
+            let path = format!(
+                "{}/templates/{template}/AGENTS.md",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            let agents = normalized(&std::fs::read_to_string(&path).unwrap_or_default());
+            for (index, rule) in rules(framework).iter().enumerate() {
+                let rule = normalized(&format!("{}. {rule}", index + 1));
+                assert!(agents.contains(&rule), "{path} does not say: {rule}");
+            }
+        }
+    }
 }

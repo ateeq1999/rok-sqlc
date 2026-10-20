@@ -150,7 +150,7 @@ mod tests {
 
     /// Nothing listens on the discard port, so the request fails at once:
     /// the check fails open.
-    #[actix_web::test]
+    #[tokio::test]
     async fn an_unreachable_service_accepts_the_password() {
         let check = PwnedPasswords::new("http://127.0.0.1:9/range/");
         assert!(!check.is_breached("password").await);

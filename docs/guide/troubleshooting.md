@@ -307,10 +307,10 @@ document's wiring from the files `init` scaffolded:
 
 ```text
 error: invalid value 'nope' for '--template <NAME>'
-  [possible values: actix]
+  [possible values: actix, axum]
 ```
 
-`rok-sqlc init --template` takes `actix`, the only template so far.
+`rok-sqlc init --template` takes `actix` or `axum`.
 
 ## Building
 

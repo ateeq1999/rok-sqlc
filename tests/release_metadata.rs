@@ -46,6 +46,8 @@ fn package_ships_licenses_readme_and_changelog_but_no_fixtures() -> Result<()> {
         "build.rs",
         "templates/actix-api/rok-sqlc.toml",
         "templates/actix-api/migrations/0001_init.sql",
+        "templates/axum-api/rok-sqlc.toml",
+        "templates/axum-api/Cargo.toml.template",
     ] {
         ensure!(
             files.iter().any(|file| file == required),
