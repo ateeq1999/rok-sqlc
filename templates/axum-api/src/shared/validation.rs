@@ -8,11 +8,15 @@
 //! A handler takes [`ValidatedJson`], which checks the body's rules and
 //! answers a bad body with a [`BodyRejection`] in the wire standard's error
 //! body, and [`Path`] and [`Query`], axum's own answering a path or query
-//! string that doesn't parse with a `400`.
+//! string that doesn't parse with a `400` saying why, worded the same
+//! whichever framework serves the API.
 
+use std::error::Error as _;
 use std::str::FromStr;
 
 use axum::extract::FromRequestParts;
+use axum::extract::path::ErrorKind;
+use axum::extract::rejection::{PathRejection, QueryRejection};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, header};
 use serde::de::DeserializeOwned;
@@ -38,9 +42,38 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, AppError> {
         match axum::extract::Path::<T>::from_request_parts(parts, state).await {
             Ok(axum::extract::Path(value)) => Ok(Path(value)),
-            Err(rejection) => Err(AppError::BadRequest(rejection.body_text())),
+            Err(rejection) => Err(AppError::BadRequest(path_message(&rejection))),
         }
     }
+}
+
+/// Why a path didn't parse: `Path deserialize error: ` and the value's
+/// failure, such as `can not parse "abc" to a i64`.
+fn path_message(rejection: &PathRejection) -> String {
+    let PathRejection::FailedToDeserializePathParams(failed) = rejection else {
+        return rejection.body_text();
+    };
+    let why = match failed.kind() {
+        ErrorKind::Message(message) | ErrorKind::DeserializeError { message, .. } => {
+            message.clone()
+        }
+        ErrorKind::ParseError {
+            value,
+            expected_type,
+        }
+        | ErrorKind::ParseErrorAtKey {
+            value,
+            expected_type,
+            ..
+        }
+        | ErrorKind::ParseErrorAtIndex {
+            value,
+            expected_type,
+            ..
+        } => format!("can not parse {value:?} to a {expected_type}"),
+        _ => return rejection.body_text(),
+    };
+    format!("Path deserialize error: {why}")
 }
 
 /// The query string, as axum's `Query` reads it: a query string that
@@ -58,9 +91,24 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, AppError> {
         match axum::extract::Query::<T>::from_request_parts(parts, state).await {
             Ok(axum::extract::Query(value)) => Ok(Query(value)),
-            Err(rejection) => Err(AppError::BadRequest(rejection.body_text())),
+            Err(rejection) => Err(AppError::BadRequest(query_message(&rejection))),
         }
     }
+}
+
+/// Why a query string didn't parse: `Query deserialize error: ` and the
+/// failure, such as `invalid digit found in string`, without the field path
+/// axum adds.
+fn query_message(rejection: &QueryRejection) -> String {
+    let mut source = rejection.source();
+    while let Some(error) = source {
+        type Failure = serde_path_to_error::Error<serde::de::value::Error>;
+        if let Some(failure) = error.downcast_ref::<Failure>() {
+            return format!("Query deserialize error: {}", failure.inner());
+        }
+        source = error.source();
+    }
+    rejection.body_text()
 }
 
 /// The version an `If-Match` header holds, `"<version>"`: the `ETag` a
