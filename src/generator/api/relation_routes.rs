@@ -5,6 +5,7 @@
 use heck::ToSnakeCase;
 
 use super::feature::Feature;
+use super::framework::Status;
 use super::handlers::own_scope;
 use super::layout::{Uses, push_call, push_signature};
 use super::paths;
@@ -240,7 +241,7 @@ pub fn render_get_one(output: &mut String, uses: &mut Uses, feature: &Feature<'_
             relation.name
         ));
         uses.add(&format!("super::dto::{}", relation.with_response(feature)));
-        framework.push_answer(&mut arm, uses, "Ok", &headers, "response");
+        framework.push_answer(&mut arm, uses, Status::Ok, &headers, "response");
         arms.push((relation.variant(), arm));
     }
     let path = framework.path("key", &key);
@@ -259,7 +260,7 @@ pub fn render_get_one(output: &mut String, uses: &mut Uses, feature: &Feature<'_
     path.push_let(output, "key");
     output.push_str(&format!(
         "    let Some(include) = {}.include else {{\n",
-        query.value
+        query.value()
     ));
     let mut args = own.args;
     args.push("key".to_owned());
@@ -285,7 +286,7 @@ pub fn render_get_one(output: &mut String, uses: &mut Uses, feature: &Feature<'_
         "    let response = {}::from(row);\n",
         feature.response()
     ));
-    framework.push_answer(&mut plain, uses, "Ok", &headers, "response");
+    framework.push_answer(&mut plain, uses, Status::Ok, &headers, "response");
     let plain = plain.replacen("    Ok(", "    return Ok(", 1);
     let plain = match plain.rfind('\n') {
         Some(end) if plain[..end].ends_with(')') => format!("{};\n", &plain[..end]),
@@ -341,7 +342,7 @@ pub fn render_handlers(output: &mut String, uses: &mut Uses, feature: &Feature<'
         params.push(key_path.param(uses));
         push_signature(output, 0, &head, &params, framework.returns());
         let mut args = scope.args.clone();
-        args.push(key_path.value.clone());
+        args.push(key_path.value().to_owned());
         let callee = format!("service.list_{}", relation.name);
         push_call(output, 4, "let rows = ", &callee, &args, ".await?;");
         // A bare JSON array; the right-hand side moves to its own line when
@@ -353,7 +354,7 @@ pub fn render_handlers(output: &mut String, uses: &mut Uses, feature: &Feature<'
         } else {
             output.push_str(&format!("{head}\n        {rows}\n"));
         }
-        framework.push_answer(output, uses, "Ok", &[], "response");
+        framework.push_answer(output, uses, Status::Ok, &[], "response");
         output.push_str("}\n");
 
         let Some(writes) = relation.writes() else {
@@ -392,7 +393,7 @@ pub fn render_handlers(output: &mut String, uses: &mut Uses, feature: &Feature<'
             push_signature(output, 0, &head, &params, framework.returns());
             output.push_str("    let ids = body.into_inner().ids;\n");
             let mut args = scope.args.clone();
-            args.extend([key_path.value.clone(), "ids".to_owned()]);
+            args.extend([key_path.value().to_owned(), "ids".to_owned()]);
             let callee = format!("service.sync_{}", relation.name);
             push_call(output, 4, "", &callee, &args, ".await?;");
             framework.push_no_content(output, uses);

@@ -9,16 +9,40 @@
 use super::layout::Uses;
 use crate::ApiFramework;
 
+/// The status of a JSON answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    /// `200 OK`.
+    Ok,
+    /// `201 Created`.
+    Created,
+}
+
+impl Status {
+    /// actix-web's `HttpResponse` builder for the status.
+    fn actix(self) -> &'static str {
+        match self {
+            Status::Ok => "Ok",
+            Status::Created => "Created",
+        }
+    }
+}
+
 /// A request part a handler takes: its parameter, and the expression of its
 /// value in the handler's body.
 pub struct Extracted {
     param: String,
-    pub value: String,
+    value: String,
     /// What the parameter's type needs imported.
     import: Option<&'static str>,
 }
 
 impl Extracted {
+    /// The expression of the value in the handler's body.
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+
     /// The handler parameter, importing its type.
     pub fn param(&self, uses: &mut Uses) -> String {
         if let Some(import) = self.import {
@@ -103,13 +127,13 @@ impl ApiFramework {
         }
     }
 
-    /// Answers `body` as JSON with `status` (`Ok` or `Created`) and
+    /// Answers `body` as JSON with `status` and
     /// `headers`, each `(header::NAME, value)`.
     pub(super) fn push_answer(
         self,
         output: &mut String,
         uses: &mut Uses,
-        status: &str,
+        status: Status,
         headers: &[&str],
         body: &str,
     ) {
@@ -135,10 +159,11 @@ impl ApiFramework {
 fn push_actix_answer(
     output: &mut String,
     uses: &mut Uses,
-    status: &str,
+    status: Status,
     headers: &[&str],
     body: &str,
 ) {
+    let status = status.actix();
     if headers.is_empty() {
         output.push_str(&format!("    Ok(HttpResponse::{status}().json({body}))\n"));
         return;
@@ -156,13 +181,13 @@ fn push_actix_answer(
 fn push_axum_answer(
     output: &mut String,
     uses: &mut Uses,
-    status: &str,
+    status: Status,
     headers: &[&str],
     body: &str,
 ) {
     uses.add("axum::Json");
     let mut parts = Vec::new();
-    if status == "Created" {
+    if status == Status::Created {
         uses.add("axum::http::StatusCode");
         parts.push("StatusCode::CREATED".to_owned());
     }

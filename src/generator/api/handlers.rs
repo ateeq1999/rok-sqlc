@@ -3,6 +3,7 @@
 //! one service method, and answers.
 
 use super::feature::{Endpoint, Feature, Key};
+use super::framework::Status;
 use super::layout::{Uses, push_call, push_signature};
 use super::paths;
 use super::relation_routes;
@@ -215,7 +216,7 @@ fn render_handler(output: &mut String, uses: &mut Uses, feature: &Feature<'_>, e
     match endpoint {
         Endpoint::List | Endpoint::Search => {
             let input = match &query {
-                Some(query) => query.value.clone(),
+                Some(query) => query.value().to_owned(),
                 None => "body.into_inner()".to_owned(),
             };
             args.push(input);
@@ -225,7 +226,7 @@ fn render_handler(output: &mut String, uses: &mut Uses, feature: &Feature<'_>, e
                 "    let response = page.map({}::from);\n",
                 feature.response()
             ));
-            framework.push_answer(output, uses, "Ok", &[], "response");
+            framework.push_answer(output, uses, Status::Ok, &[], "response");
         }
         Endpoint::Remove => {
             path.push_let(output, "key");
@@ -253,14 +254,14 @@ fn render_handler(output: &mut String, uses: &mut Uses, feature: &Feature<'_>, e
                     }
                     args.push("body.into_inner()".to_owned());
                 }
-                _ => args.push(path.value.clone()),
+                _ => args.push(path.value().to_owned()),
             }
             let callee = format!("service.{name}");
             push_call(output, 4, "let row = ", &callee, &args, ".await?;");
             let status = if endpoint == Endpoint::Create {
-                "Created"
+                Status::Created
             } else {
-                "Ok"
+                Status::Ok
             };
             push_row_answer(output, uses, feature, status);
         }
@@ -301,18 +302,22 @@ fn render_lookup(
         framework.returns(),
     );
     let mut args = scope.args;
-    args.push(path.value);
+    args.push(path.value().to_owned());
     let callee = format!("service.{}", lookup.function);
     push_call(output, 4, "let row = ", &callee, &args, ".await?;");
-    push_row_answer(output, uses, feature, "Ok");
+    push_row_answer(output, uses, feature, Status::Ok);
     output.push_str("}\n");
 }
 
-/// Answers `row` with `status` (`Ok` or `Created`): its `Location` when
-/// created, its `ETag` on a versioned table, and the response body.
-pub fn push_row_answer(output: &mut String, uses: &mut Uses, feature: &Feature<'_>, status: &str) {
+/// Answers `row` with `status`: its `Location` when created, its `ETag` on a versioned table, and the response body.
+pub fn push_row_answer(
+    output: &mut String,
+    uses: &mut Uses,
+    feature: &Feature<'_>,
+    status: Status,
+) {
     let mut headers = Vec::new();
-    if status == "Created" && feature.key.is_some() {
+    if status == Status::Created && feature.key.is_some() {
         push_location(output, uses, feature);
         headers.push("(header::LOCATION, location)");
     }
