@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use rok_sqlc::{ApiConfig, ApiEndpoint, Config, Derive, Extractor};
+use rok_sqlc::{ApiConfig, ApiEndpoint, ApiFramework, Config, Derive, Extractor};
 use tempfile::TempDir;
 
 const SCHEMA: &str = "CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);
@@ -370,8 +370,14 @@ fn skip_and_relationship_opt_outs_drop_the_extended_routes() -> Result<()> {
 /// Generated features are laid out as rustfmt lays them out, whatever the
 /// length of the names: here long ones, which wrap signatures, `use` lists,
 /// struct literals and the `Location` of a composite text key.
+/// For axum (0.7) too.
 #[test]
 fn features_with_long_names_are_rustfmt_clean() -> Result<()> {
+    long_names_are_rustfmt_clean(ApiFramework::Actix)?;
+    long_names_are_rustfmt_clean(ApiFramework::Axum)
+}
+
+fn long_names_are_rustfmt_clean(framework: ApiFramework) -> Result<()> {
     let project = Project::new(
         "CREATE TABLE organization_membership_invitations (
     organization_identifier TEXT NOT NULL,
@@ -409,6 +415,8 @@ CREATE TABLE statement_document_review_category_pairings (
     let mut config = project.config();
     // Ticket 08's routes, with long names: lookups, search, soft delete,
     // versions, tenants, owners, and relationships of every kind.
+    config.extractors = vec![Extractor::ActixWeb, Extractor::Axum];
+    api(&mut config).framework = framework;
     config.conventions.tenant_column = Some("tenant_id".into());
     config.conventions.version_column = Some("revision".into());
     config.conventions.soft_delete_column = Some("deleted_at".into());

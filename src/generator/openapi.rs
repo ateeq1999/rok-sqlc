@@ -94,8 +94,16 @@ fn as_text(rust_type: &str) -> String {
 /// The data layer's `mod.rs` hint for Swagger UI, which `app.rs` serves the
 /// document with. `vendored` bundles Swagger UI, so its build script doesn't
 /// download it.
-pub const SWAGGER_UI_HINT: &str =
-    "//   utoipa-swagger-ui = { version = \"9\", features = [\"actix-web\", \"vendored\"] }\n";
+pub fn swagger_ui_hint(framework: crate::ApiFramework) -> &'static str {
+    match framework {
+        crate::ApiFramework::Actix => {
+            "//   utoipa-swagger-ui = { version = \"9\", features = [\"actix-web\", \"vendored\"] }\n"
+        }
+        crate::ApiFramework::Axum => {
+            "//   utoipa-swagger-ui = { version = \"9\", features = [\"axum\", \"vendored\"] }\n"
+        }
+    }
+}
 
 /// The data layer's `mod.rs` hint for utoipa, with the features describing
 /// the UUID, date and time, and decimal columns of `tables`.

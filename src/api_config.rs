@@ -10,8 +10,8 @@ use crate::Conventions;
 use crate::api_rules::{self, ApiRule};
 use crate::schema::{BaseType, Column, FilterKind, Table};
 
-/// Generated API features for actix-web (ADR 0016), set by the config file's
-/// `[api]` section ([`Config::api`](crate::Config::api)).
+/// Generated API features for actix-web or axum (ADR 0016), set by the
+/// config file's `[api]` section ([`Config::api`](crate::Config::api)).
 ///
 /// Every map is keyed by table: its SQL name, schema-qualified name, or
 /// module name. Every table named must be generated, and every column named
@@ -32,6 +32,9 @@ pub struct ApiConfig {
     /// The directory API features are generated into (`api_output`).
     pub output: PathBuf,
     /// The Rust path of the generated data layer. Defaults to `crate::db`.
+    /// The web framework the routes and handlers are generated for.
+    /// Defaults to [`ApiFramework::Actix`].
+    pub framework: ApiFramework,
     pub db_path: String,
     /// The URL prefix every feature's routes sit under. Defaults to
     /// `/api/v1`.
@@ -82,6 +85,7 @@ impl ApiConfig {
     pub fn new(output: impl Into<PathBuf>) -> Self {
         Self {
             output: output.into(),
+            framework: ApiFramework::default(),
             db_path: Self::DEFAULT_DB_PATH.to_owned(),
             prefix: Self::DEFAULT_PREFIX.to_owned(),
             search_endpoint: false,
@@ -96,6 +100,37 @@ impl ApiConfig {
             search: BTreeMap::new(),
             sort: BTreeMap::new(),
             rules: BTreeMap::new(),
+        }
+    }
+}
+
+/// The web framework an API is generated for ([`ApiConfig::framework`]).
+/// Only the HTTP edge differs: the routes, the handlers, the extractors
+/// `rok-sqlc g` regenerates in `shared/`, and `generated.rs`'s wiring.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ApiFramework {
+    /// actix-web 4, the default. It needs [`Extractor::ActixWeb`](crate::Extractor::ActixWeb).
+    #[default]
+    Actix,
+    /// axum 0.8. It needs [`Extractor::Axum`](crate::Extractor::Axum).
+    Axum,
+}
+
+impl ApiFramework {
+    /// The name the config file and the JSON payload use.
+    pub fn name(self) -> &'static str {
+        match self {
+            ApiFramework::Actix => "actix",
+            ApiFramework::Axum => "axum",
+        }
+    }
+
+    /// The extractor the framework's API takes validated bodies through.
+    pub fn extractor(self) -> crate::Extractor {
+        match self {
+            ApiFramework::Actix => crate::Extractor::ActixWeb,
+            ApiFramework::Axum => crate::Extractor::Axum,
         }
     }
 }

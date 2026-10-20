@@ -24,6 +24,8 @@ pub struct DbMod<'a> {
     /// Whether an API feature's string rules match regular expressions
     /// (`regex`, `mobile`, `postalCode`), which needs `regex`.
     pub uses_regex: bool,
+    /// The framework Swagger UI is served with (`[api] framework`).
+    pub framework: crate::ApiFramework,
 }
 
 /// Renders `db/mod.rs`: the dependency hints, a module per table of
@@ -38,6 +40,7 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
         derives,
         extractors,
         uses_regex,
+        framework,
     } = *db_mod;
     let mut types: Vec<String> = tables
         .iter()
@@ -69,7 +72,7 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
             "//   {}\n",
             super::openapi::dependency_hint(tables)
         ));
-        output.push_str(super::openapi::SWAGGER_UI_HINT);
+        output.push_str(super::openapi::swagger_ui_hint(framework));
     }
     if uses_regex {
         output.push_str("//   regex = \"1\"\n");
@@ -269,6 +272,7 @@ mod tests {
                 },
                 extractors: &[],
                 uses_regex: false,
+                framework: crate::ApiFramework::Actix,
             },
         )
     }
@@ -328,6 +332,7 @@ mod tests {
                     },
                     extractors: &[],
                     uses_regex: false,
+                    framework: crate::ApiFramework::Actix,
                 },
             )
         };

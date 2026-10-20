@@ -949,10 +949,11 @@ approved_by_user = false     # opt out, together with the other side
 [modules]                    # by table: generate it as another module
 "audit.users" = "audit_users"  # db::audit_users, with AuditUser and AuditUserId
 
-[api]                        # generated actix-web API features (ADR 0016); off without `output`
+[api]                        # generated actix-web or axum API features (ADR 0016); off without `output`
 output          = "src/features"  # needs derive = ["serde", "validate"] and extractors with "actix_web"
 db_path         = "crate::db"     # the default: where the generated data layer is
 prefix          = "/api/v1"       # the default URL prefix
+framework       = "actix"         # the default; "axum" needs extractors with "axum" instead
 search_endpoint = true            # POST /search with per-field filters; off by default
 openapi         = true            # the default: utoipa schemas for the OpenAPI document
 exclude         = ["audit_log"]   # tables with no API feature
@@ -1285,6 +1286,7 @@ newline aside), and prints `replaced cargo's default src/main.rs`. Any other
 | Flag | Meaning |
 |---|---|
 | `-t`, `--template <NAME>` | Copy this ready-made project instead of the skeleton. The only one is `actix`; any other name fails and lists the valid ones. |
+| `-f`, `--framework <FRAMEWORK>` | Scaffold the skeleton for `actix` (the default) or `axum`; its `rok-sqlc.toml` sets `[api] framework` and the matching extractor. Not with `--template`. |
 
 `rok-sqlc init --template actix [DIR]` copies a complete actix-web project
 (its configuration, migrations, scaffolded files, tests and README) into

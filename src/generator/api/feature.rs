@@ -18,7 +18,7 @@ use crate::generator::relationships::join_pair;
 use crate::generator::search::{SearchApi, filter_relationships};
 use crate::generator::write::{has_versioned_update, version_column};
 use crate::schema::{BaseType, Column, FilterKind, Table};
-use crate::{ApiAccess, ApiConfig, ApiEndpoint};
+use crate::{ApiAccess, ApiConfig, ApiEndpoint, ApiFramework};
 
 /// A `GET /by-<column>/{value}` route: the data layer's lookup over a
 /// single-column unique key that isn't hidden.
@@ -109,6 +109,8 @@ pub struct Feature<'a> {
     /// Whether the types the feature exposes derive utoipa's `ToSchema` or
     /// `IntoParams` (`[api] openapi`).
     pub openapi: bool,
+    /// The web framework the routes and handlers are for (`[api] framework`).
+    pub framework: ApiFramework,
 }
 
 impl<'a> Feature<'a> {
@@ -202,6 +204,7 @@ impl<'a> Feature<'a> {
             unique_checks: Vec::new(),
             filter_fallible: !filter_relationships(table, tables).is_empty(),
             openapi: api.openapi,
+            framework: api.framework,
         }))
     }
 

@@ -55,6 +55,20 @@ fn scaffold(name: &str) -> Result<tempfile::TempDir> {
 /// fixture's lock file, so builds resolve against it, not the newest
 /// releases. Returns the manifest.
 fn write_manifest(dir: &Path, name: &str, left_out: &[&str]) -> Result<String> {
+    write_manifest_for(dir, name, left_out, "actix-web", &api_app_dir())
+}
+
+/// [`write_manifest`] for the skeleton whose server crate is `server`, with
+/// the lock file of the fixture crate `fixture`. A dependency both hint at
+/// takes the data layer's line, unless only the skeleton's names features
+/// (axum's `macros`, which the data layer's extractor doesn't need).
+pub(crate) fn write_manifest_for(
+    dir: &Path,
+    name: &str,
+    left_out: &[&str],
+    server: &str,
+    fixture: &Path,
+) -> Result<String> {
     // The dependency lines of `rok-sqlc.toml`'s `# [dependencies]` block,
     // then the data layer's `//   name = ...` lines, which win a tie.
     let mut dependencies = std::collections::BTreeMap::new();
@@ -71,11 +85,16 @@ fn write_manifest(dir: &Path, name: &str, left_out: &[&str]) -> Result<String> {
         if let Some((dependency, _)) = hint.split_once(" = ")
             && !left_out.contains(&dependency)
         {
-            dependencies.insert(dependency.to_owned(), hint.to_owned());
+            let keeps_features = dependencies.get(dependency).is_some_and(|line: &String| {
+                line.contains("features") && !hint.contains("features")
+            });
+            if !keeps_features {
+                dependencies.insert(dependency.to_owned(), hint.to_owned());
+            }
         }
     }
     ensure!(
-        dependencies.contains_key("actix-web") && dependencies.contains_key("sqlx"),
+        dependencies.contains_key(server) && dependencies.contains_key("sqlx"),
         "the hints name no dependencies: {dependencies:?}"
     );
     // The `# [lints.clippy]` block after it.
@@ -97,14 +116,14 @@ fn write_manifest(dir: &Path, name: &str, left_out: &[&str]) -> Result<String> {
         lints.join("\n")
     );
     std::fs::write(dir.join("Cargo.toml"), &manifest)?;
-    std::fs::copy(api_app_dir().join("Cargo.lock"), dir.join("Cargo.lock"))?;
+    std::fs::copy(fixture.join("Cargo.lock"), dir.join("Cargo.lock"))?;
     Ok(manifest)
 }
 
 /// Fails unless the project passes `cargo clippy --all-targets -- -D
 /// warnings`, as its `AGENTS.md` requires: no warning about unused
 /// generated code.
-fn ensure_clippy_clean(dir: &Path, manifest: &str) -> Result<()> {
+pub(crate) fn ensure_clippy_clean(dir: &Path, manifest: &str) -> Result<()> {
     let output = cargo(
         dir,
         &["clippy", "--quiet", "--all-targets", "--", "-D", "warnings"],

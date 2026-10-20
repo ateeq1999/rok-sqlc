@@ -15,7 +15,7 @@ use crate::config_file;
 const CRATE: &str = "my_app";
 
 fn skeleton() -> Vec<(PathBuf, String)> {
-    plan(Path::new(""), CRATE)
+    plan(Path::new(""), CRATE, ApiFramework::Actix)
 }
 
 fn template(path: &str) -> String {

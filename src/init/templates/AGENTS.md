@@ -26,7 +26,7 @@ src/
 │                 pagination, validation, tenant, health are generated)
 └─ features/
    ├─ mod.rs        `mod generated; pub use generated::*;` plus hand-written features
-   ├─ generated.rs  generated: declares the features, register_services, configure_all
+   ├─ generated.rs  generated: declares the features, {wiring}
    └─ <feature>/
       ├─ mod.rs          generated: re-exports routes, the service and the trait
       ├─ routes.rs       generated: URL to handler

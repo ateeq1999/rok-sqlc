@@ -10,8 +10,9 @@
 use std::path::{Path, PathBuf};
 
 use super::Feature;
-use crate::ApiConfig;
+use super::axum_shared;
 use crate::generator::HEADER;
+use crate::{ApiConfig, ApiFramework};
 
 pub(super) use super::shared_validation::VALIDATION;
 
@@ -35,12 +36,20 @@ pub fn render(output: &Path, api: &ApiConfig, features: &[Feature<'_>]) -> Vec<(
         |template: &str| format!("{HEADER}\n{}", template.replace(TEMPLATE_DB_PATH, &db_path));
     let shared = shared_dir(api);
     let mut files = vec![(output.join("pool.rs"), file(POOL))];
+    let (health, tenant, validation) = match api.framework {
+        ApiFramework::Actix => (HEALTH, TENANT, VALIDATION.to_owned()),
+        ApiFramework::Axum => (
+            axum_shared::HEALTH,
+            axum_shared::TENANT,
+            axum_shared::validation(),
+        ),
+    };
     for (name, template) in [
-        ("health.rs", HEALTH),
+        ("health.rs", health),
         ("pagination.rs", PAGINATION),
         ("response.rs", RESPONSE),
-        ("tenant.rs", TENANT),
-        ("validation.rs", VALIDATION),
+        ("tenant.rs", tenant),
+        ("validation.rs", validation.as_str()),
     ] {
         let text = file(template);
         let mut text = if api.openapi {

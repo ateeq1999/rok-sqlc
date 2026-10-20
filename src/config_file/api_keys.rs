@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::{ApiAccess, ApiConfig, ApiEndpoint, ApiRule};
+use crate::{ApiAccess, ApiConfig, ApiEndpoint, ApiFramework, ApiRule};
 
 /// The `[api]` keys one source sets. Single keys merge one by one across
 /// sources; a list replaces the lower list; table-keyed sections merge by
@@ -16,6 +16,7 @@ pub(crate) struct ApiKeys {
     output: Option<PathBuf>,
     db_path: Option<String>,
     prefix: Option<String>,
+    framework: Option<FrameworkName>,
     search_endpoint: Option<bool>,
     openapi: Option<bool>,
     exclude: Option<Vec<String>>,
@@ -85,6 +86,24 @@ impl<'de> Deserialize<'de> for RuleSpec {
             }
         }
         deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// An `[api] framework` value. Deserializing an unknown name fails with the
+/// list of known ones.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum FrameworkName {
+    Actix,
+    Axum,
+}
+
+impl FrameworkName {
+    fn framework(self) -> ApiFramework {
+        match self {
+            FrameworkName::Actix => ApiFramework::Actix,
+            FrameworkName::Axum => ApiFramework::Axum,
+        }
     }
 }
 
@@ -169,6 +188,7 @@ impl ApiKeys {
         }
         ApiKeys {
             output: self.output.or(lower.output),
+            framework: self.framework.or(lower.framework),
             db_path: self.db_path.or(lower.db_path),
             prefix: self.prefix.or(lower.prefix),
             search_endpoint: self.search_endpoint.or(lower.search_endpoint),
@@ -199,6 +219,9 @@ impl ApiKeys {
     /// set.
     pub(crate) fn resolve(self) -> Option<ApiConfig> {
         let mut api = ApiConfig::new(self.output?);
+        if let Some(framework) = self.framework {
+            api.framework = framework.framework();
+        }
         if let Some(db_path) = self.db_path {
             api.db_path = db_path;
         }

@@ -13,6 +13,7 @@ mod actix_template;
 mod api_app;
 mod fixture_app;
 mod init;
+mod init_axum;
 
 use std::path::Path;
 use std::process::Command;

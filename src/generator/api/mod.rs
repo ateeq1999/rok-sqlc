@@ -8,10 +8,13 @@
 //! relations decide the routes, handlers, and service methods.
 
 mod api_doc;
+mod axum;
+mod axum_shared;
 mod dto;
 mod endpoint;
 mod feature;
 mod files;
+mod framework;
 mod handlers;
 mod layout;
 pub mod listing;
@@ -100,7 +103,10 @@ pub fn render(features: &[Feature<'_>], api: &ApiConfig) -> Vec<(PathBuf, String
         root.join("generated.rs"),
         root::render_generated(features, api),
     ));
-    files.push((root.join("README.md"), root::render_readme(features)));
+    files.push((
+        root.join("README.md"),
+        root::render_readme(features, api.framework),
+    ));
     files
 }
 

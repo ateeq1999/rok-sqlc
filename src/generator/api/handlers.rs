@@ -7,13 +7,40 @@ use super::layout::{Uses, push_call, push_signature};
 use super::paths;
 use super::relation_routes;
 use super::scope;
+use crate::ApiFramework;
 use crate::generator::{FN_CALL_WIDTH, HEADER, MAX_WIDTH, push_doc};
 use crate::schema::{BaseType, Column};
 
-/// Renders `routes.rs`: one scope under the feature's URL, which answers a
-/// malformed path or query with the wire standard's `400`. Fixed paths
-/// come before the key's, which would match them too.
+/// Renders `routes.rs` for the feature's framework.
 pub fn render_routes(feature: &Feature<'_>) -> String {
+    match feature.framework {
+        ApiFramework::Actix => render_actix_routes(feature),
+        ApiFramework::Axum => super::axum::render_routes(feature),
+    }
+}
+
+/// Every route of the feature, `(path under its URL, method, handler)`:
+/// fewer `{...}` segments first, so `/search` and `/by-...` come before
+/// `/{id}`, which would match them too; the order is otherwise kept.
+pub fn route_list(feature: &Feature<'_>) -> Vec<(String, &'static str, String)> {
+    let key_path = feature.key_path();
+    let mut routes: Vec<(String, &'static str, String)> = Vec::new();
+    for endpoint in &feature.endpoints {
+        let path = endpoint.path(&key_path);
+        routes.push((path, endpoint.method(), endpoint.name().to_owned()));
+    }
+    for lookup in &feature.lookups {
+        routes.push((lookup.path(), "get", lookup.function.clone()));
+    }
+    routes.extend(relation_routes::routes(feature));
+    routes.sort_by_key(|(path, _, _)| path.matches('{').count());
+    routes
+}
+
+/// Renders actix-web's `routes.rs`: one scope under the feature's URL,
+/// which answers a malformed path or query with the wire standard's `400`.
+/// Fixed paths come before the key's, which would match them too.
+fn render_actix_routes(feature: &Feature<'_>) -> String {
     let mut output = format!(
         "{HEADER}\n//! The `{}` routes, under `{}`.\n\nuse actix_web::web;\n\nuse super::handlers;\nuse crate::shared::validation::{{path_config, query_config}};\n\n",
         feature.table.display_name(),
@@ -33,20 +60,7 @@ pub fn render_routes(feature: &Feature<'_>) -> String {
         "        web::scope({})\n            .app_data(path_config())\n            .app_data(query_config())",
         crate::generator::sql::str_literal(&feature.url)
     ));
-    let key_path = feature.key_path();
-    let mut routes: Vec<(String, &str, String)> = Vec::new();
-    for endpoint in &feature.endpoints {
-        let path = endpoint.path(&key_path);
-        routes.push((path, endpoint.method(), endpoint.name().to_owned()));
-    }
-    for lookup in &feature.lookups {
-        routes.push((lookup.path(), "get", lookup.function.clone()));
-    }
-    routes.extend(relation_routes::routes(feature));
-    // Fewer `{...}` segments first, so `/search` and `/by-...` come before
-    // `/{id}`; the order is otherwise kept.
-    routes.sort_by_key(|(path, _, _)| path.matches('{').count());
-    for (path, method, handler) in &routes {
+    for (path, method, handler) in &route_list(feature) {
         let to = format!("web::{method}().to(handlers::{handler})");
         let one_line = format!("            .route(\"{path}\", {to})");
         let args = format!("\"{path}\", {to}");
@@ -66,8 +80,7 @@ pub fn render_routes(feature: &Feature<'_>) -> String {
 /// Renders `handlers.rs`.
 pub fn render_handlers(feature: &Feature<'_>) -> String {
     let mut uses = Uses::default();
-    uses.add("actix_web::HttpResponse");
-    uses.add("actix_web::web");
+    feature.framework.handler_uses(&mut uses);
     uses.add(&format!("super::dto::{}", feature.response()));
     uses.add(&format!("super::service::{}", feature.service()));
     uses.add(&format!("super::service_api::{}", feature.service_api()));
@@ -148,19 +161,22 @@ fn render_handler(output: &mut String, uses: &mut Uses, feature: &Feature<'_>, e
         return;
     }
 
+    let framework = feature.framework;
     let tenant = feature.tenant_of(endpoint);
     let scope = scope::handler(feature, uses, tenant, feature.caller_of(endpoint));
-    let mut params = vec![format!("service: web::Data<{}>", feature.service())];
+    let mut params = vec![framework.service_param(&feature.service())];
     params.extend(scope.params);
     let key = feature.key_type().unwrap_or_default();
+    let path = framework.path("key", &key);
     if endpoint.takes_key() {
         uses.add(&format!("super::model::{key}"));
-        params.push(format!("path: web::Path<{key}>"));
+        params.push(path.param(uses));
     }
+    let mut query = None;
     match endpoint {
         Endpoint::List => {
             uses.add(&format!("super::dto::{}", feature.list_query()));
-            params.push(format!("query: web::Query<{}>", feature.list_query()));
+            query = Some(framework.query(&feature.list_query()));
         }
         Endpoint::Search => {
             uses.add("crate::shared::validation::ValidatedJson");
@@ -183,36 +199,36 @@ fn render_handler(output: &mut String, uses: &mut Uses, feature: &Feature<'_>, e
         }
         Endpoint::Remove if feature.soft_delete => {
             uses.add(&format!("super::dto::{}", feature.remove_query()));
-            params.push(format!("query: web::Query<{}>", feature.remove_query()));
+            query = Some(framework.query(&feature.remove_query()));
         }
         Endpoint::GetOne | Endpoint::Remove | Endpoint::Restore => {}
     }
+    params.extend(query.as_ref().map(|query| query.param(uses)));
     push_signature(
         output,
         0,
         &format!("pub async fn {name}"),
         &params,
-        "Result<HttpResponse, AppError>",
+        framework.returns(),
     );
     let mut args = scope.args;
     match endpoint {
         Endpoint::List | Endpoint::Search => {
-            let input = if endpoint == Endpoint::List {
-                "query.into_inner()"
-            } else {
-                "body.into_inner()"
+            let input = match &query {
+                Some(query) => query.value.clone(),
+                None => "body.into_inner()".to_owned(),
             };
-            args.push(input.to_owned());
+            args.push(input);
             let callee = format!("service.{name}");
             push_call(output, 4, "let page = ", &callee, &args, ".await?;");
             output.push_str(&format!(
                 "    let response = page.map({}::from);\n",
                 feature.response()
             ));
-            output.push_str("    Ok(HttpResponse::Ok().json(response))\n");
+            framework.push_answer(output, uses, "Ok", &[], "response");
         }
         Endpoint::Remove => {
-            output.push_str("    let key = path.into_inner();\n");
+            path.push_let(output, "key");
             args.push("key".to_owned());
             if feature.soft_delete {
                 output.push_str("    if query.permanent {\n");
@@ -224,20 +240,20 @@ fn render_handler(output: &mut String, uses: &mut Uses, feature: &Feature<'_>, e
             } else {
                 push_call(output, 4, "", "service.remove", &args, ".await?;");
             }
-            output.push_str("    Ok(HttpResponse::NoContent().finish())\n");
+            framework.push_no_content(output, uses);
         }
         _ => {
             match endpoint {
                 Endpoint::Create => args.push("body.into_inner()".to_owned()),
                 Endpoint::Update => {
-                    output.push_str("    let key = path.into_inner();\n");
+                    path.push_let(output, "key");
                     args.push("key".to_owned());
                     if feature.version.is_some() {
                         args.push("version.into_inner()".to_owned());
                     }
                     args.push("body.into_inner()".to_owned());
                 }
-                _ => args.push("path.into_inner()".to_owned()),
+                _ => args.push(path.value.clone()),
             }
             let callee = format!("service.{name}");
             push_call(output, 4, "let row = ", &callee, &args, ".await?;");
@@ -270,20 +286,22 @@ fn render_lookup(
         )],
     );
     paths::push_lookup(output, uses, feature, lookup);
+    let framework = feature.framework;
     let scope = own_scope(feature, uses);
-    let mut params = vec![format!("service: web::Data<{}>", feature.service())];
+    let mut params = vec![framework.service_param(&feature.service())];
     params.extend(scope.params);
     scope::import_type(feature, uses, lookup.column);
-    params.push(format!("path: web::Path<{}>", lookup.column.value_type()));
+    let path = framework.path("value", lookup.column.value_type());
+    params.push(path.param(uses));
     push_signature(
         output,
         0,
         &format!("pub async fn {}", lookup.function),
         &params,
-        "Result<HttpResponse, AppError>",
+        framework.returns(),
     );
     let mut args = scope.args;
-    args.push("path.into_inner()".to_owned());
+    args.push(path.value);
     let callee = format!("service.{}", lookup.function);
     push_call(output, 4, "let row = ", &callee, &args, ".await?;");
     push_row_answer(output, uses, feature, "Ok");
@@ -310,27 +328,9 @@ pub fn push_row_answer(output: &mut String, uses: &mut Uses, feature: &Feature<'
         "    let response = {}::from(row);\n",
         feature.response()
     ));
-    push_answer(output, uses, status, &headers, "response");
-}
-
-/// `Ok(HttpResponse::<status>()...json(<body>))`, one header per line.
-pub fn push_answer(
-    output: &mut String,
-    uses: &mut Uses,
-    status: &str,
-    headers: &[&str],
-    body: &str,
-) {
-    if headers.is_empty() {
-        output.push_str(&format!("    Ok(HttpResponse::{status}().json({body}))\n"));
-        return;
-    }
-    uses.add("actix_web::http::header");
-    output.push_str(&format!("    Ok(HttpResponse::{status}()\n"));
-    for header in headers {
-        output.push_str(&format!("        .insert_header({header})\n"));
-    }
-    output.push_str(&format!("        .json({body}))\n"));
+    feature
+        .framework
+        .push_answer(output, uses, status, &headers, "response");
 }
 
 /// `let location = format!("<url>/{}", ...);`: the created row's URL, each

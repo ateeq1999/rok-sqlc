@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, bail};
 use heck::ToSnakeCase;
 
-use crate::config::{Config, Derive, Extractor};
+use crate::ApiFramework;
+use crate::config::{Config, Derive};
 use crate::output::is_generated_file;
 use crate::queries::AnalyzedQuery;
 use crate::report::{Error, QueryFailure, RefusedFile, Report, Result, TableFailure, display_path};
@@ -288,7 +289,7 @@ fn scaffolded_document_warning(config: &Config) -> Option<String> {
 
 /// Fails a run whose options need ones it doesn't set (ADRs 0015, 0016):
 /// `validate` needs `serde`, extractors need `validate`, and the API needs
-/// both derives and the actix-web extractor.
+/// both derives and its framework's extractor (`actix_web` or `axum`).
 fn check_options(config: &Config) -> anyhow::Result<()> {
     let validate = config.derive.contains(&Derive::Validate);
     if validate && !config.derive.contains(&Derive::Serde) {
@@ -301,13 +302,23 @@ fn check_options(config: &Config) -> anyhow::Result<()> {
             "`extractors` needs `validate` in `derive`, since the extractors validate the bodies they take: add `serde` and `validate` to `derive`"
         );
     }
-    let api_ready = validate && config.extractors.contains(&Extractor::ActixWeb);
-    if config.api.is_some() && !api_ready {
-        bail!(
-            "`api.output` needs `derive = [\"serde\", \"validate\"]` and `actix_web` in `extractors`, since API features take validated bodies through the actix-web extractor"
-        );
+    let Some(api) = &config.api else {
+        return Ok(());
+    };
+    let extractor = api.framework.extractor();
+    if validate && config.extractors.contains(&extractor) {
+        return Ok(());
     }
-    Ok(())
+    match api.framework {
+        ApiFramework::Actix => bail!(
+            "`api.output` needs `derive = [\"serde\", \"validate\"]` and `actix_web` in `extractors`, since API features take validated bodies through the actix-web extractor"
+        ),
+        _ => bail!(
+            "`api.output` with `framework = \"{framework}\"` needs `derive = [\"serde\", \"validate\"]` and `{extractor}` in `extractors`, since API features take validated bodies through the {framework} extractor",
+            framework = api.framework.name(),
+            extractor = extractor.name(),
+        ),
+    }
 }
 
 /// The resource directories an earlier run generated for tables the schema

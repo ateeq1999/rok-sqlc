@@ -165,3 +165,46 @@ fn init_replaces_cargos_default_main_and_keeps_any_other() -> Result<()> {
     assert!(!stdout.contains("replaced"), "{stdout}");
     Ok(())
 }
+
+/// `init --framework axum` scaffolds the axum skeleton (0.7, decision A1):
+/// the same files, its `rok-sqlc.toml` choosing axum, and code that names
+/// axum, never actix-web.
+#[test]
+fn init_framework_axum_scaffolds_the_axum_skeleton() -> Result<()> {
+    let dir = TempDir::new()?;
+    let output = run_binary_in(dir.path(), &["init", "--framework", "axum"]);
+    assert_success(&output);
+
+    let files = read_tree(dir.path())?;
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), skeleton());
+    let toml = &files[Path::new("rok-sqlc.toml")];
+    assert!(toml.contains("\nextractors = [\"axum\"]\n"), "{toml}");
+    assert!(toml.contains("\nframework = \"axum\"\n"), "{toml}");
+    // AGENTS.md states check-arch's rules, which name actix_web until
+    // check-arch knows the framework.
+    for (path, text) in files
+        .iter()
+        .filter(|(path, _)| *path != Path::new("AGENTS.md"))
+    {
+        assert!(!text.contains("actix"), "{} names actix", path.display());
+    }
+    assert!(files[Path::new("src/app.rs")].contains("axum::serve("));
+    Ok(())
+}
+
+/// `--framework` picks the skeleton; a template brings its own.
+#[test]
+fn init_framework_takes_actix_or_axum_and_no_template() {
+    let output = run_binary(&["init", "--framework", "rocket"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("actix") && stderr.contains("axum"),
+        "{stderr}"
+    );
+
+    let output = run_binary(&["init", "--framework", "axum", "--template", "actix"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("cannot be used with"), "{stderr}");
+}

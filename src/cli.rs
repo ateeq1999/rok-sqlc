@@ -96,8 +96,8 @@ enum Command {
         api_output: Option<PathBuf>,
     },
 
-    /// Scaffold the actix-web application skeleton (ADR 0016) into a
-    /// project, each file only if absent; generates nothing
+    /// Scaffold the application skeleton (ADR 0016), for actix-web or axum,
+    /// into a project, each file only if absent; generates nothing
     #[command(visible_alias = "i")]
     Init {
         /// The project directory
@@ -113,6 +113,18 @@ enum Command {
             value_parser = clap::builder::PossibleValuesParser::new(crate::init::template_names())
         )]
         template: Option<String>,
+
+        /// The web framework of the skeleton and of the API `rok-sqlc g`
+        /// generates (`[api] framework`)
+        #[arg(
+            short,
+            long,
+            value_name = "FRAMEWORK",
+            value_enum,
+            default_value = "actix",
+            conflicts_with = "template"
+        )]
+        framework: FrameworkArg,
     },
 
     /// Check the project against ADR 0016's architecture: the feature
@@ -160,6 +172,7 @@ where
         Command::Init {
             dir,
             template: Some(template),
+            ..
         } => {
             let scaffolded = crate::init::init_template(&dir, &template)?;
             let mut steps = Vec::new();
@@ -180,8 +193,9 @@ where
         Command::Init {
             dir,
             template: None,
+            framework,
         } => {
-            print_scaffolded(crate::init::init(&dir)?);
+            print_scaffolded(crate::init::init(&dir, framework.into())?);
             print_next_steps(&[
                 "add the dependencies listed at the end of rok-sqlc.toml to Cargo.toml",
                 "add migrations to migrations/ (0001_init.sql, ...)",
@@ -347,6 +361,22 @@ impl From<ExtractorArg> for Extractor {
         match arg {
             ExtractorArg::Axum => Extractor::Axum,
             ExtractorArg::ActixWeb => Extractor::ActixWeb,
+        }
+    }
+}
+
+/// An `init --framework` value, mirroring [`crate::ApiFramework`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum FrameworkArg {
+    Actix,
+    Axum,
+}
+
+impl From<FrameworkArg> for crate::ApiFramework {
+    fn from(arg: FrameworkArg) -> Self {
+        match arg {
+            FrameworkArg::Actix => crate::ApiFramework::Actix,
+            FrameworkArg::Axum => crate::ApiFramework::Axum,
         }
     }
 }
