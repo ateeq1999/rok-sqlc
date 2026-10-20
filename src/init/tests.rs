@@ -351,7 +351,7 @@ fn agents_md_states_the_rules_check_arch_enforces() {
     assert!(
         raw.contains(&format!(
             "## The six rules\n\n{}\n\n",
-            crate::check_arch::rules_markdown()
+            crate::check_arch::rules_markdown(crate::ApiFramework::Actix)
         )),
         "AGENTS.md's rules section is not check-arch's"
     );

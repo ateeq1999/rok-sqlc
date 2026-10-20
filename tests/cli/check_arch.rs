@@ -10,7 +10,7 @@ use super::*;
 const CONFIG: &str = "[api]\noutput = \"src/features\"\n";
 
 /// A scratch project with `rok-sqlc.toml` and `files`.
-fn project(files: &[(&str, &str)]) -> Result<TempDir> {
+pub(super) fn project(files: &[(&str, &str)]) -> Result<TempDir> {
     let dir = TempDir::new()?;
     fs::write(dir.path().join("rok-sqlc.toml"), CONFIG)?;
     for (path, text) in files {
@@ -22,18 +22,18 @@ fn project(files: &[(&str, &str)]) -> Result<TempDir> {
 }
 
 /// Runs `rok-sqlc check-arch <args>` in `dir`.
-fn check_arch(dir: &TempDir, args: &[&str]) -> Output {
+pub(super) fn check_arch(dir: &TempDir, args: &[&str]) -> Output {
     let mut full = vec!["check-arch"];
     full.extend(args);
     run_binary_in(dir.path(), &full)
 }
 
-fn stdout(output: &Output) -> String {
+pub(super) fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n")
 }
 
 /// Asserts the run failed and printed exactly `lines` as violations.
-fn assert_violations(output: &Output, lines: &[&str]) {
+pub(super) fn assert_violations(output: &Output, lines: &[&str]) {
     assert!(
         !output.status.success(),
         "expected a failure, stdout:\n{}",

@@ -180,12 +180,7 @@ fn init_framework_axum_scaffolds_the_axum_skeleton() -> Result<()> {
     let toml = &files[Path::new("rok-sqlc.toml")];
     assert!(toml.contains("\nextractors = [\"axum\"]\n"), "{toml}");
     assert!(toml.contains("\nframework = \"axum\"\n"), "{toml}");
-    // AGENTS.md states check-arch's rules, which name actix_web until
-    // check-arch knows the framework.
-    for (path, text) in files
-        .iter()
-        .filter(|(path, _)| *path != Path::new("AGENTS.md"))
-    {
+    for (path, text) in &files {
         assert!(!text.contains("actix"), "{} names actix", path.display());
     }
     assert!(files[Path::new("src/app.rs")].contains("axum::serve("));

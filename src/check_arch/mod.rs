@@ -14,9 +14,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
+use crate::ApiFramework;
+
 pub(crate) use rules::rules_markdown;
 use rules::{
-    ACTIX_WEB_FEATURE, ACTIX_WEB_ROOT, SQLX_FEATURE, SQLX_PORT_FILES, SQLX_PORT_TYPES, SQLX_ROOT,
+    FRAMEWORK_FEATURE, FRAMEWORK_ROOT, SQLX_FEATURE, SQLX_PORT_FILES, SQLX_PORT_TYPES, SQLX_ROOT,
+    crate_name,
 };
 use source::Reference;
 
@@ -45,13 +48,16 @@ pub(crate) struct Project {
     pub(crate) features: PathBuf,
     /// The data layer's Rust path (`api.db_path`, `crate::db`).
     pub(crate) db_path: String,
+    /// The web framework (`api.framework`) rule 1 names.
+    pub(crate) framework: ApiFramework,
 }
 
 /// A rule `check-arch` enforces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Rule {
     Layout,
-    ActixWeb,
+    Framework,
+    OtherFramework,
     Sqlx,
     CrossFeature,
     SharedToFeatures,
@@ -71,7 +77,7 @@ impl fmt::Display for Rule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Rule::Layout => "layout",
-            Rule::ActixWeb => "rule-1",
+            Rule::Framework | Rule::OtherFramework => "rule-1",
             Rule::Sqlx => "rule-2",
             Rule::CrossFeature => "rule-4",
             Rule::SharedToFeatures => "rule-5",
@@ -173,6 +179,8 @@ struct Layout {
     db: Vec<String>,
     /// The feature directories' names.
     feature_names: Vec<String>,
+    /// The web framework rule 1 names.
+    framework: ApiFramework,
 }
 
 /// What a path names in this crate, after `crate`, `self`, `super` and the
@@ -231,7 +239,16 @@ impl Layout {
             features,
             db,
             feature_names,
+            framework: project.framework,
         })
+    }
+
+    /// The framework the project doesn't use.
+    fn other_framework(&self) -> ApiFramework {
+        match self.framework {
+            ApiFramework::Actix => ApiFramework::Axum,
+            ApiFramework::Axum => ApiFramework::Actix,
+        }
     }
 
     /// The feature `rel` (a path under `src/`) lies in, if any.
@@ -409,12 +426,19 @@ impl Layout {
         let infrastructure = Self::in_shared(rel) || self.in_db(rel) || self.is_generated_root(rel);
         match target {
             Target::Other(path) => match path.first().map(String::as_str) {
-                Some("actix_web") => {
+                Some(name) if name == crate_name(self.framework) => {
                     let allowed = infrastructure
-                        || Self::is_root(rel, ACTIX_WEB_ROOT)
-                        || (feature.is_some() && ACTIX_WEB_FEATURE.contains(&file));
+                        || Self::is_root(rel, FRAMEWORK_ROOT)
+                        || (feature.is_some() && FRAMEWORK_FEATURE.contains(&file));
                     if !allowed {
-                        rules.push(Rule::ActixWeb);
+                        rules.push(Rule::Framework);
+                    }
+                }
+                // The other framework's crate: only the data layer, whose
+                // `extractors` may serve both, names it.
+                Some(name) if name == crate_name(self.other_framework()) => {
+                    if !self.in_db(rel) {
+                        rules.push(Rule::OtherFramework);
                     }
                 }
                 Some("sqlx") => {
@@ -470,9 +494,16 @@ impl Layout {
 
     fn message(&self, rel: &[String], rule: Rule, target: &Target) -> String {
         match rule {
-            Rule::ActixWeb => format!(
-                "`{target}`: only {}, features/generated.rs, shared/ and db/ may use actix_web",
-                [ACTIX_WEB_FEATURE, ACTIX_WEB_ROOT].concat().join(", ")
+            Rule::Framework => format!(
+                "`{target}`: only {}, features/generated.rs, shared/ and db/ may use {}",
+                [FRAMEWORK_FEATURE, FRAMEWORK_ROOT].concat().join(", "),
+                crate_name(self.framework)
+            ),
+            Rule::OtherFramework => format!(
+                "`{target}`: the project uses {} (`[api] framework`), so nothing but db/ may \
+                 use {}",
+                self.framework.name(),
+                crate_name(self.other_framework())
             ),
             Rule::Sqlx => format!(
                 "`{target}`: only {}, features/generated.rs, shared/ and db/ may use sqlx \

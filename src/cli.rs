@@ -314,6 +314,7 @@ fn check_arch(config: Option<PathBuf>, lenient: bool) -> Result<()> {
         root: path.parent().unwrap_or(Path::new("")).to_path_buf(),
         features: api.output,
         db_path: api.db_path,
+        framework: api.framework,
     };
     let mut failures = 0;
     for violation in crate::check_arch::check(&project)? {

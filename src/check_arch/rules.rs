@@ -3,10 +3,21 @@
 //! [`rules_markdown`]), and `docs/guide/architecture.md` states them word for
 //! word (a test checks it).
 
-/// The files at the root of `src/` that may use `actix_web` (rule 1).
-pub(super) const ACTIX_WEB_ROOT: &[&str] = &["app.rs", "main.rs", "error.rs"];
-/// The feature files that may use `actix_web` (rule 1).
-pub(super) const ACTIX_WEB_FEATURE: &[&str] = &["routes.rs", "handlers.rs"];
+use crate::ApiFramework;
+
+/// The files at the root of `src/` that may use the web framework's crate
+/// (rule 1).
+pub(super) const FRAMEWORK_ROOT: &[&str] = &["app.rs", "main.rs", "error.rs"];
+/// The feature files that may use the web framework's crate (rule 1).
+pub(super) const FRAMEWORK_FEATURE: &[&str] = &["routes.rs", "handlers.rs"];
+
+/// The crate `framework`'s code names: `actix_web` or `axum`.
+pub(super) fn crate_name(framework: ApiFramework) -> &'static str {
+    match framework {
+        ApiFramework::Actix => "actix_web",
+        ApiFramework::Axum => "axum",
+    }
+}
 /// The files at the root of `src/` that may use `sqlx` (rule 2).
 pub(super) const SQLX_ROOT: &[&str] = &["app.rs", "error.rs"];
 /// The feature files that may use `sqlx` (rule 2).
@@ -29,9 +40,10 @@ fn listed(items: &[&str]) -> String {
 /// The infrastructure every rule 1 and 2 list ends with.
 const INFRASTRUCTURE: &str = "the features' `generated.rs`, `shared/` and the data layer";
 
-/// The six rules, numbered from 1, as one sentence or paragraph each. Rule 3
-/// is not checked; the others are.
-pub(crate) fn rules() -> [String; 6] {
+/// The six rules for a `framework` project, numbered from 1, as one
+/// sentence or paragraph each. Only rule 1 depends on the framework: it
+/// names its crate. Rule 3 is not checked; the others are.
+pub(crate) fn rules(framework: ApiFramework) -> [String; 6] {
     let root = |files: &[&str]| {
         files
             .iter()
@@ -45,10 +57,11 @@ pub(crate) fn rules() -> [String; 6] {
     let ports: Vec<&str> = ports.iter().map(String::as_str).collect();
     [
         format!(
-            "In a feature, only {} use `actix_web`. Outside the features, so may \
+            "In a feature, only {} use `{}`. Outside the features, so may \
              {}{INFRASTRUCTURE}.",
-            listed(ACTIX_WEB_FEATURE),
-            root(ACTIX_WEB_ROOT),
+            listed(FRAMEWORK_FEATURE),
+            crate_name(framework),
+            root(FRAMEWORK_ROOT),
         ),
         format!(
             "In a feature, only {} use `sqlx`, and {} may name {} and nothing else. \
@@ -95,11 +108,12 @@ pub(crate) fn scope() -> String {
     )
 }
 
-/// The rules as a Markdown numbered list wrapped at 76 columns, then
-/// [`scope`] as a paragraph: the rules section of the scaffolded `AGENTS.md`.
-pub(crate) fn rules_markdown() -> String {
+/// The rules for a `framework` project as a Markdown numbered list wrapped
+/// at 76 columns, then [`scope`] as a paragraph: the rules section of the
+/// scaffolded `AGENTS.md`.
+pub(crate) fn rules_markdown(framework: ApiFramework) -> String {
     let mut out = String::new();
-    for (index, rule) in rules().iter().enumerate() {
+    for (index, rule) in rules(framework).iter().enumerate() {
         out.push_str(&wrap(&format!("{}. {rule}", index + 1), "   "));
     }
     out.push('\n');
@@ -152,7 +166,7 @@ mod tests {
 
     #[test]
     fn rules_name_their_allowed_files() {
-        let [one, two, ..] = rules();
+        let [one, two, ..] = rules(ApiFramework::Actix);
         assert_eq!(
             one,
             "In a feature, only `routes.rs` and `handlers.rs` use `actix_web`. Outside \
@@ -168,29 +182,45 @@ mod tests {
         );
     }
 
+    /// Under axum, rule 1 names `axum`; every other rule is the same.
+    #[test]
+    fn axum_rules_differ_only_in_rule_1s_crate() {
+        let actix = rules(ApiFramework::Actix);
+        let axum = rules(ApiFramework::Axum);
+        assert_eq!(
+            axum[0],
+            "In a feature, only `routes.rs` and `handlers.rs` use `axum`. Outside \
+             the features, so may `app.rs`, `main.rs`, `error.rs`, the features' \
+             `generated.rs`, `shared/` and the data layer."
+        );
+        assert_eq!(axum[1..], actix[1..]);
+    }
+
     #[test]
     fn the_markdown_states_every_rule_and_wraps() {
-        let markdown = rules_markdown();
-        for (index, rule) in rules().iter().enumerate() {
-            assert!(
-                normalized(&markdown).contains(&normalized(&format!("{}. {rule}", index + 1))),
-                "rule {}",
-                index + 1
-            );
-        }
-        assert!(normalized(&markdown).contains(&normalized(&scope())));
-        for line in markdown.lines() {
-            assert!(line.chars().count() <= 76 || !line.contains(' '), "{line}");
+        for framework in [ApiFramework::Actix, ApiFramework::Axum] {
+            let markdown = rules_markdown(framework);
+            for (index, rule) in rules(framework).iter().enumerate() {
+                assert!(
+                    normalized(&markdown).contains(&normalized(&format!("{}. {rule}", index + 1))),
+                    "rule {}",
+                    index + 1
+                );
+            }
+            assert!(normalized(&markdown).contains(&normalized(&scope())));
+            for line in markdown.lines() {
+                assert!(line.chars().count() <= 76 || !line.contains(' '), "{line}");
+            }
         }
     }
 
     /// The architecture guide states each rule, and what `check-arch`
-    /// enforces, exactly as `check-arch` does.
+    /// enforces, exactly as `check-arch` does for actix-web, the default.
     #[test]
     fn the_architecture_guide_states_the_rules_exactly() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/guide/architecture.md");
         let guide = normalized(&std::fs::read_to_string(path).unwrap_or_default());
-        for (index, rule) in rules().iter().enumerate() {
+        for (index, rule) in rules(ApiFramework::Actix).iter().enumerate() {
             let rule = normalized(&format!("{}. {rule}", index + 1));
             assert!(
                 guide.contains(&rule),
