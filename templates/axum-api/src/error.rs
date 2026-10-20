@@ -43,6 +43,10 @@ pub enum AppError {
     /// `404 not_found`: no such row, or another caller's.
     #[error("{0}")]
     NotFound(String),
+    /// `408 request_timeout`: the request took longer than `app.rs`'
+    /// timeout (`time_out`).
+    #[error("{0}")]
+    RequestTimeout(String),
     /// `409 conflict`: a unique or foreign-key violation, naming the
     /// constraint.
     #[error("{0}")]
@@ -90,6 +94,7 @@ impl AppError {
             AppError::Unauthorized(_) => "unauthorized",
             AppError::Forbidden(_) => "forbidden",
             AppError::NotFound(_) => "not_found",
+            AppError::RequestTimeout(_) => "request_timeout",
             AppError::Conflict(_) => "conflict",
             AppError::PayloadTooLarge(_) => "payload_too_large",
             AppError::Validation { .. } => "validation_failed",
@@ -111,6 +116,7 @@ impl AppError {
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
+            AppError::RequestTimeout(_) => StatusCode::REQUEST_TIMEOUT,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             AppError::Validation { .. } => StatusCode::UNPROCESSABLE_ENTITY,

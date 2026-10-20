@@ -7,18 +7,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
-use axum::extract::{DefaultBodyLimit, FromRef};
-use axum::http::StatusCode;
+use axum::extract::{DefaultBodyLimit, FromRef, Request, State};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 use sqlx::PgPool;
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
-use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::config::Config;
 use crate::db::pool::init_pool;
+use crate::error::AppError;
 use crate::features::{Services, register_services, routes};
 use crate::openapi::document;
 use crate::shared::auth::JwtKeys;
@@ -82,16 +83,24 @@ pub fn router(state: AppState) -> Router {
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", document()))
         .merge(routes())
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
-        .layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
-            REQUEST_TIMEOUT,
-        ))
+        .layer(middleware::from_fn_with_state(REQUEST_TIMEOUT, time_out))
         // Same-origin only: allow your front end's origin here.
         .layer(CorsLayer::new())
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(TraceLayer::new_for_http())
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .with_state(state)
+}
+
+/// The request timeout [`router`] applies (`from_fn_with_state(limit,
+/// time_out)`): a request still running after `limit` is dropped and
+/// answered `408 request_timeout` with the wire standard's body.
+pub async fn time_out(State(limit): State<Duration>, request: Request, next: Next) -> Response {
+    match tokio::time::timeout(limit, next.run(request)).await {
+        Ok(response) => response,
+        Err(_) => AppError::RequestTimeout(format!("the request took longer than {limit:?}"))
+            .into_response(),
+    }
 }
 
 /// Resolves on Ctrl+C or, on Unix, `SIGTERM`.

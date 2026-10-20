@@ -107,7 +107,7 @@ fn the_axum_config_file_turns_on_the_axum_api() -> Result<()> {
     let text = template("rok-sqlc.toml");
     for dependency in [
         "# axum = { version = \"0.8\", features = [\"macros\"] }",
-        "# tokio = { version = \"1\", features = [\"rt-multi-thread\", \"macros\", \"signal\", \"net\"] }",
+        "# tokio = { version = \"1\", features = [\"rt-multi-thread\", \"macros\", \"signal\", \"net\", \"time\"] }",
         "# tower-http = { version = \"0.6\", features = [",
         "# utoipa-swagger-ui = { version = \"9\", features = [\"axum\", \"vendored\"] }",
     ] {
@@ -129,7 +129,7 @@ fn the_axum_app_holds_the_state_and_serves_everything() {
         "TraceLayer::new_for_http()",
         "CorsLayer::new()",
         "SetRequestIdLayer::x_request_id(MakeRequestUuid)",
-        "TimeoutLayer::with_status_code(",
+        "middleware::from_fn_with_state(REQUEST_TIMEOUT, time_out)",
         "DefaultBodyLimit::max(BODY_LIMIT)",
         ".with_graceful_shutdown(shutdown_signal())",
     ] {
@@ -149,15 +149,19 @@ fn the_axum_error_and_auth_answer_as_actix_does() {
         .find(|(path, _)| path == Path::new("src/error.rs"))
         .expect("an actix error.rs")
         .1;
-    // The same variants, codes and statuses.
+    // The same variants, codes and statuses, but axum's request timeout
+    // (`408 request_timeout`): actix-web has no timeout.
     let arms = |text: &str| -> Vec<String> {
         text.lines()
             .filter(|line| line.trim_start().starts_with("AppError::"))
+            .filter(|line| !line.contains("AppError::RequestTimeout"))
             .filter(|line| line.ends_with("\",") || line.contains("StatusCode::"))
             .map(str::to_owned)
             .collect()
     };
     assert_eq!(arms(&error), arms(actix_error));
+    assert!(error.contains("AppError::RequestTimeout(_) => \"request_timeout\","));
+    assert!(error.contains("AppError::RequestTimeout(_) => StatusCode::REQUEST_TIMEOUT,"));
     let auth = template("src/shared/auth.rs");
     for piece in [
         "impl<S> FromRequestParts<S> for AuthUser",
