@@ -47,7 +47,9 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// What the handlers reach through `State`, built once: by [`run`], or by a
 /// test. Each field is an extractable state of its own (`FromRef`); the
 /// generated `features/generated.rs` hands each handler its service from
-/// `services`.
+/// `services`, and the hand-written `auth` and `account` handlers take
+/// theirs from `auth` and `account`. Every service is built here, once,
+/// not per request.
 #[derive(Clone, FromRef)]
 pub struct AppState {
     /// The database, which `/health/ready` checks and `AuthUser` reads the
@@ -61,35 +63,58 @@ pub struct AppState {
     pub outbox: Outbox,
     /// The messages flows enqueue, with links under `APP_URL`.
     pub templates: Arc<Templates>,
-    /// Checks new passwords against known breaches (`BREACH_CHECK`); a
-    /// test swaps in its own.
-    pub breach: Arc<dyn BreachCheck>,
     /// The per-IP limit for `/auth` (`AUTH_RATE_LIMIT`, `TRUST_PROXY`),
     /// one for every route it wraps.
     pub rate_limit: RateLimit,
-    /// `REQUIRE_VERIFIED_EMAIL`.
-    #[from_ref(skip)]
-    pub require_verified_email: bool,
-    /// Where `auth` records what admins do: the `audit_log` feature, or a
-    /// test's own.
-    pub audit: Arc<dyn AuditTrail>,
+    /// `auth`'s service, over the parts above, the breach check
+    /// (`BREACH_CHECK`), `REQUIRE_VERIFIED_EMAIL` and the audit trail (the
+    /// `audit_log` feature). A test swaps the breach check or the audit
+    /// trail with [`AppState::with_breach`] or [`AppState::with_audit`].
+    pub auth: Arc<AuthService>,
+    /// `account`'s service.
+    pub account: Arc<AccountService>,
 }
 
 impl AppState {
     /// The state `config` describes, over `pool`.
     #[must_use]
     pub fn new(pool: PgPool, config: &Config) -> Self {
+        let keys = Arc::new(JwtKeys::new(&config.jwt_secret, config.jwt_ttl));
+        let outbox = Outbox::new();
+        let templates = Arc::new(Templates::new(&config.app_url));
+        let auth = Arc::new(AuthService {
+            pool: pool.clone(),
+            keys: keys.clone(),
+            outbox: Arc::new(outbox.clone()),
+            templates: templates.clone(),
+            breach: breach::from_config(config),
+            require_verified_email: config.require_verified_email,
+            audit: Arc::new(AuditLog(AuditLogEntryService::new(pool.clone()))),
+        });
         AppState {
             services: register_services(&pool),
-            audit: Arc::new(AuditLog(AuditLogEntryService::new(pool.clone()))),
+            account: Arc::new(AccountService::new(pool.clone())),
+            auth,
             pool,
-            keys: Arc::new(JwtKeys::new(&config.jwt_secret, config.jwt_ttl)),
-            outbox: Outbox::new(),
-            templates: Arc::new(Templates::new(&config.app_url)),
-            breach: breach::from_config(config),
+            keys,
+            outbox,
+            templates,
             rate_limit: RateLimit::per_minute(config.auth_rate_limit, config.trust_proxy),
-            require_verified_email: config.require_verified_email,
         }
+    }
+
+    /// This state, its `auth` checking new passwords with `breach`.
+    #[must_use]
+    pub fn with_breach(mut self, breach: Arc<dyn BreachCheck>) -> Self {
+        Arc::make_mut(&mut self.auth).breach = breach;
+        self
+    }
+
+    /// This state, its `auth` recording what admins do with `audit`.
+    #[must_use]
+    pub fn with_audit(mut self, audit: Arc<dyn AuditTrail>) -> Self {
+        Arc::make_mut(&mut self.auth).audit = audit;
+        self
     }
 }
 
@@ -198,29 +223,6 @@ async fn shutdown_signal() {
         () = terminate => {}
     }
     tracing::info!("shutting down");
-}
-
-/// `auth`'s service, built from `state` for each request that takes it, so
-/// a test's changes to `state` (its `breach` or `audit`) apply.
-impl FromRef<AppState> for Arc<AuthService> {
-    fn from_ref(state: &AppState) -> Self {
-        Arc::new(AuthService {
-            pool: state.pool.clone(),
-            keys: state.keys.clone(),
-            outbox: Arc::new(state.outbox.clone()),
-            templates: state.templates.clone(),
-            breach: state.breach.clone(),
-            require_verified_email: state.require_verified_email,
-            audit: state.audit.clone(),
-        })
-    }
-}
-
-/// `account`'s service, over `state`'s pool.
-impl FromRef<AppState> for Arc<AccountService> {
-    fn from_ref(state: &AppState) -> Self {
-        Arc::new(AccountService::new(state.pool.clone()))
-    }
 }
 
 /// `auth`'s [`AuditTrail`] port onto the `audit_log` feature: each entry is

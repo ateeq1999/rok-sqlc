@@ -279,8 +279,7 @@ async fn a_reset_refuses_a_weak_or_breached_password_and_keeps_the_link() -> Tes
     };
     register_verified(&db.pool, "ada@example.com", PASSWORD).await?;
     let link = forgot(&db.pool, "ada@example.com").await?;
-    let mut state = state(&db.pool)?;
-    state.breach = Arc::new(KnowsOne);
+    let state = state(&db.pool)?.with_breach(Arc::new(KnowsOne));
 
     let answer = call_with(&state, None, Method::POST, RESET, reset(&link, "short")).await?;
     assert_eq!(
@@ -311,8 +310,7 @@ async fn a_bad_link_is_refused_before_the_new_password_is_checked() -> TestResul
     let Some(db) = Database::fresh().await? else {
         return Ok(());
     };
-    let mut state = state(&db.pool)?;
-    state.breach = Arc::new(KnowsOne);
+    let state = state(&db.pool)?.with_breach(Arc::new(KnowsOne));
     // A breached password with a bad link: the link is looked at first, so
     // the breach service is never asked and no hash is computed.
     let garbage = "x".repeat(43);
@@ -421,8 +419,7 @@ async fn a_change_refuses_a_weak_or_breached_password() -> TestResult {
         return Ok(());
     };
     let session = register_verified(&db.pool, "ada@example.com", PASSWORD).await?;
-    let mut state = state(&db.pool)?;
-    state.breach = Arc::new(KnowsOne);
+    let state = state(&db.pool)?.with_breach(Arc::new(KnowsOne));
     let answer = call_with(
         &state,
         Some(&session),

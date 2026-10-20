@@ -177,8 +177,7 @@ async fn a_breached_password_is_refused_and_makes_no_account() -> TestResult {
     let Some(db) = Database::fresh().await? else {
         return Ok(());
     };
-    let mut state = state(&db.pool)?;
-    state.breach = Arc::new(KnowsOne);
+    let state = state(&db.pool)?.with_breach(Arc::new(KnowsOne));
     let body = credentials("ada@example.com", "password123");
     let answer = call_with(&state, None, Method::POST, REGISTER, body).await?;
     assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.body);

@@ -60,6 +60,7 @@ const BAD_CREDENTIALS: &str = "invalid email or password, or the account is temp
 const INVALID_TOKEN: &str = "the link is invalid, expired or already used";
 
 /// The `auth` service, built by `app.rs`.
+#[derive(Clone)]
 pub struct AuthService {
     /// The pool the flows read and write through.
     pub pool: PgPool,

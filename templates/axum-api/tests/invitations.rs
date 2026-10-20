@@ -138,8 +138,9 @@ async fn a_failed_audit_write_rolls_the_invitation_back() -> TestResult {
         return Ok(());
     };
     let admin = support::admin(&db.pool).await?;
-    let mut broken = state(&db.pool)?;
-    broken.audit = Arc::new(Broken(AuditLog(AuditLogEntryService::new(db.pool.clone()))));
+    let broken = state(&db.pool)?.with_audit(Arc::new(Broken(AuditLog(
+        AuditLogEntryService::new(db.pool.clone()),
+    ))));
     let body = json!({"email": "guest@example.com"});
     let answer = call_with(
         &broken,

@@ -265,8 +265,10 @@ below.
 
 - `call(&pool, token, method, uri, body)` sends a request to the whole
   application; `call_with(&state, …)` shares one `AppState`, and so one
-  rate limit, across calls. Swap a port on the state, such as
-  `state.breach = Arc::new(MyCheck)`.
+  rate limit, across calls. Swap a port on the state: with actix,
+  `state.breach = Arc::new(MyCheck)`; with axum, whose `AppState` builds
+  each service once, `state.with_breach(Arc::new(MyCheck))` (or
+  `with_audit`).
 - `mailed(&pool)` delivers the outbox through an in-memory mailer and
   answers what was sent; `mailed_token(&mail)` reads the token of the link
   a mail carries.
