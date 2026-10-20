@@ -11,13 +11,6 @@ pub(super) const FRAMEWORK_ROOT: &[&str] = &["app.rs", "main.rs", "error.rs"];
 /// The feature files that may use the web framework's crate (rule 1).
 pub(super) const FRAMEWORK_FEATURE: &[&str] = &["routes.rs", "handlers.rs"];
 
-/// The crate `framework`'s code names: `actix_web` or `axum`.
-pub(super) fn crate_name(framework: ApiFramework) -> &'static str {
-    match framework {
-        ApiFramework::Actix => "actix_web",
-        ApiFramework::Axum => "axum",
-    }
-}
 /// The files at the root of `src/` that may use `sqlx` (rule 2).
 pub(super) const SQLX_ROOT: &[&str] = &["app.rs", "error.rs"];
 /// The feature files that may use `sqlx` (rule 2).
@@ -60,7 +53,7 @@ pub(crate) fn rules(framework: ApiFramework) -> [String; 6] {
             "In a feature, only {} use `{}`. Outside the features, so may \
              {}{INFRASTRUCTURE}.",
             listed(FRAMEWORK_FEATURE),
-            crate_name(framework),
+            framework.crate_name(),
             root(FRAMEWORK_ROOT),
         ),
         format!(

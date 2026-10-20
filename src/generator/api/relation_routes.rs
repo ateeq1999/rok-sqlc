@@ -13,6 +13,7 @@ use super::scope::{self, Extraction};
 use crate::ApiFramework;
 use crate::generator::openapi::{push_into_params, push_to_schema};
 use crate::generator::{MAX_WIDTH, push_doc};
+use crate::schema::Column;
 
 /// The relation routes: `(path, method, handler)`.
 pub fn routes(feature: &Feature<'_>) -> Vec<(String, &'static str, String)> {
@@ -69,6 +70,45 @@ fn relation_args(
     }
 }
 
+/// What a relation's service call needs, whatever the framework: the
+/// arguments before the key (the tenant, then the caller's), the tenant to
+/// extract when the handler's own scope lacks one (its type imported), and
+/// the caller to extract when the handler's own caller differs.
+struct Needs<'a> {
+    args: Vec<String>,
+    tenant: Option<&'a Column>,
+    caller: Option<Extraction>,
+}
+
+/// [`Needs`] of `relation` in a handler of `feature`.
+fn relation_needs<'a>(
+    feature: &Feature<'_>,
+    uses: &mut Uses,
+    relation: &Relation<'a>,
+) -> Needs<'a> {
+    let mut args = Vec::new();
+    if relation.tenant.is_some() {
+        args.push("tenant.into_inner()".to_owned());
+    }
+    let tenant = relation.tenant.filter(|_| feature.tenant.is_none());
+    if let Some(tenant) = tenant {
+        uses.add("crate::shared::tenant::Tenant");
+        scope::import_type(feature, uses, tenant);
+    }
+    let caller = relation.caller(feature);
+    let extraction = caller.extraction();
+    args.extend(
+        extraction
+            .and_then(|extraction| extraction.arg)
+            .map(str::to_owned),
+    );
+    Needs {
+        args,
+        tenant,
+        caller: extraction.filter(|_| caller != feature.caller()),
+    }
+}
+
 /// [`relation_args`] for actix-web: each extractor runs on `req`.
 fn actix_relation_args(
     feature: &Feature<'_>,
@@ -77,37 +117,25 @@ fn actix_relation_args(
     extract: &mut String,
     params: &mut Vec<String>,
 ) -> Vec<String> {
-    let mut args = Vec::new();
-    if let Some(tenant) = relation.tenant {
-        args.push("tenant.into_inner()".to_owned());
-        if feature.tenant.is_none() {
-            uses.add("crate::shared::tenant::Tenant");
-            uses.add("actix_web::FromRequest");
-            scope::import_type(feature, uses, tenant);
-        }
-    }
-    let caller = relation.caller(feature);
+    let needs = relation_needs(feature, uses, relation);
     if let Some(Extraction {
         extractor,
         binding,
         arg,
-    }) = caller.extraction()
+    }) = needs.caller
     {
-        // The handler's own extractor already hands over this caller.
-        if caller != feature.caller() {
-            uses.add("actix_web::FromRequest");
-            uses.add(&format!("crate::shared::auth::{extractor}"));
-            if arg.is_some() {
-                extract.push_str(&format!(
-                    "    let {binding} = {extractor}::extract(&req).await?;\n"
-                ));
-            } else {
-                extract.push_str(&format!("    {extractor}::extract(&req).await?;\n"));
-            }
+        uses.add("actix_web::FromRequest");
+        uses.add(&format!("crate::shared::auth::{extractor}"));
+        if arg.is_some() {
+            extract.push_str(&format!(
+                "    let {binding} = {extractor}::extract(&req).await?;\n"
+            ));
+        } else {
+            extract.push_str(&format!("    {extractor}::extract(&req).await?;\n"));
         }
-        args.extend(arg.map(str::to_owned));
     }
-    if let Some(tenant) = relation.tenant.filter(|_| feature.tenant.is_none()) {
+    if let Some(tenant) = needs.tenant {
+        uses.add("actix_web::FromRequest");
         extract.push_str(&format!(
             "    let tenant = Tenant::<{}>::extract(&req).await?;\n",
             tenant.value_type()
@@ -117,7 +145,7 @@ fn actix_relation_args(
         uses.add("actix_web::HttpRequest");
         push_param(params, "req: HttpRequest".to_owned());
     }
-    args
+    needs.args
 }
 
 /// [`relation_args`] for axum: each extractor is a handler parameter
@@ -129,29 +157,23 @@ fn axum_relation_args(
     extract: &mut String,
     params: &mut Vec<String>,
 ) -> Vec<String> {
-    let mut args = Vec::new();
-    let tenant = relation.tenant.filter(|_| feature.tenant.is_none());
-    if relation.tenant.is_some() {
-        args.push("tenant.into_inner()".to_owned());
-    }
-    if let Some(tenant) = tenant {
-        uses.add("crate::shared::tenant::Tenant");
-        scope::import_type(feature, uses, tenant);
+    let needs = relation_needs(feature, uses, relation);
+    if let Some(tenant) = needs.tenant {
         let ty = format!("Tenant<{}>", tenant.value_type());
         push_param(params, format!("tenant: Result<{ty}, AppError>"));
     }
-    let caller = relation.caller(feature);
     if let Some(Extraction {
         extractor,
         binding,
         arg,
-    }) = caller.extraction()
+    }) = needs.caller
     {
         // The handler's own extractor may already hand over this caller.
-        let own = feature.caller().extraction();
-        let covered = own
+        let covered = feature
+            .caller()
+            .extraction()
             .is_some_and(|own| own.extractor == extractor && (arg.is_none() || own.binding != "_"));
-        if caller != feature.caller() && !covered {
+        if !covered {
             let name = match (binding, extractor) {
                 ("_", "AdminUser") => "admin",
                 ("_", _) => "user",
@@ -165,12 +187,11 @@ fn axum_relation_args(
                 extract.push_str(&format!("    {name}?;\n"));
             }
         }
-        args.extend(arg.map(str::to_owned));
     }
-    if tenant.is_some() {
+    if needs.tenant.is_some() {
         extract.push_str("    let tenant = tenant?;\n");
     }
-    args
+    needs.args
 }
 
 /// `GET /{key}` with `?include=`: the row alone, or with one to-one

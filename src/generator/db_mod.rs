@@ -72,7 +72,7 @@ pub fn render_db_mod(tables: &[Table], db_mod: &DbMod<'_>) -> String {
             "//   {}\n",
             super::openapi::dependency_hint(tables)
         ));
-        output.push_str(super::openapi::swagger_ui_hint(framework));
+        output.push_str(&super::openapi::swagger_ui_hint(framework));
     }
     if uses_regex {
         output.push_str("//   regex = \"1\"\n");

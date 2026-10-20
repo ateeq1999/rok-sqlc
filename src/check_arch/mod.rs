@@ -19,7 +19,6 @@ use crate::ApiFramework;
 pub(crate) use rules::rules_markdown;
 use rules::{
     FRAMEWORK_FEATURE, FRAMEWORK_ROOT, SQLX_FEATURE, SQLX_PORT_FILES, SQLX_PORT_TYPES, SQLX_ROOT,
-    crate_name,
 };
 use source::Reference;
 
@@ -243,14 +242,6 @@ impl Layout {
         })
     }
 
-    /// The framework the project doesn't use.
-    fn other_framework(&self) -> ApiFramework {
-        match self.framework {
-            ApiFramework::Actix => ApiFramework::Axum,
-            ApiFramework::Axum => ApiFramework::Actix,
-        }
-    }
-
     /// The feature `rel` (a path under `src/`) lies in, if any.
     fn feature_of<'a>(&self, rel: &'a [String]) -> Option<&'a str> {
         let rest = rel.strip_prefix(self.features.as_slice())?;
@@ -426,7 +417,7 @@ impl Layout {
         let infrastructure = Self::in_shared(rel) || self.in_db(rel) || self.is_generated_root(rel);
         match target {
             Target::Other(path) => match path.first().map(String::as_str) {
-                Some(name) if name == crate_name(self.framework) => {
+                Some(name) if name == self.framework.crate_name() => {
                     let allowed = infrastructure
                         || Self::is_root(rel, FRAMEWORK_ROOT)
                         || (feature.is_some() && FRAMEWORK_FEATURE.contains(&file));
@@ -436,7 +427,7 @@ impl Layout {
                 }
                 // The other framework's crate: only the data layer, whose
                 // `extractors` may serve both, names it.
-                Some(name) if name == crate_name(self.other_framework()) => {
+                Some(name) if name == self.framework.other().crate_name() => {
                     if !self.in_db(rel) {
                         rules.push(Rule::OtherFramework);
                     }
@@ -497,13 +488,13 @@ impl Layout {
             Rule::Framework => format!(
                 "`{target}`: only {}, features/generated.rs, shared/ and db/ may use {}",
                 [FRAMEWORK_FEATURE, FRAMEWORK_ROOT].concat().join(", "),
-                crate_name(self.framework)
+                self.framework.crate_name()
             ),
             Rule::OtherFramework => format!(
                 "`{target}`: the project uses {} (`[api] framework`), so nothing but db/ may \
                  use {}",
                 self.framework.name(),
-                crate_name(self.other_framework())
+                self.framework.other().crate_name()
             ),
             Rule::Sqlx => format!(
                 "`{target}`: only {}, features/generated.rs, shared/ and db/ may use sqlx \

@@ -117,10 +117,7 @@ pub fn push_modules(output: &mut String, features: &[Feature<'_>]) {
 
 /// Renders `README.md`.
 pub fn render_readme(features: &[Feature<'_>], framework: ApiFramework) -> String {
-    let wiring = match framework {
-        ApiFramework::Actix => "`register_services` and `configure_all`",
-        ApiFramework::Axum => "`Services`, `register_services` and `routes`",
-    };
+    let wiring = framework.wiring();
     let mut output = format!(
         "{MARKDOWN_HEADER}
 # API features

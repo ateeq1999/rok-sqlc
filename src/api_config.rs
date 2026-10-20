@@ -133,6 +133,51 @@ impl ApiFramework {
             ApiFramework::Axum => crate::Extractor::Axum,
         }
     }
+
+    /// The crate the framework's code names: `actix_web` or `axum`
+    /// (`check-arch`'s rule 1).
+    pub(crate) fn crate_name(self) -> &'static str {
+        match self {
+            ApiFramework::Actix => "actix_web",
+            ApiFramework::Axum => "axum",
+        }
+    }
+
+    /// The framework a project doesn't use: a project uses one.
+    pub(crate) fn other(self) -> ApiFramework {
+        match self {
+            ApiFramework::Actix => ApiFramework::Axum,
+            ApiFramework::Axum => ApiFramework::Actix,
+        }
+    }
+
+    /// What `features/generated.rs` hands `app.rs`, as the generated
+    /// `features/README.md` and the scaffolded `AGENTS.md` word it.
+    pub(crate) fn wiring(self) -> &'static str {
+        match self {
+            ApiFramework::Actix => "`register_services` and `configure_all`",
+            ApiFramework::Axum => "`Services`, `register_services` and `routes`",
+        }
+    }
+
+    /// The `utoipa-swagger-ui` feature serving Swagger UI from the
+    /// framework.
+    pub(crate) fn swagger_ui_feature(self) -> &'static str {
+        match self {
+            ApiFramework::Actix => "actix-web",
+            ApiFramework::Axum => "axum",
+        }
+    }
+
+    /// The skeleton files `rok-sqlc init --framework` writes for the
+    /// framework alone (the server setup, the error mapping, the auth
+    /// extractors and the wiring), besides the shared ones.
+    pub(crate) fn skeleton(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            ApiFramework::Actix => crate::init::ACTIX,
+            ApiFramework::Axum => crate::init::AXUM,
+        }
+    }
 }
 
 /// Who may call a table's API endpoints ([`ApiConfig::access`]).

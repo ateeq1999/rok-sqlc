@@ -173,8 +173,7 @@ fn the_axum_error_and_auth_answer_as_actix_does() {
     ] {
         assert!(auth.contains(piece), "missing {piece}");
     }
-    assert!(
-        template("AGENTS.md")
-            .contains("generated: declares the features, Services, register_services, routes")
-    );
+    assert!(template("AGENTS.md").contains(
+        "generated: declares the features; `Services`, `register_services` and `routes`"
+    ));
 }

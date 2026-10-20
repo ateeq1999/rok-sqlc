@@ -36,7 +36,7 @@ const COMMON: &[(&str, &str)] = &[
 
 /// The actix-web skeleton's own files (0.7, decision A2: the server setup,
 /// the error mapping, the auth extractors and the wiring).
-const ACTIX: &[(&str, &str)] = &[
+pub(crate) const ACTIX: &[(&str, &str)] = &[
     ("rok-sqlc.toml", include_str!("templates/rok-sqlc.toml")),
     ("src/app.rs", include_str!("templates/app.rs")),
     ("src/error.rs", include_str!("templates/error.rs")),
@@ -52,7 +52,7 @@ const ACTIX: &[(&str, &str)] = &[
 ];
 
 /// The axum skeleton's own files, the same paths as [`ACTIX`]'s.
-const AXUM: &[(&str, &str)] = &[
+pub(crate) const AXUM: &[(&str, &str)] = &[
     (
         "rok-sqlc.toml",
         include_str!("templates/axum/rok-sqlc.toml"),
@@ -86,11 +86,7 @@ const WIRING_PLACEHOLDER: &str = "{wiring}";
 /// for the library crate `krate`, in path order. Line endings are `\n`
 /// whichever way the templates were checked out.
 pub(crate) fn plan(dir: &Path, krate: &str, framework: ApiFramework) -> Vec<(PathBuf, String)> {
-    let (own, wiring) = match framework {
-        ApiFramework::Actix => (ACTIX, "register_services, configure_all"),
-        ApiFramework::Axum => (AXUM, "Services, register_services, routes"),
-    };
-    let mut templates: Vec<&(&str, &str)> = COMMON.iter().chain(own).collect();
+    let mut templates: Vec<&(&str, &str)> = COMMON.iter().chain(framework.skeleton()).collect();
     templates.sort_by_key(|(path, _)| *path);
     templates
         .into_iter()
@@ -98,7 +94,7 @@ pub(crate) fn plan(dir: &Path, krate: &str, framework: ApiFramework) -> Vec<(Pat
             let text = text
                 .replace("\r\n", "\n")
                 .replace(CRATE_PLACEHOLDER, krate)
-                .replace(WIRING_PLACEHOLDER, wiring)
+                .replace(WIRING_PLACEHOLDER, framework.wiring())
                 .replace(
                     RULES_PLACEHOLDER,
                     &crate::check_arch::rules_markdown(framework),

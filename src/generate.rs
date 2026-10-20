@@ -313,7 +313,7 @@ fn check_options(config: &Config) -> anyhow::Result<()> {
         ApiFramework::Actix => bail!(
             "`api.output` needs `derive = [\"serde\", \"validate\"]` and `actix_web` in `extractors`, since API features take validated bodies through the actix-web extractor"
         ),
-        _ => bail!(
+        ApiFramework::Axum => bail!(
             "`api.output` with `framework = \"{framework}\"` needs `derive = [\"serde\", \"validate\"]` and `{extractor}` in `extractors`, since API features take validated bodies through the {framework} extractor",
             framework = api.framework.name(),
             extractor = extractor.name(),

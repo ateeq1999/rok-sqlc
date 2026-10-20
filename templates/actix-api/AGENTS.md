@@ -28,7 +28,7 @@ src/
 └─ features/
    ├─ mod.rs        `mod generated; pub use generated::*;` plus hand-written features
    │                (`account`, `auth`: the generated layout, without model/repo)
-   ├─ generated.rs  generated: declares the features, register_services, configure_all
+   ├─ generated.rs  generated: declares the features; `register_services` and `configure_all`
    └─ <feature>/
       ├─ mod.rs          generated: re-exports routes, the service and the trait
       ├─ routes.rs       generated: URL to handler
