@@ -1,0 +1,6 @@
+# What `rok-sqlc check-arch` reads (ADR 0016). `tests/fixture_compile/`
+# in rok-sqlc generates this crate with the same `api.output` and
+# `api.framework`, but from its own configuration, not from this file.
+[api]
+output = "src/features"
+framework = "axum"

@@ -53,6 +53,7 @@ pub struct Services {
 }
 
 /// Builds every feature's service, each over `pool`.
+#[must_use]
 pub fn register_services(pool: &PgPool) -> Services {
     let accounts = Arc::new(AccountsService::new(pool.clone()));
     let notes = Arc::new(NotesService::new(pool.clone()));

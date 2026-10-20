@@ -170,7 +170,7 @@ pub fn render_generated(features: &[Feature<'_>], api: &ApiConfig) -> String {
 
     let pool = if features.is_empty() { "_pool" } else { "pool" };
     output.push_str(&format!(
-        "\n/// Builds every feature's service, each over `pool`.\npub fn register_services({pool}: &PgPool) -> Services {{\n"
+        "\n/// Builds every feature's service, each over `pool`.\n#[must_use]\npub fn register_services({pool}: &PgPool) -> Services {{\n"
     ));
     for feature in features {
         let module = feature.module();

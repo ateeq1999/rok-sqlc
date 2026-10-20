@@ -1,11 +1,13 @@
 //! `tests/api-app`: an application laid out by `rok-sqlc init` and generated
-//! with `api.output` (ADR 0016).
+//! with `api.output` (ADR 0016); and how both API fixtures, it and
+//! `tests/api-app-axum`, are generated and checked.
 
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result, ensure};
+use rok_sqlc::ApiFramework;
 
 use crate::common::{self, cargo};
 
@@ -15,26 +17,55 @@ pub(crate) fn api_app_dir() -> PathBuf {
     common::app_dir("api-app")
 }
 
-/// Every test regenerates into the API fixture crate, so they run one at a
-/// time.
-static API_APP: Mutex<()> = Mutex::new(());
+/// The API fixture crate for `framework`: `tests/api-app` for actix-web,
+/// `tests/api-app-axum` for axum (0.7, decision A7).
+pub(crate) fn fixture_dir(framework: ApiFramework) -> PathBuf {
+    if framework == ApiFramework::Axum {
+        common::app_dir("api-app-axum")
+    } else {
+        api_app_dir()
+    }
+}
 
-/// Scaffolds the skeleton with `rok-sqlc init` into a scratch directory and
-/// copies its `src/` files over the API fixture crate's, so every run
-/// compiles the current templates. `lib.rs` is the exception: the fixture
-/// crate's own declares the skeleton's modules too, under the lint gate.
-/// Then generates `migrations/` into `src/db/`, `src/shared/` and
-/// `src/features/`, and returns the generated file paths.
-fn generate_api_app() -> Result<Vec<PathBuf>> {
+/// Every test regenerates into its API fixture crate, so the tests of one
+/// fixture run one at a time.
+static API_APP: Mutex<()> = Mutex::new(());
+/// [`API_APP`] for `tests/api-app-axum`.
+static API_APP_AXUM: Mutex<()> = Mutex::new(());
+
+/// Holds `framework`'s fixture crate for one test.
+pub(crate) fn lock(framework: ApiFramework) -> MutexGuard<'static, ()> {
+    let mutex = if framework == ApiFramework::Axum {
+        &API_APP_AXUM
+    } else {
+        &API_APP
+    };
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Scaffolds `framework`'s skeleton with `rok-sqlc init` into a scratch
+/// directory and copies its `src/` files over the fixture crate's, so every
+/// run compiles the current templates. `lib.rs` is the exception: the
+/// fixture crate's own declares the skeleton's modules too, under the lint
+/// gate. Then generates `tests/api-app/migrations/` into `src/db/`,
+/// `src/shared/` and `src/features/` with the same settings for both
+/// frameworks, and returns the generated file paths.
+///
+/// `features/drafts/service.rs` is a scaffolded service the fixture
+/// changed: checked in under `tests/api-app`, and copied to
+/// `tests/api-app-axum` first, as a service is the same for both
+/// frameworks (decision A2).
+fn generate_api_app(framework: ApiFramework) -> Result<Vec<PathBuf>> {
+    let dir = fixture_dir(framework);
     let scratch = tempfile::TempDir::new()?;
     // The fixture's package, so the scaffolded `main.rs` names its library.
-    std::fs::copy(
-        api_app_dir().join("Cargo.toml"),
-        scratch.path().join("Cargo.toml"),
-    )?;
+    std::fs::copy(dir.join("Cargo.toml"), scratch.path().join("Cargo.toml"))?;
     let output = Command::new(env!("CARGO_BIN_EXE_rok-sqlc"))
         .arg("init")
         .arg(scratch.path())
+        .args(["--framework", framework.name()])
         .output()
         .context("failed to run rok-sqlc init")?;
     ensure!(
@@ -42,14 +73,23 @@ fn generate_api_app() -> Result<Vec<PathBuf>> {
         "rok-sqlc init failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    copy_skeleton(&scratch.path().join("src"), &api_app_dir().join("src"))?;
+    copy_skeleton(&scratch.path().join("src"), &dir.join("src"))?;
+
+    let service = dir.join("src/features/drafts/service.rs");
+    if framework != ApiFramework::Actix {
+        std::fs::create_dir_all(dir.join("src/features/drafts"))?;
+        std::fs::copy(
+            api_app_dir().join("src/features/drafts/service.rs"),
+            &service,
+        )?;
+    }
 
     let mut config = rok_sqlc::Config::default();
-    config.output = api_app_dir().join("src/db");
+    config.output = dir.join("src/db");
     config.force = true;
     // What `init`'s `rok-sqlc.toml` sets.
     config.derive = vec![rok_sqlc::Derive::Serde, rok_sqlc::Derive::Validate];
-    config.extractors = vec![rok_sqlc::Extractor::ActixWeb];
+    config.extractors = vec![framework.extractor()];
     config.conventions.primary_key_ids = Some(rok_sqlc::IdGeneration::UuidV7);
     // The conventions: only `documents` has these columns.
     config.conventions.tenant_column = Some("tenant_id".into());
@@ -65,7 +105,8 @@ fn generate_api_app() -> Result<Vec<PathBuf>> {
         )]
         .into(),
     );
-    let mut api = rok_sqlc::ApiConfig::new(api_app_dir().join("src/features"));
+    let mut api = rok_sqlc::ApiConfig::new(dir.join("src/features"));
+    api.framework = framework;
     api.search_endpoint = true;
     let names = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
     api.search.insert("notes".into(), names(&["title", "body"]));
@@ -94,7 +135,6 @@ fn generate_api_app() -> Result<Vec<PathBuf>> {
     // migration, where `drafts` has no key, then from both, where it has
     // one. The fixture's own `drafts/service.rs` survives both runs as it
     // is checked in, and compiles against the trait the second run widens.
-    let service = api_app_dir().join("src/features/drafts/service.rs");
     let checked_in = std::fs::read(&service).context("read drafts/service.rs")?;
     config.schema = vec![api_app_dir().join("migrations/0001_notes.sql")];
     let first = rok_sqlc::generate(&config)?;
@@ -136,7 +176,7 @@ fn generate_api_app() -> Result<Vec<PathBuf>> {
 }
 
 /// The string rules of `profiles`: one rule or transform per column
-/// (`email` takes three), which `tests/api-app/tests/rules.rs` exercises.
+/// (`email` takes three), which `tests/api-suite/rules.rs` exercises.
 fn profile_rules() -> std::collections::BTreeMap<String, Vec<rok_sqlc::ApiRule>> {
     use rok_sqlc::ApiRule;
     let text = |rules: &[&str]| rules.iter().map(|rule| ApiRule::from(*rule)).collect();
@@ -189,64 +229,58 @@ fn copy_skeleton(from: &std::path::Path, to: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-/// The skeleton `init` scaffolds compiles against the generated pool and
-/// shared tools, and all of it passes the lint gate (ADR 0013), with
-/// `unwrap`, `expect` and `panic` denied.
-#[test]
-fn api_app_passes_the_lint_gate() -> Result<()> {
-    let _guard = API_APP
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(reason) = common::generated_code_skip_reason(&api_app_dir()) {
+/// The skeleton `init` scaffolds for `framework` compiles against the
+/// generated pool and shared tools, and all of it passes the lint gate (ADR
+/// 0013), with `unwrap`, `expect` and `panic` denied.
+pub(crate) fn passes_the_lint_gate(framework: ApiFramework) -> Result<()> {
+    let _guard = lock(framework);
+    let dir = fixture_dir(framework);
+    if let Some(reason) = common::generated_code_skip_reason(&dir) {
         eprintln!("{reason}");
         return Ok(());
     }
-    generate_api_app()?;
+    generate_api_app(framework)?;
 
     let status = cargo(
-        &api_app_dir(),
+        &dir,
         &["clippy", "--quiet", "--all-targets", "--", "-Dwarnings"],
     )
     .status()
-    .context("failed to run cargo clippy in tests/api-app")?;
+    .with_context(|| format!("failed to run cargo clippy in {}", common::shown(&dir)))?;
     ensure!(status.success(), "the API fixture failed the lint gate");
     Ok(())
 }
 
-/// The API fixture's tests: health (against PostgreSQL when
+/// The fixture's tests: health (against PostgreSQL when
 /// `ROK_SQLC_TEST_DATABASE_URL` is set, and unreachable), the pool settings,
-/// and the shared tools.
-#[test]
-fn api_app_passes_its_tests() -> Result<()> {
-    let _guard = API_APP
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(reason) = common::generated_code_skip_reason(&api_app_dir()) {
+/// the shared tools, and the API suites of `tests/api-suite/`.
+pub(crate) fn passes_its_tests(framework: ApiFramework) -> Result<()> {
+    let _guard = lock(framework);
+    let dir = fixture_dir(framework);
+    if let Some(reason) = common::generated_code_skip_reason(&dir) {
         eprintln!("{reason}");
         return Ok(());
     }
-    generate_api_app()?;
+    generate_api_app(framework)?;
 
-    let status = cargo(&api_app_dir(), &["test", "--quiet"])
+    let status = cargo(&dir, &["test", "--quiet"])
         .status()
-        .context("failed to run cargo test in tests/api-app")?;
+        .with_context(|| format!("failed to run cargo test in {}", common::shown(&dir)))?;
     ensure!(status.success(), "the API fixture failed its tests");
     Ok(())
 }
 
-/// Generated code obeys the architecture it generates: the API fixture,
+/// Generated code obeys the architecture it generates: the fixture,
 /// skeleton included, passes `rok-sqlc check-arch` (ADR 0016) with no
 /// warning, reading the fixture's `rok-sqlc.toml`.
-#[test]
-fn api_app_passes_check_arch() -> Result<()> {
-    let _guard = API_APP
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    generate_api_app()?;
+pub(crate) fn passes_check_arch(framework: ApiFramework) -> Result<()> {
+    let _guard = lock(framework);
+    let dir = fixture_dir(framework);
+    generate_api_app(framework)?;
 
     let output = Command::new(env!("CARGO_BIN_EXE_rok-sqlc"))
         .arg("check-arch")
-        .current_dir(api_app_dir())
+        .current_dir(&dir)
         .output()
         .context("failed to run rok-sqlc check-arch")?;
     ensure!(
@@ -258,12 +292,10 @@ fn api_app_passes_check_arch() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn api_app_generated_code_is_rustfmt_clean() -> Result<()> {
-    let _guard = API_APP
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let files = generate_api_app()?;
+/// The generated code is rustfmt-clean.
+pub(crate) fn is_rustfmt_clean(framework: ApiFramework) -> Result<()> {
+    let _guard = lock(framework);
+    let files = generate_api_app(framework)?;
     ensure!(!files.is_empty(), "the API fixture generated no files");
 
     let output = Command::new("rustfmt")
@@ -277,4 +309,24 @@ fn api_app_generated_code_is_rustfmt_clean() -> Result<()> {
         String::from_utf8_lossy(&output.stdout)
     );
     Ok(())
+}
+
+#[test]
+fn api_app_passes_the_lint_gate() -> Result<()> {
+    passes_the_lint_gate(ApiFramework::Actix)
+}
+
+#[test]
+fn api_app_passes_its_tests() -> Result<()> {
+    passes_its_tests(ApiFramework::Actix)
+}
+
+#[test]
+fn api_app_passes_check_arch() -> Result<()> {
+    passes_check_arch(ApiFramework::Actix)
+}
+
+#[test]
+fn api_app_generated_code_is_rustfmt_clean() -> Result<()> {
+    is_rustfmt_clean(ApiFramework::Actix)
 }
