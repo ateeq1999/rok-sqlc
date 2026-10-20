@@ -374,6 +374,17 @@ its rules apply. Use a port, calling the other service's `_in` method on
 your connection.
 
 ```text
+src/features/account/service.rs:7: cross-feature-query: `crate::db::queries::auth::find_login`: feature `account` calls another feature's query module; declare a port in its service.rs and implement it in app.rs
+```
+
+A query module belongs to the feature it is named after
+(`queries/auth.sql` is the `auth` feature's). Put the query in this
+feature's own file (`queries/account.sql`), even when it reads or writes
+the same table; or, for another feature's rules, use a port. A query that
+`shared/` code needs goes in a file named after no feature, as the actix
+template's `queries/session.sql` does.
+
+```text
 src/shared/auth.rs:109: rule-5: `crate::features::users::UsersService::new`: shared/ refers to the features
 ```
 
@@ -434,6 +445,21 @@ Set the variable ([Deploying](deploying.md#configuration)). The
 application doesn't read `.env`; export it into the environment.
 
 ```text
+error: environment variable `JWT_SECRET` is 9 bytes long; it needs at least 32 (try `openssl rand -base64 48`)
+```
+
+The actix template refuses an HS256 key shorter than 32 bytes, which is
+easier to guess than the signature is to forge. Generate one with the
+command it names and keep it secret: whoever holds it can sign tokens.
+
+```text
+error: environment variable `SMTP_URL` is not set
+```
+
+`MAIL_TRANSPORT=smtp` needs the relay's URL
+([Accounts](auth.md#sending-real-mail)).
+
+```text
 error: pool timed out while waiting for an open connection
 ```
 
@@ -455,3 +481,52 @@ table, it means no middleware put the tenant in the request's extensions
 
 **`/docs` answers `303`.** Swagger UI lives at `/docs/`, with the slash;
 `/docs` redirects there.
+
+## Accounts and mail (the actix template)
+
+**Every request is `401` with `the token is no longer valid`.** The token
+is well signed, but its account is deleted or disabled, or its `tv` is
+older than the account's `token_version`: a password change or reset
+signed it out. Sign in again ([Accounts](auth.md#sessions)).
+
+**Sign-in answers `403` with `the email address is not verified yet`.**
+`REQUIRE_VERIFIED_EMAIL` is on (the default) and the link wasn't followed.
+In development the link is in the server's log: `MAIL_TRANSPORT=log` logs
+each mail's address and subject at `info`, and its body at `debug`
+(`RUST_LOG=debug`). Post the link's token to `/api/v1/auth/email/verify`.
+
+**No mail arrives.** With the default `MAIL_TRANSPORT=log`, nothing is
+sent: set `smtp` ([Accounts](auth.md#sending-real-mail)). With SMTP, the
+log has a `WARN` per failed attempt and an `ERROR` when a mail goes
+`dead`, and each row keeps its `last_error`:
+
+```sql
+SELECT payload->>'to' AS "to", status, attempts, last_error
+FROM outbound_mail ORDER BY created_at DESC LIMIT 20;
+```
+
+A mailed link points at the wrong host: set `APP_URL` to your front end's
+URL.
+
+**Every `/auth` request answers `429` behind a proxy.** Without
+`TRUST_PROXY`, every client has the proxy's address and shares one limit.
+Set `TRUST_PROXY=true` behind a proxy you run, which appends the client's
+address to `X-Forwarded-For`. Behind a CDN and a load balancer, the last
+address is the CDN's: make the last hop put the client's IP last, or set
+`AUTH_RATE_LIMIT=0` and limit at the edge.
+
+```http
+HTTP/1.1 429 Too Many Requests
+retry-after: 3
+content-type: application/json
+
+{"error":{"code":"too_many_requests","message":"too many requests; retry in 3s"}}
+```
+
+**A test answers `429`.** Tests that share an `AppState` (`call_with`)
+share its rate limit; `call` builds a fresh state per request.
+
+**A test answers `500` with `` `PgPool` is not registered as app data ``
+in the log.** `AuthUser` checks the account in the database, so the app
+needs the pool as `web::Data<PgPool>`. Build it with `app::configure` and
+an `AppState`, as `tests/support/mod.rs` does.

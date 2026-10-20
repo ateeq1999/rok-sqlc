@@ -171,6 +171,51 @@ content-type: application/json
 {"error":{"code":"bad_request","message":"the request body is not valid JSON: EOF while parsing a value at line 1 column 8"}}
 ```
 
+### 400: flow failures (the actix template)
+
+A well-formed request that an account flow refuses answers `400` with the
+flow's own code, never details, so a client can tell it from a body to
+fix (`422`):
+
+```http
+HTTP/1.1 400 Bad Request
+content-type: application/json
+
+{"error":{"code":"invalid_token","message":"the link is invalid, expired or already used"}}
+```
+
+```http
+HTTP/1.1 400 Bad Request
+content-type: application/json
+
+{"error":{"code":"wrong_password","message":"the current password is wrong"}}
+```
+
+```http
+HTTP/1.1 400 Bad Request
+content-type: application/json
+
+{"error":{"code":"breached_password","message":"this password appears in a known data breach; choose another"}}
+```
+
+`invalid_token` doesn't say which of unknown, expired or used: ask for a
+new link. A password reset checks its link before the new password, so a
+`breached_password` or a `422` leaves the link usable.
+
+### 429: too many requests (the actix template)
+
+Every `/auth` route is limited to `AUTH_RATE_LIMIT` requests a minute per
+client IP (20 by default). Past it, the answer says how many seconds to
+wait, in the `Retry-After` header and the message:
+
+```http
+HTTP/1.1 429 Too Many Requests
+retry-after: 3
+content-type: application/json
+
+{"error":{"code":"too_many_requests","message":"too many requests; retry in 3s"}}
+```
+
 ### 401 and 403: the caller
 
 ```http
@@ -182,7 +227,9 @@ content-type: application/json
 
 Without a token the message is `a bearer token is required`, and an admin
 route called by a user answers `403` with `this needs the admin role`.
-These messages come from your `src/shared/auth.rs`.
+These messages come from your `src/shared/auth.rs`. In the actix template, a valid
+token whose account is deleted or disabled, or was signed out by a password
+change or reset, answers `401` with `the token is no longer valid`.
 
 ### 404: no such row
 

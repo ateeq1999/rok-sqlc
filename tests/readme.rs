@@ -34,13 +34,14 @@ fn example_dirs() -> [PathBuf; 4] {
 }
 
 /// The guide's pages, which must all exist.
-const GUIDE_PAGES: [&str; 12] = [
+const GUIDE_PAGES: [&str; 13] = [
     "index.md",
     "getting-started.md",
     "configuring.md",
     "architecture.md",
     "layout.md",
     "customizing.md",
+    "auth.md",
     "wire-standard.md",
     "openapi.md",
     "testing.md",

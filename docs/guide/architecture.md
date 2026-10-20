@@ -82,7 +82,7 @@ or it belongs in a feature. Decide which.
 |---|---|---|
 | A business rule | the feature's `service.rs`, overriding a `service_api.rs` default | handler, repo |
 | A new endpoint, request or response shape | the schema and `rok-sqlc.toml` (`[api]`), then `rok-sqlc g` | generated files |
-| SQL | the data layer: a migration and `rok-sqlc g`, or a query file | service, handler |
+| SQL | the data layer: a migration and `rok-sqlc g`, or the feature's query file, `queries/<feature>.sql` | service, handler |
 | A new table or column | `migrations/000N_name.sql`, then `rok-sqlc g` | anywhere else |
 | An error case | a variant in `error.rs` | a feature folder |
 | Code two features need | `shared/` | one feature |
@@ -130,12 +130,22 @@ functions, and `tests/`, which is not read. Each violation prints as
 `path:line: rule: message`. Rule 3 is yours to keep.
 
 The cross-feature write part of rule 4 is reported as `cross-feature-write`,
-its query part as `cross-feature-query`, and the layout as `layout`. A query
-module belongs to the feature it is named after: `queries/tasks.sql`
-generates `<db_path>::queries::tasks`, which the `tasks` feature calls and
-no other feature does. A query module named after no feature (or the single
-`queries.rs` of a lone query file) is anyone's. `check-arch` reads `src/`
-with a Rust parser, so comments and strings never count. A path counts wherever it appears: a
+its query part as `cross-feature-query`, and the layout as `layout`.
+
+**Query modules, one per feature.** A query module belongs to the feature
+it is named after: `queries/tasks.sql` generates
+`<db_path>::queries::tasks`, which the `tasks` feature calls and no other
+feature does. Its queries may read and write any table: a hand-written
+feature with no table of its own (the actix template's `auth`, which writes
+`users` and `auth_tokens`) keeps all its SQL there. A query module named
+after no feature (or the single `queries.rs` of a lone query file) is
+anyone's, which is where SQL that `shared/` runs belongs: the actix
+template's `queries/session.sql` holds the check `AuthUser` makes on every
+request, and `queries/mail.sql` the outbox's. Two features that need the
+same SQL each keep a copy, or one calls the other through a port.
+
+`check-arch` reads `src/` with a Rust parser, so comments and strings
+never count. A path counts wherever it appears: a
 `use`, an expression, a type, a pattern, a `#[derive(...)]` list or an
 attribute like `#[actix_web::main]`. A path reached through a `use` binding
 that already breaks a rule is reported once, at the `use`. Rule 6 counts

@@ -7,6 +7,74 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-20
+
+The actix template (`init --template actix`) gains its account flows as
+hand-written features (ADR 0018, `docs/guide/auth.md`). The generator
+itself emits no auth; a plain `rok-sqlc init` is unchanged.
+
+### Breaking changes
+
+- **The template's `AuthUser` checks the database on every request.** After
+  verifying the JWT it loads the account's `token_version`, `is_active`
+  and `role` (`queries/session.sql`): a deleted or disabled account, or a
+  token whose new `tv` claim isn't the account's `token_version`, is a
+  `401`, and `AdminUser` reads the role from the database. It needs the
+  pool as app data (`web::Data<PgPool>`); a token must belong to a live
+  `users` row, and tokens without `tv` no longer decode.
+- **A second template migration, `migrations/0002_auth.sql`:**
+  `users.token_version` (managed and hidden), `auth_tokens` and
+  `outbound_mail` (both in `[api] exclude`).
+- **The template's wiring:** `app::configure(cfg, &AppState)`, where
+  `AppState::new(pool, &Config)` builds the JWT keys, the mail outbox and
+  templates, the breach check, the rate limit and the audit port; `run`
+  starts and stops the mail sender. Tests build the state with
+  `AppState::new` (see `tests/support/mod.rs`).
+- **`JWT_SECRET` must be at least 32 bytes**; a shorter one stops the
+  template's server at start-up with
+  ``error: environment variable `JWT_SECRET` is 9 bytes long; it needs at least 32 (try `openssl rand -base64 48`)``.
+- **`check-arch` has a new rule, `cross-feature-query`:** a feature may
+  call its own query module, `<db_path>::queries::<feature>` (from
+  `queries/<feature>.sql`), and calling another feature's is a violation.
+  A query module named after no feature stays anyone's. Rule 4's text
+  (`AGENTS.md`, the architecture guide) says a feature writes any table
+  through its own query module, and another feature's data through a
+  port.
+
+### Added
+
+- The template's `auth` and `account` features, under `/api/v1`:
+  `POST /auth/register` (`201`, a verification link mailed),
+  `POST /auth/login` (an HS256 session token with `sub`, `role`, `tv` and
+  `exp`; five wrong passwords lock the account 15 minutes),
+  `GET /auth/me`, `POST /auth/email/verify`,
+  `POST /auth/email/verification/resend`, `POST /auth/password/forgot`,
+  `POST /auth/password/reset`, `POST /auth/password/change`,
+  `POST /auth/email/change`, `POST /auth/email/change/confirm`,
+  `POST /auth/invitations` (admin; an audit-log entry through a port), and
+  `GET`/`PATCH /users/me`. The contract test covers each.
+- `shared/security/`: argon2id passwords (8–128 characters, a dummy hash
+  for unknown emails), single-use mailed tokens stored as their SHA-256,
+  the JWT, and an optional Have I Been Pwned breach check
+  (`BREACH_CHECK`, k-anonymity, fails open).
+- `shared/mail/`: a `Mailer` port with SMTP (lettre, rustls) and log
+  transports, the messages, and an outbox: a flow writes its mail on its
+  own transaction, and a sender task delivers it at least once with
+  `FOR UPDATE SKIP LOCKED`, backing off until a row is `dead` after five
+  failures. A dead row keeps its address, subject and error but not its
+  bodies, so no link outlives its delivery.
+- `shared/rate_limit.rs`: a per-IP limit on `/auth` (`AUTH_RATE_LIMIT`,
+  20 a minute), answering `429 too_many_requests` with `Retry-After`;
+  `TRUST_PROXY` takes the IP from the last `X-Forwarded-For` address.
+- Error codes `invalid_token`, `wrong_password` and `breached_password`
+  (`400`) and `too_many_requests` (`429`); a body of the wrong shape stays
+  `422 validation_failed`.
+- Settings `JWT_TTL`, `REQUIRE_VERIFIED_EMAIL`, `APP_URL`,
+  `MAIL_TRANSPORT`, `SMTP_URL`, `MAIL_FROM`, `BREACH_CHECK`, `TRUST_PROXY`
+  and `AUTH_RATE_LIMIT`, in `config.rs` and `.env.example`.
+- ADR 0018, and the guide's `auth.md`; the wire standard, architecture
+  and troubleshooting pages cover the new codes, query modules and errors.
+
 ## [0.5.0] - 2026-10-19
 
 ### Breaking changes to the generated API

@@ -104,6 +104,34 @@ method does one thing; name it as a verb. DTOs are separate from rows, and
 a response never carries a secret (`[api.hidden]`). Money is integer minor
 units, time is UTC, and ids are UUIDs.
 
+## Accounts
+
+`features/auth/` (sign-up, sign-in, email verification, the password
+flows, email change, invitations) and `features/account/` (`/auth/me`,
+`/users/me`) are hand-written and follow the rules above. Keep to how
+they work:
+
+- **SQL.** `auth`'s goes in `queries/auth.sql`, `account`'s in
+  `queries/account.sql`; SQL `shared/` runs goes in a file named after no
+  feature (`queries/session.sql`, `queries/mail.sql`). Run `rok-sqlc g`
+  after editing one.
+- **Mailed links.** A token purpose (the `auth_tokens.purpose` check), an
+  arm in `link_kind` (lifetime and message) in `auth/service.rs`, and a
+  `Templates` method in `shared/mail/templates.rs`. Issue and mail it with
+  `mail_link` on the flow's transaction, commit with `outbox.commit(tx)`,
+  and redeem it with `consume_token`. Never store or log a raw token.
+- **Answers.** A body of the wrong shape is `422` (the DTO's rules); a flow
+  refusing a well-formed request is `400` with `AppError::InvalidToken`,
+  `WrongPassword` or `BreachedPassword`. Don't tell a caller whether an
+  email has an account where the flow answers `202`.
+- **Sessions.** A change that must sign a user out bumps
+  `users.token_version`; disabling sets `is_active = false`. `AuthUser`
+  checks both on every request.
+- **Routes.** New `/auth` routes go in `auth::routes`'s scope, so the rate
+  limit covers them, and in `ApiDoc`'s `paths(...)`.
+- **Tests.** Drive each flow over HTTP in `tests/`, with `mailed` and
+  `mailed_token` from `tests/support/mod.rs`.
+
 ## Checks
 
 `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,

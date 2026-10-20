@@ -21,43 +21,65 @@ You need PostgreSQL and Rust 1.94 or newer.
 1. Create a database and apply `migrations/` to it, for example with
    `sqlx migrate run` ([sqlx-cli](https://crates.io/crates/sqlx-cli)) or
    `psql` on each file of `migrations/` in order.
-2. Set `DATABASE_URL` and `JWT_SECRET` (`.env.example` lists every
-   setting; `src/config.rs` reads them from the environment).
+2. Set `DATABASE_URL` and `JWT_SECRET`, at least 32 bytes (`openssl rand
+   -base64 48`). `.env.example` lists every setting; `src/config.rs` reads
+   them from the environment.
 3. `cargo run`. The API is under `/api/v1`, health at `/health/live` and
    `/health/ready`, the OpenAPI document at `/api-docs/openapi.json` and
    Swagger UI at `/docs/`.
 
-Sign up with `POST /api/v1/auth/register` (`{"email", "password"}`, 8 to 128
-characters), follow the link mailed to you (`MAIL_TRANSPORT=log` logs it;
-`RUST_LOG=debug` shows the body), or post its token to
-`/api/v1/auth/email/verify`, then sign in with `POST /api/v1/auth/login`.
-Five wrong passwords in a row lock an account for 15 minutes, and every
-`/auth` route is limited to `AUTH_RATE_LIMIT` requests a minute per IP.
-`GET /api/v1/auth/me` and `GET`/`PATCH /api/v1/users/me` are the signed-in
-user's own account.
+## Accounts
 
-A forgotten password: `POST /api/v1/auth/password/forgot` (`{"email"}`,
-always `202`) mails a link valid for an hour, and
-`POST /api/v1/auth/password/reset` (`{"token", "new_password"}`) sets the
-new password and lifts any lock. A signed-in user changes theirs with
-`POST /api/v1/auth/password/change` (`{"current_password", "new_password"}`)
-and gets a notice by mail. Both sign every older session out.
+The account flows are hand-written features, yours to change:
+`src/features/auth/` and `src/features/account/`. rok-sqlc's guide
+documents each one, the settings, sending real mail and adding a flow
+([Accounts and sign-in](https://github.com/ateeq1999/rok-sqlc/blob/main/docs/guide/auth.md)).
 
-Every other route but health needs `Authorization: Bearer <token>`: an HS256 JWT
-signed with `JWT_SECRET`, with `sub` (the user's id), `role` (`user` or
-`admin`), `tv` (the account's `token_version`) and `exp`.
-`src/shared/auth.rs` verifies it, then checks the account on every request:
-a disabled or deleted account, or a token issued before the account's
-`token_version` was bumped, is a `401`, and the role is read from the
-database, so a role change applies at once. `src/shared/security/` holds the
-tools the account flows use: argon2id password hashing, single-use tokens
-and issuing the JWT. `src/shared/mail/` sends mail through an outbox: a
-flow writes its message as an `outbound_mail` row on its own transaction,
-and a sender task started by `app.rs` delivers it (SMTP, or the log when
-`MAIL_TRANSPORT=log`), retrying with backoff. `src/features/auth/`
-(sign-up, sign-in, email verification) and `src/features/account/` (the
-signed-in user's account) are hand-written features in the generated
-layout, and yours.
+- **Sign-up.** `POST /api/v1/auth/register` (`{"email", "password"}`, 8 to
+  128 characters) creates the account and mails a verification link. Its
+  token goes to `POST /api/v1/auth/email/verify`; a signed-in user asks for
+  a new link with `POST /api/v1/auth/email/verification/resend`. With
+  `MAIL_TRANSPORT=log` (the default) the mail is logged, and
+  `RUST_LOG=debug` shows its body.
+- **Sign-in.** `POST /api/v1/auth/login` answers a session token. Five
+  wrong passwords in a row lock an account for 15 minutes, and an
+  unverified email is a `403` while `REQUIRE_VERIFIED_EMAIL=true`.
+- **Passwords.** `POST /api/v1/auth/password/forgot` (`{"email"}`, always
+  `202`) mails a link valid an hour, and `POST /api/v1/auth/password/reset`
+  (`{"token", "new_password"}`) sets the new password and lifts any lock. A
+  signed-in user changes theirs with `POST /api/v1/auth/password/change`
+  (`{"current_password", "new_password"}`) and gets a notice by mail. Both
+  sign every older session out. `BREACH_CHECK=true` refuses passwords Have
+  I Been Pwned knows.
+- **Email change.** `POST /api/v1/auth/email/change`
+  (`{"current_password", "new_email"}`, `202`) mails a notice to the old
+  address and, when the new one is free, a link to it;
+  `POST /api/v1/auth/email/change/confirm` (`{"token"}`) moves the account.
+- **Invitations.** An admin's `POST /api/v1/auth/invitations` (`{"email",
+  "display_name"?, "role"?}`) creates an account with no password, records
+  it in the audit log, and mails a link valid 7 days; the invitee sets a
+  password with it through `POST /api/v1/auth/password/reset`.
+- **The account.** `GET /api/v1/auth/me` and `GET`/`PATCH
+  /api/v1/users/me` are the signed-in user's own.
+
+Every `/auth` route is limited to `AUTH_RATE_LIMIT` requests a minute per
+IP (`429` past it). A flow refusing a well-formed request answers `400`
+with `invalid_token`, `wrong_password` or `breached_password`; a body of the
+wrong shape answers `422`.
+
+Every other route but health needs `Authorization: Bearer <token>`: an
+HS256 JWT signed with `JWT_SECRET`, with `sub` (the user's id), `role`
+(`user` or `admin`), `tv` (the account's `token_version`) and `exp`.
+`src/shared/auth.rs` verifies it, then checks the account on every request
+(`queries/session.sql`): a disabled or deleted account, or a token issued
+before the account's `token_version` was bumped, is a `401`, and the role
+is read from the database, so a role change applies at once.
+`src/shared/security/` holds argon2id password hashing, single-use tokens
+(only their SHA-256 is stored), the JWT and the breach check.
+`src/shared/mail/` sends mail through an outbox: a flow writes its message
+as an `outbound_mail` row on its own transaction, and a sender task started
+by `app.rs` delivers it (SMTP, or the log), retrying with backoff; after
+five failures a row is `dead`, and loses its bodies and the link in them.
 
 ## Dependencies
 
@@ -134,8 +156,10 @@ test needs no database. The lints in `Cargo.toml` deny `unwrap`, `expect`,
 
 `queries/` holds hand-written SQL, one file per feature: `rok-sqlc g` turns
 `queries/auth.sql` into `src/db/queries/auth.rs`, one function per query.
-Only the feature of that name (and `src/shared/`) calls it; `check-arch`
-reports another feature that does.
+Only the feature of that name calls it, whatever tables its queries touch;
+`check-arch` reports another feature that does. A file named after no
+feature is anyone's: `queries/session.sql` (the check `AuthUser` makes)
+and `queries/mail.sql` (the outbox) serve `src/shared/`.
 
 Change the schema with a new migration, adjust `rok-sqlc.toml`, run
 `rok-sqlc g`, and the features follow.
@@ -172,13 +196,16 @@ parameters every generated API has.
 
 ## Coming next
 
-A later rok-sqlc release ports the rest of the axum starter as hand-written
-features on top of this one:
+Later rok-sqlc releases port the rest of the axum starter as hand-written
+features on top of this one, for this template and the axum one:
 
-- authentication: two-factor (TOTP and recovery codes), password reset
-  and change, email change, invitations, OAuth, passkeys and QR sign-in;
-- `POST /users` with a password, and the business rules of
-  `update` and `remove` (not yourself, not the last admin);
-- uploads: avatars (`avatar_url`) and `media`;
-- `api-keys` (create returning the key once, revoke, an unpaginated list);
-- audit-log writes from those features.
+- two-factor sign-in (TOTP and recovery codes, and login's
+  `requires_totp`/`pending_token`, which `LoginResponse` already carries);
+- `api-keys` (create returning the key once, revoke, an unpaginated list),
+  with an `ApiKey` extractor;
+- uploads: avatars (`avatar_url`) and `media`, behind a storage port;
+- `POST /users` with a password, and the business rules of `update` and
+  `remove` (not yourself, not the last admin), with their audit-log
+  entries.
+
+OAuth, passkeys and QR sign-in are not planned.
