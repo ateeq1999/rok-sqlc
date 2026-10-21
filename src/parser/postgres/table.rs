@@ -4,9 +4,9 @@ use std::collections::HashSet;
 
 use sqlparser::ast::{ColumnDef, ColumnOption, CreateTable, TableConstraint};
 
-use super::checks::{RangeCheck, apply_range_check, range_check};
 use super::constraints::{add_key_constraint, constraint_foreign_key, key_columns};
-use super::enums::{EnumRegistry, restrict_to_values, value_list_check};
+use super::enums::EnumRegistry;
+use super::named::{DeclaredCheck, DeclaredForeignKey, add_check, add_foreign_key};
 use super::names::{ident_name, object_leaf_name, object_schema_name};
 use super::types::{declared_length, is_serial_type, map_type_in};
 use crate::parser::diagnostics::TableFailure;
@@ -17,6 +17,7 @@ pub(super) fn build_table(
     create: &CreateTable,
     enums: &EnumRegistry,
     taken: &HashSet<String>,
+    constraint_names: &HashSet<String>,
 ) -> std::result::Result<Table, Box<TableFailure>> {
     let sql_name = object_leaf_name(&create.name);
     let fail = |reason: String| Box::new(table_failure(&sql_name, reason));
@@ -32,8 +33,7 @@ pub(super) fn build_table(
     // `(name, columns, primary)`, named once every constraint is known.
     let mut constraints: Vec<(Option<String>, Vec<String>, bool)> = Vec::new();
     let mut inline_primary_keys: Vec<String> = Vec::new();
-    let mut value_lists: Vec<(String, Vec<String>)> = Vec::new();
-    let mut range_checks: Vec<RangeCheck> = Vec::new();
+    let mut checks: Vec<DeclaredCheck> = Vec::new();
 
     for column_def in &create.columns {
         let built = build_column(column_def, enums).map_err(fail)?;
@@ -49,8 +49,7 @@ pub(super) fn build_table(
             constraints.push((name.clone(), vec![built.raw.sql_name.clone()], false));
         }
         foreign_keys.extend(built.foreign_key);
-        value_lists.extend(built.value_lists);
-        range_checks.extend(built.range_checks);
+        checks.extend(built.checks);
         raw_columns.push(built.raw);
     }
 
@@ -83,10 +82,10 @@ pub(super) fn build_table(
                     constraints.push((name.as_ref().map(ident_name), keys, false));
                 }
             }
-            TableConstraint::Check { expr, .. } => {
-                value_lists.extend(value_list_check(expr));
-                range_checks.extend(range_check(expr));
-            }
+            TableConstraint::Check { name, expr, .. } => checks.push(DeclaredCheck {
+                name: name.as_ref().map(ident_name),
+                expr: (**expr).clone(),
+            }),
             other => foreign_keys.extend(constraint_foreign_key(other)),
         }
     }
@@ -105,26 +104,13 @@ pub(super) fn build_table(
         }
     }
 
-    let mut columns: Vec<Column> = raw_columns
+    let columns: Vec<Column> = raw_columns
         .into_iter()
         .map(|raw| {
             let is_primary_key = primary_key.contains(&raw.sql_name);
             raw.into_column(is_primary_key)
         })
         .collect();
-    for (name, labels) in value_lists {
-        if let Some(column) = columns.iter_mut().find(|column| column.sql_name == name) {
-            restrict_to_values(column, labels);
-        }
-    }
-    for check in range_checks {
-        if let Some(column) = columns
-            .iter_mut()
-            .find(|column| column.sql_name == check.column)
-        {
-            apply_range_check(column, check);
-        }
-    }
 
     let module_name = naming::rust_identifier(&sql_name).map_err(fail)?;
     let struct_name = naming::struct_name(&module_name);
@@ -136,9 +122,10 @@ pub(super) fn build_table(
         struct_name,
         columns,
         primary_key,
-        foreign_keys,
+        foreign_keys: Vec::new(),
         unique_keys,
         key_constraints: Vec::new(),
+        named_constraints: Vec::new(),
         version_column: None,
         soft_delete_column: None,
         tenant_column: None,
@@ -166,6 +153,13 @@ pub(super) fn build_table(
     for (name, columns, primary) in merged {
         add_key_constraint(&mut table, name, columns, primary, taken);
     }
+    // PostgreSQL names checks, then foreign keys, once the keys have names.
+    for check in checks {
+        add_check(&mut table, check, constraint_names);
+    }
+    for foreign_key in foreign_keys {
+        add_foreign_key(&mut table, foreign_key, constraint_names);
+    }
     Ok(table)
 }
 
@@ -177,12 +171,10 @@ pub(super) struct BuiltColumn {
     pub(super) primary_key: Option<Option<String>>,
     /// `Some` for an inline `UNIQUE`, holding its declared name.
     pub(super) unique: Option<Option<String>>,
-    pub(super) foreign_key: Option<ForeignKey>,
-    /// Value-list `CHECK`s declared inline, by the column they name (usually
-    /// this one, but PostgreSQL lets a column check name any column).
-    pub(super) value_lists: Vec<(String, Vec<String>)>,
-    /// Range `CHECK`s declared inline, which may also name any column.
-    pub(super) range_checks: Vec<RangeCheck>,
+    pub(super) foreign_key: Option<DeclaredForeignKey>,
+    /// `CHECK`s declared inline. PostgreSQL lets a column check name any
+    /// column, not only this one.
+    pub(super) checks: Vec<DeclaredCheck>,
 }
 
 pub(super) fn build_column(
@@ -200,8 +192,7 @@ pub(super) fn build_column(
     let mut primary_key = None;
     let mut unique = None;
     let mut foreign_key = None;
-    let mut value_lists = Vec::new();
-    let mut range_checks = Vec::new();
+    let mut checks = Vec::new();
     for option in &column_def.options {
         match &option.option {
             ColumnOption::NotNull => nullable = false,
@@ -217,19 +208,24 @@ pub(super) fn build_column(
                 foreign_table,
                 referred_columns,
                 ..
-            } if referred_columns.len() == 1 => {
-                foreign_key = Some(ForeignKey {
-                    column: column_name.clone(),
-                    referenced_schema: object_schema_name(foreign_table),
-                    referenced_table: object_leaf_name(foreign_table),
-                    referenced_column: ident_name(&referred_columns[0]),
+            } => {
+                foreign_key = Some(DeclaredForeignKey {
+                    name: option.name.as_ref().map(ident_name),
+                    columns: vec![column_name.clone()],
+                    key: (referred_columns.len() == 1).then(|| ForeignKey {
+                        name: String::new(),
+                        column: column_name.clone(),
+                        referenced_schema: object_schema_name(foreign_table),
+                        referenced_table: object_leaf_name(foreign_table),
+                        referenced_column: ident_name(&referred_columns[0]),
+                    }),
                 });
             }
             ColumnOption::Default(_) => has_default = true,
-            ColumnOption::Check(expr) => {
-                value_lists.extend(value_list_check(expr));
-                range_checks.extend(range_check(expr));
-            }
+            ColumnOption::Check(expr) => checks.push(DeclaredCheck {
+                name: option.name.as_ref().map(ident_name),
+                expr: expr.clone(),
+            }),
             ColumnOption::Generated { .. } | ColumnOption::Identity(_) => {
                 has_default = true;
                 is_generated = true;
@@ -255,8 +251,7 @@ pub(super) fn build_column(
         primary_key,
         unique,
         foreign_key,
-        value_lists,
-        range_checks,
+        checks,
     })
 }
 

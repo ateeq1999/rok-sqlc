@@ -193,6 +193,49 @@ pub(super) fn default_constraint_name(
     }
 }
 
+/// The constraint names taken in `schema`: every known table's key
+/// constraints, foreign keys, and named constraints. PostgreSQL gives an
+/// unnamed check or foreign key a name no constraint in its schema has.
+pub(super) fn constraint_names(tables: &[Table], schema: Option<&str>) -> HashSet<String> {
+    tables
+        .iter()
+        .filter(|table| same_schema(table.schema.as_deref(), schema))
+        .flat_map(table_constraint_names)
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Every constraint name `table` holds.
+pub(super) fn table_constraint_names(table: &Table) -> impl Iterator<Item = &str> {
+    let keys = table.key_constraints.iter().map(|key| key.name.as_str());
+    let foreign = table.foreign_keys.iter().map(|key| key.name.as_str());
+    let named = table
+        .named_constraints
+        .iter()
+        .map(|named| named.name.as_str());
+    keys.chain(foreign).chain(named)
+}
+
+/// The name PostgreSQL gives an unnamed check (`<table>_<col>_check` when
+/// it names exactly one column, `<table>_check` otherwise) or foreign key
+/// (`<table>_<col>_<col>_fkey`); see [`choose_relation_name`].
+pub(super) fn default_check_or_foreign_key_name(
+    table: &str,
+    columns: &[String],
+    foreign_key: bool,
+    taken: impl Fn(&str) -> bool,
+) -> String {
+    if foreign_key {
+        choose_relation_name(table, Some(&columns.join("_")), "fkey", taken)
+    } else {
+        let column = match columns {
+            [column] => Some(column.as_str()),
+            _ => None,
+        };
+        choose_relation_name(table, column, "check", taken)
+    }
+}
+
 /// PostgreSQL's `ChooseRelationName`: `name1[_name2]_label`, with the parts
 /// shortened, the longer one first, until the name fits in 63 bytes, and a
 /// number after the label (`_key1`) while the name is `taken`. PostgreSQL

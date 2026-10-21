@@ -210,9 +210,19 @@ an endpoint. Say a sign-in link, `magic_link`.
 **The purpose.** Add `'magic_link'` to the `purpose` check of `auth_tokens`
 and run `rok-sqlc g`: `AuthTokenPurpose` gains `MagicLink`. Before your
 first deployment, edit the list in `migrations/0002_auth.sql`. On a
-database that already ran it, the change is a `DROP CONSTRAINT` and an
-`ADD CONSTRAINT`, and rok-sqlc doesn't follow `DROP CONSTRAINT` (see the
-README's known limitations).
+database that already ran it, write a new migration that drops the check
+by its name and adds the wider one; rok-sqlc follows both:
+
+```sql
+ALTER TABLE auth_tokens DROP CONSTRAINT auth_tokens_purpose_check;
+ALTER TABLE auth_tokens ADD CONSTRAINT auth_tokens_purpose_check CHECK (
+    purpose IN ('email_verification', 'password_reset', 'email_change',
+                'invitation', 'magic_link')
+);
+```
+
+The inline check's name is the one PostgreSQL gave it,
+`auth_tokens_purpose_check`.
 
 **The message.** Add a method to `Templates` in
 `src/shared/mail/templates.rs`, like `verification`, with a path constant

@@ -7,6 +7,19 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+### Added
+
+- **`ALTER TABLE … DROP CONSTRAINT [IF EXISTS]`** is followed. A dropped
+  unique constraint takes its lookup with it, a foreign key its
+  relationship, a primary key the key, and a check what it said about its
+  column, so dropping a value-list check and adding a wider one (`ADD
+  CONSTRAINT … CHECK`) adds the enum's new variants. Check and foreign key
+  constraints now have names, declared or the ones PostgreSQL gives unnamed
+  ones (`<table>_<col>_check`, `<table>_check`, `<table>_<cols>_fkey`), and
+  `RENAME CONSTRAINT` renames them. Dropping a name the table doesn't have
+  fails the table, unless `IF EXISTS`. A schema without `DROP CONSTRAINT`
+  generates as before.
+
 ## [0.7.0] - 2026-10-21
 
 axum is a second framework for the generated API (`[api] framework =
