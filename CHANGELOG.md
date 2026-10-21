@@ -7,6 +7,72 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-21
+
+axum is a second framework for the generated API (`[api] framework =
+"axum"`, `init --framework axum`), with the same wire answers and the same
+OpenAPI document as actix-web, and `templates/axum-api/` (`init --template
+axum`) is the actix template's twin, account flows included (ADR 0019).
+actix-web stays the default: an actix project generates the same code.
+
+### Breaking changes
+
+- **`check-arch` flags the other framework's crate.** Rule 1 names the
+  project's framework (`[api] framework`), and the other one's crate is a
+  `rule-1` violation everywhere but the data layer (whose `extractors` may
+  serve both): an actix project that names `axum` outside `db/`, or the
+  reverse, now fails with
+  ``rule-1: `axum::…`: the project uses actix (`[api] framework`), so nothing but db/ may use axum``.
+- **The actix template hashes passwords on `tokio::task::spawn_blocking`**
+  instead of `actix_web::web::block`, so `shared/security/` is the same
+  file in both templates; its `Cargo.toml` adds tokio's `rt` feature, and
+  the security tests are `#[tokio::test]`.
+- **The actix template's rate limit moved:** `shared/rate_limit.rs` is now
+  `shared/rate_limit/`, with the counting and `client_ip` in `limiter.rs`
+  (shared by both templates) and the middleware in `mod.rs`. `client_ip`
+  takes the `X-Forwarded-For` header's string values instead of a
+  `HeaderMap`. `RateLimit` keeps its path.
+- **The actix template's `/api/v1/auth` scope answers an unknown path or
+  method with the wire standard's `404 not_found` body** (it was an empty
+  `404`); it still counts against the rate limit. `AuthService` derives
+  `Clone`.
+- **The scaffolded `AGENTS.md` and the generated `features/README.md` word
+  the wiring alike:** "declares the features; `register_services` and
+  `configure_all`".
+
+### Added
+
+- `[api] framework = "actix" | "axum"` (default `actix`), checked against
+  `extractors`: under axum, `axum` must be listed, or `g` stops naming it.
+  The generator emits axum 0.8 routes (`Router<AppState>`), handlers
+  (`State`, the shared `Path` and `Query`, `FromRequestParts` extractors,
+  `IntoResponse`), `shared/health.rs`, `tenant.rs` and `validation.rs`,
+  and a `generated.rs` with `Services`, `register_services` and the
+  `FromRef` impls. DTOs, services, repositories, the data layer and the
+  `#[utoipa::path]` annotations are the same as actix's.
+- `rok-sqlc init -f/--framework actix|axum`: the axum skeleton's `app.rs`
+  holds an `AppState` (`FromRef`) and builds the router with tower-http's
+  tracing, request ids, CORS and a 2 MiB body limit, plus a 30-second
+  request timeout answering `408 request_timeout` with the error body
+  (`app::time_out`); `run` stops gracefully on Ctrl+C or `SIGTERM`.
+- `templates/axum-api/` (`init --template axum`): the same `schema.sql`,
+  contract test and M5 account flows as the actix template. Its services
+  are built once in `AppState::new` (`auth`, `account`), and a test swaps
+  a port with `AppState::with_breach` or `with_audit`. Its `/auth` rate
+  limit is a tower `Layer` over the shared `limiter.rs`, nested over every
+  request under `/api/v1/auth`, and logs a warning once when a request has
+  no `ConnectInfo` (every client would share one limit).
+- Under axum, a malformed path or query answers `400 bad_request` worded
+  as actix-web words it, and a path the route doesn't provide (a wiring
+  bug) a `500 internal_error`, its detail logged.
+- A repository test fails when a framework-independent file differs
+  between the two templates; `tests/api-app-axum` runs the same API suites
+  as `tests/api-app` and checks the same OpenAPI document.
+- ADR 0019, and the guide covers axum where it differs: getting started,
+  configuring (`framework`), architecture, accounts, the wire standard
+  (what each framework adds: `408`, `x-request-id`, `405`), testing and
+  troubleshooting.
+
 ## [0.6.0] - 2026-10-20
 
 The actix template (`init --template actix`) gains its account flows as
@@ -813,7 +879,9 @@ that break code written against earlier development snapshots.
   paths under the current directory relative to it (also when they come
   from `rok-sqlc.toml`).
 
-[Unreleased]: https://github.com/ateeq1999/rok-sqlc/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/ateeq1999/rok-sqlc/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.2.1...v0.3.0

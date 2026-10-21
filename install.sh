@@ -2,7 +2,7 @@
 # Install rok-sqlc from a GitHub release on Linux or macOS.
 #
 #   curl -fsSL https://raw.githubusercontent.com/ateeq1999/rok-sqlc/main/install.sh | sh
-#   curl -fsSL https://raw.githubusercontent.com/ateeq1999/rok-sqlc/main/install.sh | sh -s -- --version v0.6.0
+#   curl -fsSL https://raw.githubusercontent.com/ateeq1999/rok-sqlc/main/install.sh | sh -s -- --version v0.7.0
 #
 # Options (each also has an environment variable):
 #   --version <tag>   ROK_SQLC_VERSION      release to install (default: latest)
@@ -34,7 +34,7 @@ Install rok-sqlc from a GitHub release.
 
 Usage: install.sh [--version <tag>] [--to <dir>]
 
-  --version <tag>  release to install, e.g. v0.6.0 (default: latest)
+  --version <tag>  release to install, e.g. v0.7.0 (default: latest)
                    [env: ROK_SQLC_VERSION]
   --to <dir>       install directory (default: ~/.local/bin)
                    [env: ROK_SQLC_INSTALL_DIR]

@@ -89,8 +89,9 @@ enum Command {
         #[arg(short, long, value_name = "FRAMEWORK", value_enum)]
         extractor: Vec<ExtractorArg>,
 
-        /// Generate API features for actix-web into this directory (needs
-        /// `-d serde -d validate -e actix_web`) [default: `api.output` from
+        /// Generate API features into this directory (needs `-d serde -d
+        /// validate` and the framework's extractor: `-e actix_web`, or `-e
+        /// axum` with `api.framework = "axum"`) [default: `api.output` from
         /// rok-sqlc.toml]
         #[arg(short, long, value_name = "DIR")]
         api_output: Option<PathBuf>,
