@@ -181,6 +181,20 @@ The example's API tests also cover a missing token (`401`), a body over
 its length rule (`422` with `details`), and the hand-written `stats` route
 counting a task created through the API.
 
+Under axum, an API test builds the same router `main.rs` serves,
+`app::router(AppState::new(..))`, and sends it a request with
+`tower::ServiceExt::oneshot` (`tower` with its `util` feature, as a
+dev-dependency). No server starts here either. The axum template's
+`tests/support/mod.rs` wraps this as `call`:
+
+<!-- source: templates/axum-api/tests/support/mod.rs -->
+```rust
+    let response = router(state.clone()).oneshot(request).await?;
+```
+
+A test without the peer's address (`ConnectInfo`) counts against the
+`/auth` rate limit as `0.0.0.0`.
+
 ## In CI
 
 Run the tests against a PostgreSQL service with `DATABASE_URL` set, beside

@@ -1,8 +1,9 @@
 # The wire standard
 
-Every generated API answers the same way: the same success shapes, the same
-error body, the same list shape and the same headers. This page lists all
-of them. The exchanges are real answers of
+Every generated API answers the same way, under actix-web or axum: the
+same success shapes, the same error body, the same list shape and the same
+headers. This page lists all of them; [What the frameworks
+add](#what-the-frameworks-add) lists the few answers only one gives. The exchanges are real answers of
 [`docs/examples/api`](../examples/api) (with the `date` and
 `content-length` headers left out), and the Rust samples come from its
 source.
@@ -104,7 +105,7 @@ field.
 | `not_found` | 404 | no row has the key, or it is another caller's (`[api.owner]`) |
 | `conflict` | 409 | a unique or foreign-key violation, naming the constraint (a race the `exists` or `unique` check missed, for one) |
 | `version_conflict` | 412 | `If-Match` holds a stale version, or none |
-| `payload_too_large` | 413 | the body is over actix-web's JSON limit (2 MiB unless you set a `JsonConfig`) |
+| `payload_too_large` | 413 | the body is over the JSON limit: 2 MiB (actix-web's default, unless you set a `JsonConfig`; axum's `DefaultBodyLimit` in `app.rs`) |
 | `validation_failed` | 422 | JSON that doesn't fit the body (a wrong type, a missing field), a body breaking its rules, a foreign key naming no row the caller can see (`exists`), a value a unique key already holds (`unique`), or a check constraint violation |
 | `precondition_required` | 428 | `PATCH` on a versioned table without `If-Match` |
 | `internal_error` | 500 | anything else, such as a lost database connection |
@@ -116,8 +117,8 @@ can answer.
 The scaffolded `src/error.rs` maps each `AppError` variant to its code and
 status. It is yours: add a variant there for a new error case.
 
-The actix template (`init --template actix`) adds four for its account
-flows:
+The templates (`init --template actix` or `axum`) add four for their
+account flows:
 
 | Code | Status | When |
 |---|---|---|
@@ -171,7 +172,7 @@ content-type: application/json
 {"error":{"code":"bad_request","message":"the request body is not valid JSON: EOF while parsing a value at line 1 column 8"}}
 ```
 
-### 400: flow failures (the actix template)
+### 400: flow failures (the templates)
 
 A well-formed request that an account flow refuses answers `400` with the
 flow's own code, never details, so a client can tell it from a body to
@@ -202,10 +203,11 @@ content-type: application/json
 new link. A password reset checks its link before the new password, so a
 `breached_password` or a `422` leaves the link usable.
 
-### 429: too many requests (the actix template)
+### 429: too many requests (the templates)
 
-Every `/auth` route is limited to `AUTH_RATE_LIMIT` requests a minute per
-client IP (20 by default). Past it, the answer says how many seconds to
+Every request under `/api/v1/auth` counts against `AUTH_RATE_LIMIT`
+requests a minute per client IP (20 by default), an unknown path or
+method there too (answered `404 not_found`). Past it, the answer says how many seconds to
 wait, in the `Retry-After` header and the message:
 
 ```http
@@ -365,6 +367,9 @@ The cause is logged with `tracing` and never sent; the message is always
 missing middleware) is one, since it is a wiring bug, not the caller's
 fault.
 
+Under axum, a route whose path lacks the parameters its handler takes
+(a wiring bug too) answers this `500`, its detail logged.
+
 ## Versioned rows
 
 On a table with a version column (`[conventions] version_column`), every
@@ -398,6 +403,28 @@ token:
 | `GET /health/ready` | `200 {"status":"ready"}` when the database answers `SELECT 1`, else `503` with code `service_unavailable` |
 
 [Deploying](deploying.md#health-checks) says which to point each probe at.
+
+## What the frameworks add
+
+The answers above are the same under both frameworks, messages included
+(axum's path and query failures are worded as actix-web words them).
+What each framework adds around them differs (ADR 0019):
+
+| | actix-web | axum |
+|---|---|---|
+| A request over 30 seconds | no timeout (set one in your proxy) | `408 request_timeout`, the error body |
+| `x-request-id` | not set | set on every answer (and kept from the request) |
+| CORS | none | same-origin (`CorsLayer::new()`) |
+| An unknown route | `404`, empty body | `404`, empty body |
+| A wrong method on a known path | `404`, empty body | `405`, empty body |
+| Either, under `/api/v1/auth` (the templates) | `404 not_found` | `404 not_found` |
+
+```http
+HTTP/1.1 408 Request Timeout
+content-type: application/json
+
+{"error":{"code":"request_timeout","message":"the request took longer than 30s"}}
+```
 
 ## Routes
 

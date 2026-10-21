@@ -16,8 +16,10 @@ You need:
 
 There are two ways to start. `rok-sqlc init` scaffolds an empty skeleton
 that you fill with your own tables, which is what this page does.
-`rok-sqlc init --template actix` copies a complete project instead (see
-[Starting from the template](#starting-from-the-template)).
+`rok-sqlc init --template actix` (or `axum`) copies a complete project
+instead (see [Starting from the template](#starting-from-the-template)).
+The page uses actix-web, the default; [With axum](#with-axum) says what
+changes when you pick axum.
 
 ## 1. Scaffold the skeleton
 
@@ -56,6 +58,33 @@ Next steps:
 ```
 
 `init` generates nothing yet, so the project doesn't build until step 3.
+
+### With axum
+
+```sh
+rok-sqlc init --framework axum
+```
+
+`-f`/`--framework axum` scaffolds the same files for axum 0.8: `app.rs`
+holds an `AppState` (the pool, the generated `Services`, the JWT keys)
+and builds the `Router` with tower-http's tracing, request ids, CORS and
+body limit, and a request timeout; `error.rs` answers through
+`IntoResponse`; `shared/auth.rs` has `AuthUser` and `AdminUser` as
+`FromRequestParts` extractors. `rok-sqlc.toml` gets `framework = "axum"`
+and `extractors = ["axum"]`, and its dependency hints name `axum`,
+`tokio`, `tower-http` and `utoipa-swagger-ui`'s `axum` feature instead
+of `actix-web`:
+
+```toml
+[api]
+output = "src/features"
+framework = "axum"
+```
+
+Every later step is the same: `rok-sqlc g` generates axum routes and
+handlers over the same services, and the server answers the requests of
+steps 6 and 7 identically. [Configuring](configuring.md#framework)
+shows a generated axum handler.
 
 ## 2. Add the dependencies
 
@@ -266,12 +295,13 @@ in the document and how to add your own routes to it.
 ## Starting from the template
 
 ```sh
-rok-sqlc init --template actix myapi
+rok-sqlc init --template actix myapi     # or --template axum
 cd myapi
 rok-sqlc g
 ```
 
 `--template actix` copies [`templates/actix-api/`](../../templates/actix-api)
+(`--template axum`, [`templates/axum-api/`](../../templates/axum-api))
 into the directory instead of the bare skeleton: its `Cargo.toml` and
 pinned `Cargo.lock`, its configuration, its migration, the scaffolded
 files, its tests and its README. rok-sqlc's generated files are not
@@ -281,8 +311,9 @@ Each file is written only where none exists, so the directory can be a new
 one or an existing cargo project (after `cargo new myapi`, say). In an
 existing project your `Cargo.toml` stays, cargo's hello-world
 `src/main.rs` is replaced, and the template's Rust files are rewritten to
-name your library crate instead of the template's `actix_api` (`use
-myapi::{app, config};`). Add the template's dependencies and lints to your
+name your library crate instead of the template's `actix_api` or
+`axum_api` (`use myapi::{app, config};`). The two templates serve the
+same API, account flows included, and pass the same contract test. Add the template's dependencies and lints to your
 `Cargo.toml` then, as the first printed step says; the template's
 [README](../../templates/actix-api/README.md) lists them and describes the
 project.
@@ -308,8 +339,8 @@ From `rok-sqlc g` on:
    ```
 
 3. Make a token as in [step 6](#6-the-first-requests), with
-   `"role":"admin"` in its claims. No route creates users yet (sign-up
-   comes with a later release), so the list starts empty:
+   `"role":"admin"` in its claims (or sign up through `/api/v1/auth`,
+   [Accounts and sign-in](auth.md)). The list starts empty:
 
    ```sh
    curl http://127.0.0.1:8080/api/v1/users -H "Authorization: Bearer $TOKEN"

@@ -1,6 +1,6 @@
-# Accounts and sign-in (the actix template)
+# Accounts and sign-in (the templates)
 
-`rok-sqlc init --template actix` makes an API whose users sign up, verify
+`rok-sqlc init --template actix` (or `--template axum`) makes an API whose users sign up, verify
 their email, sign in, reset or change their password, change their email,
 and are invited by an admin. These flows are hand-written features in the
 template, not generated code: `src/features/auth/` and
@@ -8,6 +8,13 @@ template, not generated code: `src/features/auth/` and
 behind them are in ADR 0018 (`docs/adr/0018-auth-as-template-features.md`).
 A plain `rok-sqlc init` has none of this, only the `AuthUser` and
 `AdminUser` checks of a token something else issues.
+
+The two templates hold the same flows: the services, DTOs, queries,
+migrations, `shared/security/`, `shared/mail/` and the rate limit's
+`limiter.rs` are byte-identical (a repository test checks it), and only
+the handlers, the routes, the extractors and `app.rs` are written for
+the framework (ADR 0019). Where this page shows actix-web wiring, the
+axum template does the same in axum's terms.
 
 - [Where the code is](#where-the-code-is)
 - [The flows](#the-flows)
@@ -23,7 +30,7 @@ A plain `rok-sqlc init` has none of this, only the `AuthUser` and
 |---|---|
 | `src/features/auth/` | sign-up, sign-in, email verification, the password flows, email change, invitations |
 | `src/features/account/` | `GET /auth/me`, `GET` and `PATCH /users/me` |
-| `src/shared/auth.rs` | the `AuthUser` and `AdminUser` extractors |
+| `src/shared/auth.rs` | the `AuthUser` and `AdminUser` extractors (`FromRequest` under actix-web, `FromRequestParts` under axum) |
 | `src/shared/security/` | argon2id passwords, single-use tokens, the JWT, the breach check |
 | `src/shared/mail/` | the `Mailer` port, its SMTP and log transports, the messages, the outbox and its sender |
 | `src/shared/rate_limit/` | the per-IP limit on `/auth`: `limiter.rs` counts, `mod.rs` is the framework's middleware |
@@ -122,7 +129,8 @@ password change bumps `token_version`, which signs every older token out.
 To disable an account, set `is_active = false`; its tokens stop working on
 the next request. `AdminUser` reads the role from the database too, so a
 promotion or demotion applies at once. So `AuthUser` needs the pool as app
-data, `web::Data<PgPool>`, which `app::configure` registers.
+data, `web::Data<PgPool>`, which `app::configure` registers (under axum,
+`PgPool: FromRef<S>`, which `AppState` gives).
 
 ## Settings
 
@@ -252,8 +260,9 @@ message), then `self.outbox.commit(tx).await`. The other redeems it:
 token or answers `400 invalid_token`. Any SQL goes in `queries/auth.sql`.
 
 **The endpoints.** A handler per method in `handlers.rs` (parse, call,
-answer), a `.route(...)` line in the `/api/v1/auth` scope of `routes.rs`,
-so the rate limit covers it, a DTO in `dto.rs`, and the handler in
+answer), a `.route(...)` line in the `/api/v1/auth` scope of `routes.rs`
+(under axum, the router `routes.rs` nests under `/api/v1/auth`), so the
+rate limit covers it, a DTO in `dto.rs`, and the handler in
 `ApiDoc`'s `paths(...)` in `src/openapi.rs`. Then drive it end to end, as
 below.
 

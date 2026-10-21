@@ -18,7 +18,7 @@ Caused by:
       |
     4 | prefixx = "/v2"
       | ^^^^^^^
-    unknown field `prefixx`, expected one of `output`, `db_path`, `prefix`, `search_endpoint`, `openapi`, `exclude`, `skip`, `routes`, `access`, `owner`, `hidden`, `immutable`, `search`, `sort`, `rules`
+    unknown field `prefixx`, expected one of `output`, `db_path`, `prefix`, `framework`, `search_endpoint`, `openapi`, `exclude`, `skip`, `routes`, `access`, `owner`, `hidden`, `immutable`, `search`, `sort`, `rules`
 ```
 
 A misspelled key. Unknown keys are errors, so a typo can't silently do
@@ -33,7 +33,13 @@ nothing; the message lists the valid ones. The same goes for values:
 ```
 
 The first is an `[api.access]` value, the second an `[api.skip]` name
-(`remove` is the delete endpoint).
+(`remove` is the delete endpoint). An unknown framework:
+
+```text
+    16 | framework = "rocket"
+       |             ^^^^^^^^
+    unknown variant `rocket`, expected `actix` or `axum`
+```
 
 ### `api.output` without its derives
 
@@ -50,6 +56,18 @@ extractors = ["actix_web"]
 [api]
 output = "src/features"
 ```
+
+Under axum, the extractor must be axum's. A project with `framework =
+"axum"` whose `extractors` lists only `actix_web` (or nothing) stops with:
+
+```text
+Error: `api.output` with `framework = "axum"` needs `derive = ["serde", "validate"]` and `axum` in `extractors`, since API features take validated bodies through the axum extractor
+```
+
+rok-sqlc doesn't guess the framework from the extractors: add `"axum"` to
+`extractors` (`init --framework axum` writes `extractors = ["axum"]`), or
+set `framework = "actix"` if the project is actix-web's. Listing both
+extractors is fine; the data layer then serves both.
 
 ### An entry naming no table or column
 
@@ -310,7 +328,18 @@ error: invalid value 'nope' for '--template <NAME>'
   [possible values: actix, axum]
 ```
 
-`rok-sqlc init --template` takes `actix` or `axum`.
+`rok-sqlc init --template` takes `actix` or `axum`. `--framework` takes
+the same two, and doesn't combine with `--template` (a template has its
+framework):
+
+```text
+error: invalid value 'rocket' for '--framework <FRAMEWORK>'
+  [possible values: actix, axum]
+```
+
+```text
+error: the argument '--framework <FRAMEWORK>' cannot be used with '--template <NAME>'
+```
 
 ## Building
 
@@ -348,7 +377,17 @@ src/features/users/service.rs:33: rule-1: `actix_web::HttpResponse`: only routes
 
 HTTP stays at the edge. A service returns rows and `AppError`s; the
 handler builds the response. Move the code into the handler (in a
-hand-written feature) or return an error variant.
+hand-written feature) or return an error variant. Under axum, rule 1
+names `axum` instead.
+
+```text
+src/features/notes/service.rs:32: rule-1: `actix_web::HttpResponse`: the project uses axum (`[api] framework`), so nothing but db/ may use actix_web
+```
+
+The other framework's crate, anywhere but the data layer (whose
+`extractors` may serve both). A project uses the framework `[api]
+framework` names; this is usually a sample copied from the other one, or
+a project whose `framework` was changed without its scaffolded files.
 
 ```text
 src/features/users/service.rs:34: rule-2: `sqlx::query`: only repo.rs, model.rs, app.rs, error.rs, features/generated.rs, shared/ and db/ may use sqlx (service.rs and service_api.rs: PgPool and PgConnection only)
@@ -482,7 +521,7 @@ table, it means no middleware put the tenant in the request's extensions
 **`/docs` answers `303`.** Swagger UI lives at `/docs/`, with the slash;
 `/docs` redirects there.
 
-## Accounts and mail (the actix template)
+## Accounts and mail (the templates)
 
 **Every request is `401` with `the token is no longer valid`.** The token
 is well signed, but its account is deleted or disabled, or its `tv` is
@@ -530,3 +569,22 @@ share its rate limit; `call` builds a fresh state per request.
 in the log.** `AuthUser` checks the account in the database, so the app
 needs the pool as `web::Data<PgPool>`. Build it with `app::configure` and
 an `AppState`, as `tests/support/mod.rs` does.
+Under axum, build the router with `app::router(AppState::new(..))`, which
+holds the pool as state.
+
+**axum: `a rate-limited request has no peer address` in the log, and one
+`429` for everyone.** The router was served without the peer's address,
+so every client counts as `0.0.0.0` and shares one limit. Serve it with
+`into_make_service_with_connect_info::<SocketAddr>()`, as the template's
+`app::serve` does. Tests that send requests with `oneshot` see this once,
+which is harmless there.
+
+**axum: a `408` with `request_timeout`.** A request took longer than
+`app.rs`' `REQUEST_TIMEOUT` (30 seconds) and its handler was dropped. Find
+the slow query, move the work out of the request, or raise the timeout in
+`app.rs`. actix-web has no such timeout: put one in your proxy.
+
+**axum: a `500` with `something went wrong` from a route you added.** A
+route path without the parameters its handler's `Path` takes (`/notes`
+for `Path<Uuid>`, say) is a wiring bug, not the caller's: the log has
+`internal error` with axum's rejection. Give the route its `{id}`.

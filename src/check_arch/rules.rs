@@ -208,7 +208,8 @@ mod tests {
     }
 
     /// The architecture guide states each rule, and what `check-arch`
-    /// enforces, exactly as `check-arch` does for actix-web, the default.
+    /// enforces, exactly as `check-arch` does for actix-web, the default,
+    /// and quotes rule 1 as it reads under axum.
     #[test]
     fn the_architecture_guide_states_the_rules_exactly() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/guide/architecture.md");
@@ -224,6 +225,13 @@ mod tests {
         assert!(
             guide.contains(&scope),
             "architecture.md does not say: {scope}"
+        );
+        // And axum's rule 1, quoted.
+        let [axum, ..] = rules(ApiFramework::Axum);
+        let quoted = guide.replace(" > ", " ");
+        assert!(
+            quoted.contains(&normalized(&axum)),
+            "architecture.md does not quote axum's rule 1: {axum}"
         );
     }
 

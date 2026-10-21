@@ -1,7 +1,7 @@
 # Architecture guidelines
 
-A simple, restricted architecture for Rust services on actix-web, SQLx and
-PostgreSQL: **one crate, folders by feature, a fixed set of files per
+A simple, restricted architecture for Rust services on actix-web (or
+axum), SQLx and PostgreSQL: **one crate, folders by feature, a fixed set of files per
 feature, six rules.** Humans and code generators follow this document
 exactly. If a rule gets in your way, change the rule here first, then change
 the code.
@@ -113,6 +113,18 @@ or it belongs in a feature. Decide which.
 5. `shared/` never refers to the features.
 6. No `unwrap()`, `expect()`, `panic!`, `todo!`, `println!` or `dbg!`. Every
    fallible function returns `Result<_, AppError>`.
+
+Rule 1 names the project's framework (`[api] framework`). Under axum it
+reads:
+
+> In a feature, only `routes.rs` and `handlers.rs` use `axum`. Outside the
+> features, so may `app.rs`, `main.rs`, `error.rs`, the features'
+> `generated.rs`, `shared/` and the data layer.
+
+The other framework's crate is a rule 1 violation everywhere but the data
+layer, whose `extractors` may serve both: an axum project never names
+`actix_web`, and the reverse. The scaffolded `AGENTS.md` states the rules
+for the project's framework.
 
 `lib.rs` only declares the modules, so it needs neither crate. Ports and the
 transaction they share are in section 7.
@@ -507,7 +519,8 @@ section lists every route.
 - **Data layer:** generated, and tested by rok-sqlc. Test your query files
   with `#[sqlx::test]`.
 - **API:** `tests/<feature>.rs` with `actix_web::test`, building the
-  application with `app::configure`.
+  application with `app::configure`; under axum, `app::router(state)`
+  driven with `tower::ServiceExt::oneshot`.
 - **Shared:** unit tests.
 
 A feature is done with one service test per business rule and one API test

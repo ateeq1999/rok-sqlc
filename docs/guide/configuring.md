@@ -37,15 +37,61 @@ Without it there is no API: every other `[api]` key is ignored, and `g`
 generates only the data layer. `rok-sqlc init` sets it, and `-a`/
 `--api-output` sets it from the command line.
 
-It needs `derive = ["serde", "validate"]` and `actix_web` in `extractors`,
-since the features take validated JSON bodies through the actix-web
-extractor; `init` sets those too. With `output`, a run also generates
-`db/pool.rs` in the data layer and the shared tools in `shared/`, the
-directory beside `output` (`src/shared/`).
+It needs `derive = ["serde", "validate"]` and the framework's extractor
+in `extractors` (`actix_web`, or `axum` under `framework = "axum"`),
+since the features take validated JSON bodies through it; `init` sets
+those too. With `output`, a run also generates `db/pool.rs` in the data
+layer and the shared tools in `shared/`, the directory beside `output`
+(`src/shared/`).
 
 Join tables, which the data layer turns into a many-to-many relationship
 between the two tables they pair, get no feature of their own: the two
 features serve the relationship.
+
+## `framework`
+
+```toml
+[api]
+output = "src/features"
+framework = "axum"
+```
+
+The web framework the features are generated for: `"actix"` (actix-web
+4, the default) or `"axum"` (axum 0.8). A project uses one.
+`rok-sqlc init --framework axum` scaffolds the axum skeleton and sets
+`framework = "axum"` and `extractors = ["axum"]`.
+
+Only the HTTP edge changes: each feature's `routes.rs` and
+`handlers.rs`, the shared `health.rs`, `tenant.rs` and `validation.rs`,
+and `generated.rs`'s wiring. The DTOs, models, repositories, services,
+the data layer, the OpenAPI document and every answer on the wire are the
+same. Under axum, a handler takes its service through `State`, its path
+and query through the shared `Path` and `Query` (axum's, worded like
+actix-web's on a `400`), and its caller through `FromRequestParts`
+extractors:
+
+<!-- source: tests/api_axum/features/tags/handlers.rs -->
+```rust
+pub async fn list(
+    State(service): State<Arc<TagsService>>,
+    _: AuthUser,
+    Query(query): Query<ListTagsQuery>,
+) -> Result<Response, AppError> {
+    let page = service.list(query).await?;
+    let response = page.map(TagResponse::from);
+    Ok(Json(response).into_response())
+}
+```
+
+and `generated.rs` declares `Services`, built by `register_services`,
+which your `AppState` holds as `services` and hands each handler through
+`FromRef`. The framework is checked, not inferred from `extractors`: the
+extractor must be listed, or `g` stops
+([Troubleshooting](troubleshooting.md#apioutput-without-its-derives)).
+Changing a project's framework regenerates the edge, but the scaffolded
+`app.rs`, `main.rs`, `error.rs` and `shared/auth.rs` are yours: scaffold
+them again with `init --framework` in a new directory and move your
+changes over. ADR 0019 has the decisions.
 
 ## `db_path`
 
