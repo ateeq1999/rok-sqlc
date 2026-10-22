@@ -16,6 +16,7 @@ mod check_arch;
 mod check_arch_axum;
 mod collisions;
 mod config;
+mod constraint_changes;
 mod derives;
 mod flags;
 mod generate;

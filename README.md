@@ -1469,13 +1469,24 @@ generated code uses.
   and value-list `CHECK`s. Other `CHECK`s are ignored.
 - `ALTER TABLE`: `ADD COLUMN`, `DROP COLUMN`, `RENAME COLUMN`,
   `ADD CONSTRAINT` (primary key, unique, foreign key, value-list check;
-  other `CHECK`s are ignored, as in `CREATE TABLE`),
+  other `CHECK`s are ignored, as in `CREATE TABLE`), `DROP CONSTRAINT
+  [IF EXISTS]`,
   `ENABLE`/`DISABLE ROW LEVEL SECURITY`, and `ALTER COLUMN` with
   `[SET DATA] TYPE` (with or without `USING`), `SET`/`DROP NOT NULL`,
   `SET`/`DROP DEFAULT`, and `ADD GENERATED … AS IDENTITY`. The column ends up
   in its final shape, and its keys follow a type change. `DROP IDENTITY` and
   `DROP EXPRESSION` act like `DROP DEFAULT`, and `TYPE … COLLATE` like
-  `TYPE`. `RENAME CONSTRAINT` renames a primary key or unique constraint.
+  `TYPE`. `RENAME CONSTRAINT` renames any constraint.
+- Constraints by name. An unnamed constraint gets the name PostgreSQL
+  gives it: `<table>_pkey`, `<table>_<cols>_key`, `<table>_<cols>_fkey`,
+  `<table>_<col>_check` for a check naming one column and `<table>_check`
+  for any other, with a number after the label (`_check1`) while the name
+  is taken. `DROP CONSTRAINT` of a unique constraint drops its lookup, of a
+  foreign key its relationship, and of a primary key the key (its columns
+  stay `NOT NULL`). Dropping a check frees its column: a value list or range
+  comes from the checks that remain, so dropping a value-list check and
+  adding one with more values widens the enum. A name the table doesn't
+  have fails the table, unless `IF EXISTS`.
 - `ALTER TABLE` clauses that leave the model as it is: `SET STATISTICS`,
   `SET STORAGE`, `SET COMPRESSION`, `SET`/`RESET (…)`, `SET GENERATED`,
   `RESTART` and other identity options on a column; `SET`/`RESET (…)`,
@@ -1555,7 +1566,7 @@ fails. With `--resource`, only that table's problems count.
 - `UNION` is read only as the body of a recursive CTE, and data-modifying
   CTEs are rejected in query files.
 - `ALTER TABLE … RENAME TO`, `SET SCHEMA`, partitioning (`ATTACH`/`DETACH
-  PARTITION`), `DROP CONSTRAINT`, and other `ALTER TABLE` forms that change
+  PARTITION`), and other `ALTER TABLE` forms that change
   the model in ways rok-sqlc doesn't follow fail the table they alter, at
   their `path:line` (`--lenient` skips it). Any other statement the parser
   can't read stops the run at its `path:line`, unless it is a function,
@@ -1570,8 +1581,10 @@ fails. With `--resource`, only that table's problems count.
   the run that wrote them saw the migrations up to that statement. A table
   that fails at its own `CREATE TABLE` (an edited migration, say) has none,
   so its earlier files are removed as stale.
-- Default constraint names follow renamed indexes, sequences, views and key
-  constraints, but foreign key and check constraint names aren't tracked.
+- Default constraint names follow renamed indexes, sequences, views and
+  constraints. `DROP CONSTRAINT … CASCADE` of a key doesn't drop the foreign
+  keys other tables hold to it, and a constraint `CREATE TABLE` ignores (an
+  `EXCLUDE`, say) can't be dropped by name.
 - A versioned `update` of a row that a concurrent transaction deletes while
   the `UPDATE` waits for its lock reports `VersionConflict`. A retry reports
   `NotFound`.
