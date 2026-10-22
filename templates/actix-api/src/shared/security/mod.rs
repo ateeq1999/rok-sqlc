@@ -3,8 +3,10 @@
 //! The account flows' cryptography, with no business meaning: password
 //! hashing and its policy ([`password`]), the breached-password check
 //! ([`breach`]), single-use tokens ([`token`]) and the session JWT
-//! ([`jwt`]). `shared/auth.rs` checks a caller with them.
+//! ([`jwt`]). `shared/auth.rs` checks a caller with them, and with
+//! [`api_key`] for a caller sending an API key.
 
+pub mod api_key;
 pub mod breach;
 pub mod jwt;
 pub mod password;

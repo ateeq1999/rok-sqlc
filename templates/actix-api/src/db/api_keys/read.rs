@@ -50,6 +50,36 @@ where
     .await
 }
 
+/// Fetches the row with the given `key_hash`, or `None` if there is none.
+pub async fn get_by_key_hash<'e, E>(
+    executor: E,
+    key_hash: &str,
+) -> Result<Option<ApiKey>, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query_as::<_, ApiKey>(
+        r#"
+        SELECT
+            id,
+            user_id,
+            name,
+            key_prefix,
+            key_hash,
+            scope,
+            expires_at,
+            last_used_at,
+            revoked_at,
+            created_at
+        FROM api_keys
+        WHERE key_hash = $1
+        "#,
+    )
+    .bind(key_hash)
+    .fetch_optional(executor)
+    .await
+}
+
 /// Fetches every row, ordered by primary key.
 pub async fn list<'e, E>(executor: E) -> Result<Vec<ApiKey>, sqlx::Error>
 where

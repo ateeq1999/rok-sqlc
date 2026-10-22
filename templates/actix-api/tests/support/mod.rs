@@ -141,6 +141,35 @@ pub async fn call_with(
     Ok(Answer { status, body })
 }
 
+/// Sends `method uri` like [`call`], with `headers` (name, value) instead
+/// of a bearer token: an `X-API-Key`, say.
+pub async fn call_headers(
+    pool: &PgPool,
+    headers: &[(&str, &str)],
+    method: Method,
+    uri: &str,
+    body: Option<Value>,
+) -> Result<Answer, Box<dyn std::error::Error>> {
+    let state = state(pool)?;
+    let app = test::init_service(App::new().configure(|cfg| configure(cfg, &state))).await;
+    let mut request = test::TestRequest::default().method(method).uri(uri);
+    for (name, value) in headers {
+        request = request.insert_header((*name, *value));
+    }
+    if let Some(body) = body {
+        request = request.set_json(body);
+    }
+    let response = test::call_service(&app, request.to_request()).await;
+    let status = response.status();
+    let bytes = test::read_body(response).await;
+    let body = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes)?
+    };
+    Ok(Answer { status, body })
+}
+
 /// The keys the test application signs and verifies tokens with.
 pub fn keys() -> web::Data<JwtKeys> {
     web::Data::new(JwtKeys::new(SECRET, Duration::from_secs(3600)))
