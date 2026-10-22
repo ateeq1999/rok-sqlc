@@ -4,8 +4,9 @@
 //! imports `features/`.
 //!
 //! `rok-sqlc g` regenerates `health`, `pagination`, `response`, `tenant`
-//! and `validation`; don't edit them. `auth`, `security`, `mail` and `rate_limit` are yours,
-//! like any tool you add here (storage, a queue), each behind a trait.
+//! and `validation`; don't edit them. `auth`, `security`, `mail`, `rate_limit`
+//! and `storage` are yours, like any tool you add here (a queue), each
+//! behind a trait.
 
 pub mod auth;
 pub mod health;
@@ -14,5 +15,6 @@ pub mod pagination;
 pub mod rate_limit;
 pub mod response;
 pub mod security;
+pub mod storage;
 pub mod tenant;
 pub mod validation;

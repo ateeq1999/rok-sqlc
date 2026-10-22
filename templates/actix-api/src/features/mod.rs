@@ -9,4 +9,5 @@ pub mod account;
 pub mod api_keys;
 pub mod auth;
 mod generated;
+pub mod media;
 pub use generated::*;

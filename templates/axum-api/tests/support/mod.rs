@@ -321,3 +321,123 @@ pub async fn register_verified(
         None => Err(format!("login answered {}: {}", answer.status, answer.body).into()),
     }
 }
+
+/// One answer as bytes: its status, its headers (names lowercase) and its
+/// body, for routes that don't answer JSON.
+#[derive(Debug)]
+pub struct Raw {
+    pub status: StatusCode,
+    pub headers: HashMap<String, String>,
+    pub bytes: Vec<u8>,
+}
+
+impl Raw {
+    /// The body as JSON (`Null` when empty).
+    pub fn json(&self) -> Result<Value, serde_json::Error> {
+        if self.bytes.is_empty() {
+            Ok(Value::Null)
+        } else {
+            serde_json::from_slice(&self.bytes)
+        }
+    }
+
+    /// The header `name` (lowercase), if answered.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).map(String::as_str)
+    }
+}
+
+/// Sends `method uri` with the bearer `token`, the `headers` and the raw
+/// `body` to the application over `state`, and answers bytes.
+pub async fn send(
+    state: &AppState,
+    token: Option<&str>,
+    method: Method,
+    uri: &str,
+    headers: &[(&str, &str)],
+    body: Vec<u8>,
+) -> Result<Raw, Box<dyn std::error::Error>> {
+    let mut request = Request::builder().method(method).uri(uri);
+    if let Some(token) = token {
+        request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    let request = request
+        .header(header::CONTENT_LENGTH, body.len())
+        .body(Body::from(body))?;
+    let response = router(state.clone()).oneshot(request).await?;
+    let status = response.status();
+    let headers = response
+        .headers()
+        .iter()
+        .filter_map(|(name, value)| {
+            Some((name.as_str().to_owned(), value.to_str().ok()?.to_owned()))
+        })
+        .collect();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await?.to_vec();
+    Ok(Raw {
+        status,
+        headers,
+        bytes,
+    })
+}
+
+/// A [`Storage`](axum_api::shared::storage::Storage) in memory that knows
+/// which keys hold an object: swap it in with `AppState::with_storage`,
+/// and read [`Recorded::keys`] to see what was left behind.
+#[derive(Clone)]
+pub struct Recorded {
+    inner: axum_api::shared::storage::ObjectStorage,
+    keys: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
+}
+
+impl Recorded {
+    /// An empty store.
+    pub fn new() -> Self {
+        Recorded {
+            inner: axum_api::shared::storage::ObjectStorage::memory(),
+            keys: Arc::default(),
+        }
+    }
+
+    /// The keys holding an object now.
+    pub fn keys(&self) -> Vec<String> {
+        self.keys
+            .lock()
+            .map(|keys| keys.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+}
+
+#[async_trait::async_trait]
+impl axum_api::shared::storage::Storage for Recorded {
+    async fn put(
+        &self,
+        key: &str,
+        bytes: bytes::Bytes,
+        content_type: &str,
+    ) -> Result<(), axum_api::error::AppError> {
+        self.inner.put(key, bytes, content_type).await?;
+        if let Ok(mut keys) = self.keys.lock() {
+            keys.insert(key.to_owned());
+        }
+        Ok(())
+    }
+
+    async fn get(
+        &self,
+        key: &str,
+    ) -> Result<Option<axum_api::shared::storage::StoredObject>, axum_api::error::AppError> {
+        self.inner.get(key).await
+    }
+
+    async fn delete(&self, key: &str) -> Result<(), axum_api::error::AppError> {
+        self.inner.delete(key).await?;
+        if let Ok(mut keys) = self.keys.lock() {
+            keys.remove(key);
+        }
+        Ok(())
+    }
+}

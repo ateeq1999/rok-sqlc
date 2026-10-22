@@ -118,7 +118,7 @@ The scaffolded `src/error.rs` maps each `AppError` variant to its code and
 status. It is yours: add a variant there for a new error case.
 
 The templates (`init --template actix` or `axum`) add four for their
-account flows:
+account flows, and one for uploads (`POST /api/v1/media`):
 
 | Code | Status | When |
 |---|---|---|
@@ -126,6 +126,7 @@ account flows:
 | `wrong_password` | 400 | the current password a flow asks for again doesn't match |
 | `breached_password` | 400 | a new password appears in a known data breach (`BREACH_CHECK=true`) |
 | `too_many_requests` | 429 | over the `/auth` rate limit, `AUTH_RATE_LIMIT` requests a minute per IP; `Retry-After` gives the seconds to wait |
+| `unsupported_media_type` | 415 | an upload whose type, detected from its bytes, is unknown or not in `MEDIA_ALLOWED_TYPES` |
 
 These `400`s are flow failures. A body of the wrong shape (an email that
 isn't one, a password outside 8 to 128 characters) is still a `422

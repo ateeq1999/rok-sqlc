@@ -6,4 +6,5 @@ pub mod account;
 pub mod api_keys;
 pub mod auth;
 pub mod mail;
+pub mod media;
 pub mod session;

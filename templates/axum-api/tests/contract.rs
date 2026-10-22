@@ -60,6 +60,11 @@ const COVERED: &[(&str, &str)] = &[
     ("get", "/api/v1/api-keys"),
     ("post", "/api/v1/api-keys"),
     ("delete", "/api/v1/api-keys/{id}"),
+    ("get", "/api/v1/media"),
+    ("post", "/api/v1/media"),
+    ("get", "/api/v1/media/{id}"),
+    ("delete", "/api/v1/media/{id}"),
+    ("get", "/api/v1/media/{id}/content"),
 ];
 
 /// The differences the application still has, and why.

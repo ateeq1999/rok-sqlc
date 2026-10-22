@@ -79,6 +79,33 @@ IP (`429` past it). A flow refusing a well-formed request answers `400`
 with `invalid_token`, `wrong_password` or `breached_password`; a body of the
 wrong shape answers `422`.
 
+## Uploads
+
+`/api/v1/media` holds each signed-in user's files (the hand-written
+`media` feature):
+
+- `POST /api/v1/media` takes the raw file as its body (its `Content-Type`
+  is ignored), at most `MEDIA_MAX_UPLOAD_BYTES` (10 MiB; `413` past it).
+  The type is detected from the bytes and must be one of
+  `MEDIA_ALLOWED_TYPES` (JPEG, PNG, WebP, GIF and PDF; else `415`).
+  `?filename=` or the `X-Filename` header names the file (255 characters
+  at most). It answers `201` with the file's metadata and its `url`,
+  `/api/v1/media/{id}/content`.
+- `GET /api/v1/media` lists the caller's files, newest first
+  (`?page=&per_page=`); `GET` and `DELETE /api/v1/media/{id}` read or
+  delete one.
+- `GET /api/v1/media/{id}/content` answers the bytes with the detected
+  `Content-Type`, `X-Content-Type-Options: nosniff`, and
+  `Content-Disposition: attachment` for anything but an image.
+
+Another user's file is a `404`. The upload route has its own `DefaultBodyLimit`,
+in place of the 2 MiB `router` sets. The bytes go through the
+`Storage` port in `src/shared/storage/` (put, get and delete by key, the
+content type kept), over `object_store`, chosen by `STORAGE_URL`:
+`file://./storage` (the default, a `storage/` directory where the server
+runs), `s3://<bucket>` (the credentials, region and `AWS_ENDPOINT` come
+from the `AWS_*` variables) or `memory://`. The tests store in memory.
+
 ## The server
 
 `src/app.rs` is the only wiring file. `AppState` (`#[derive(FromRef)]`)
@@ -123,10 +150,13 @@ argon2 = "0.6"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["macros"] }
 base64 = "0.22"
+bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 governor = { version = "0.10", default-features = false, features = ["std"] }
+infer = { version = "0.22", default-features = false }
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 lettre = { version = "0.11", default-features = false, features = ["builder", "hostname", "smtp-transport", "tokio1-rustls-tls"] }
+object_store = { version = "0.13", features = ["aws"] }
 rand = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
@@ -184,9 +214,9 @@ and rate-limit tests need no database. The lints in `Cargo.toml` deny
 - **Yours** (first line `Scaffolded once`, or no header): `rok-sqlc.toml`,
   `migrations/`, `queries/`, `src/{lib,main,app,config,error,openapi}.rs`,
   `src/shared/{mod,auth}.rs`, `src/shared/rate_limit/`,
-  `src/shared/security/`, `src/shared/mail/`, `src/features/mod.rs`, the hand-written
-  `src/features/{auth,account}/`, each feature's `service.rs` (business
-  rules go there), `tests/`, and this README.
+  `src/shared/security/`, `src/shared/mail/`, `src/shared/storage/`,
+  `src/features/mod.rs`, the hand-written `src/features/{auth,account,media}/`,
+  each feature's `service.rs` (business rules go there), `tests/`, and this README.
 
 `queries/` holds hand-written SQL, one file per feature: `rok-sqlc g` turns
 `queries/auth.sql` into `src/db/queries/auth.rs`, one function per query.
@@ -217,7 +247,8 @@ Change the schema with a new migration, adjust `rok-sqlc.toml`, run
   (`AuditLogEntryResponse`), served at `/audit-log`, read-only.
 - `[api.search]` and `[api.sort]` give the users list its `q` and
   `UserSort` (`created_at`, `email`).
-- `media` and `api_keys` are in the schema for the features to come, and
+- `api_keys` is in the schema for a feature to come, `media` serves the
+  hand-written `media` feature, and
   `auth_tokens` (single-use mailed tokens) and `outbound_mail` (the mail
   outbox) for the account flows; none has a generated API (`[api]
   exclude`).
@@ -231,7 +262,7 @@ reason: `avatar_url` (uploads, on every `UserResponse`), and the
 ## Shared with the actix template
 
 The framework-independent files are the same in both templates, byte for
-byte: `migrations/`, `queries/`, `src/shared/security/`, `src/shared/mail/`
+byte: `migrations/`, `queries/`, `src/shared/security/`, `src/shared/mail/`,
+`src/shared/storage/`
 and each feature's `dto.rs`, `model.rs`, `repo.rs`, `service.rs` and
-`service_api.rs`, the hand-written `auth` and `account` included: the
-account flows differ only in their handlers and routes. rok-sqlc's repository checks that they stay so.
+`service_api.rs`, the hand-written `auth`, `account` and `media` included: they differ only in their handlers and routes. rok-sqlc's repository checks that they stay so.

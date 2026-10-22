@@ -137,6 +137,15 @@ they work:
 - **Tests.** Drive each flow over HTTP in `tests/`, with `mailed` and
   `mailed_token` from `tests/support/mod.rs`.
 
+## Uploads
+
+`features/media/` (`/api/v1/media`) is hand-written too. Bytes go through
+the `Storage` port in `shared/storage/` (`AppState.storage`): put, get and
+delete by a key the feature generates (`media/<uuid>`), never one a caller
+sends. A file's type is detected from its bytes, never taken from the
+request. Tests store in memory; swap in your own with
+`AppState::with_storage`.
+
 ## Checks
 
 `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,

@@ -18,6 +18,9 @@
 //! | `BREACH_CHECK` | `false` | reject passwords Have I Been Pwned knows |
 //! | `TRUST_PROXY` | `false` | take the client IP from `X-Forwarded-For` |
 //! | `AUTH_RATE_LIMIT` | 20 | requests per minute per IP on `/auth` (`0`: off) |
+//! | `STORAGE_URL` | `file://./storage` | where uploads are stored: `file://<dir>`, `s3://<bucket>` (`AWS_*` settings) or `memory://` |
+//! | `MEDIA_MAX_UPLOAD_BYTES` | 10485760 (10 MiB) | the largest `POST /media` body |
+//! | `MEDIA_ALLOWED_TYPES` | `image/jpeg,image/png,image/webp,image/gif,application/pdf` | the detected types an upload may have |
 //! | `DB_MAX_CONNECTIONS` | 20 | pool size |
 //! | `DB_MIN_CONNECTIONS` | 5 | idle connections kept open |
 //! | `DB_ACQUIRE_TIMEOUT_SECS` | 3 | wait for a connection |
@@ -32,6 +35,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use crate::db::pool::PoolSettings;
+use crate::shared::storage::StorageUrl;
 
 /// Where the server listens when `BIND_ADDR` is not set.
 const DEFAULT_BIND_ADDR: &str = "0.0.0.0:8080";
@@ -55,6 +59,19 @@ const DEFAULT_MAIL_FROM: &str = "Axum API <no-reply@localhost>";
 
 /// Requests per minute per IP on `/auth` when `AUTH_RATE_LIMIT` is not set.
 const DEFAULT_AUTH_RATE_LIMIT: u32 = 20;
+
+/// The largest upload when `MEDIA_MAX_UPLOAD_BYTES` is not set: 10 MiB.
+const DEFAULT_MEDIA_MAX_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
+
+/// The detected types an upload may have when `MEDIA_ALLOWED_TYPES` is not
+/// set.
+const DEFAULT_MEDIA_ALLOWED_TYPES: &[&str] = &[
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "application/pdf",
+];
 
 /// The log filter: `RUST_LOG` (such as `debug` or `info,sqlx=warn`), else
 /// [`DEFAULT_LOG_FILTER`]. `main.rs` reads it before [`Config::from_env`].
@@ -102,6 +119,13 @@ pub struct Config {
     /// `AUTH_RATE_LIMIT`: requests per minute per IP on `/auth`; `0` turns
     /// the limit off.
     pub auth_rate_limit: u32,
+    /// `STORAGE_URL`: where uploaded files are stored.
+    pub storage_url: StorageUrl,
+    /// `MEDIA_MAX_UPLOAD_BYTES`: the largest upload, in bytes.
+    pub media_max_upload_bytes: usize,
+    /// `MEDIA_ALLOWED_TYPES`: the types, detected from the bytes, an upload
+    /// may have (comma-separated).
+    pub media_allowed_types: Vec<String>,
     /// The pool's size and timeouts, `DB_*`.
     pub pool: PoolSettings,
 }
@@ -200,6 +224,29 @@ impl Config {
             auth_rate_limit: vars
                 .number("AUTH_RATE_LIMIT")?
                 .unwrap_or(DEFAULT_AUTH_RATE_LIMIT),
+            storage_url: match var("STORAGE_URL") {
+                Some(url) => url.parse().map_err(|_| ConfigError::NotOneOf {
+                    name: "STORAGE_URL",
+                    value: url,
+                    expected: "file://<dir>, s3://<bucket>, memory://",
+                })?,
+                None => StorageUrl::default_for_development(),
+            },
+            media_max_upload_bytes: vars
+                .number("MEDIA_MAX_UPLOAD_BYTES")?
+                .unwrap_or(DEFAULT_MEDIA_MAX_UPLOAD_BYTES),
+            media_allowed_types: match var("MEDIA_ALLOWED_TYPES") {
+                Some(list) => list
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|kind| !kind.is_empty())
+                    .map(str::to_owned)
+                    .collect(),
+                None => DEFAULT_MEDIA_ALLOWED_TYPES
+                    .iter()
+                    .map(|kind| (*kind).to_owned())
+                    .collect(),
+            },
             pool,
         })
     }
@@ -363,5 +410,44 @@ mod tests {
                 "environment variable `MAIL_TRANSPORT` is `carrier-pigeon`, which is not one of log, smtp"
             )
         );
+    }
+
+    #[test]
+    fn the_media_settings_default_and_are_read() -> Result<(), ConfigError> {
+        let config = read(REQUIRED)?;
+        assert_eq!(config.storage_url, StorageUrl::default_for_development());
+        assert_eq!(config.media_max_upload_bytes, 10 * 1024 * 1024);
+        assert_eq!(
+            config.media_allowed_types,
+            [
+                "image/jpeg",
+                "image/png",
+                "image/webp",
+                "image/gif",
+                "application/pdf"
+            ]
+        );
+
+        let mut vars = REQUIRED.to_vec();
+        vars.extend([
+            ("STORAGE_URL", "s3://uploads"),
+            ("MEDIA_MAX_UPLOAD_BYTES", "1024"),
+            ("MEDIA_ALLOWED_TYPES", " image/png , application/pdf,"),
+        ]);
+        let config = read(&vars)?;
+        assert_eq!(config.storage_url, StorageUrl::S3("uploads".to_owned()));
+        assert_eq!(config.media_max_upload_bytes, 1024);
+        assert_eq!(config.media_allowed_types, ["image/png", "application/pdf"]);
+
+        let mut vars = REQUIRED.to_vec();
+        vars.push(("STORAGE_URL", "ftp://files"));
+        let error = read(&vars).err().map(|err| err.to_string());
+        assert_eq!(
+            error.as_deref(),
+            Some(
+                "environment variable `STORAGE_URL` is `ftp://files`, which is not one of file://<dir>, s3://<bucket>, memory://"
+            )
+        );
+        Ok(())
     }
 }
