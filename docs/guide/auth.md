@@ -249,17 +249,15 @@ values go in as they are:
 ```
 
 **The lifetime.** Add a `MAGIC_LINK_TTL_MINUTES` beside the others in
-`src/features/auth/service.rs`, and the arm the compiler then asks for in
-`link_kind`, which pairs each purpose with its lifetime and message:
+`src/features/auth/service.rs`, and the arms the compiler then asks for in
+`ttl_of` (each purpose's lifetime) and `link_mail` (the message that
+carries it; `None` for a token that is never mailed):
 
 <!-- source: templates/actix-api/src/features/auth/service.rs -->
 ```rust
-fn link_kind(purpose: AuthTokenPurpose) -> (TimeDelta, RenderLink) {
+fn ttl_of(purpose: AuthTokenPurpose) -> TimeDelta {
     match purpose {
-        AuthTokenPurpose::EmailVerification => (
-            TimeDelta::hours(VERIFICATION_TTL_HOURS),
-            Templates::verification,
-        ),
+        AuthTokenPurpose::EmailVerification => TimeDelta::hours(VERIFICATION_TTL_HOURS),
 ```
 
 **The service methods.** One mails the link on a transaction:
