@@ -318,7 +318,8 @@ async fn a_pending_token_lasts_five_minutes() -> TestResult {
     )
     .fetch_one(&db.pool)
     .await?;
-    assert!((290.0..=300.0).contains(&seconds), "{seconds}");
+    // `expires_at` comes from the server's clock, `now()` from the database's.
+    assert!((290.0..=301.0).contains(&seconds), "{seconds}");
     db.drop().await
 }
 
