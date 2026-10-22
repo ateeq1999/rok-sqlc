@@ -3,6 +3,7 @@
 //! Functions for the annotated queries in the query file.
 
 use super::super::auth_tokens::models::AuthTokenId;
+use super::super::totp_recovery_codes::models::TotpRecoveryCodeId;
 use super::super::types;
 use super::super::users::models::UserId;
 
@@ -25,6 +26,8 @@ pub struct FindLoginRow {
     pub failed_logins: i32,
     /// The `locked_until` column.
     pub locked_until: Option<chrono::DateTime<chrono::Utc>>,
+    /// The `totp_enabled` column.
+    pub totp_enabled: bool,
 }
 
 /// Runs the `FindLogin` query (`:maybe_one`).
@@ -37,7 +40,8 @@ where
 {
     sqlx::query_as::<_, FindLoginRow>(
         r#"
-        SELECT id, password_hash, role, is_active, email_verified, token_version, failed_logins, locked_until
+        SELECT id, password_hash, role, is_active, email_verified, token_version, failed_logins, locked_until,
+            totp_enabled
         FROM users
         WHERE lower(email) = lower($1) AND deleted_at IS NULL
         "#,
@@ -362,4 +366,178 @@ where
     .bind(params.role)
     .fetch_one(executor)
     .await
+}
+
+/// Runs the `PendingSignIn` query (`:maybe_one`).
+pub async fn pending_sign_in<'e, E>(
+    executor: E,
+    token_hash: &str,
+) -> Result<Option<UserId>, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query_scalar::<_, UserId>(
+        r#"
+        SELECT user_id
+        FROM auth_tokens
+        WHERE token_hash = $1 AND purpose = 'two_factor_pending' AND used_at IS NULL
+            AND expires_at > now()
+        "#,
+    )
+    .bind(token_hash)
+    .fetch_optional(executor)
+    .await
+}
+
+/// Runs the `StoreTotpSecret` query (`:execrows`).
+/// Returns the number of affected rows.
+pub async fn store_totp_secret<'e, E>(
+    executor: E,
+    id: UserId,
+    totp_secret: Option<&str>,
+) -> Result<u64, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    let result = sqlx::query(
+        r#"
+        UPDATE users
+        SET totp_secret = $2, totp_last_step = NULL
+        WHERE id = $1 AND deleted_at IS NULL AND NOT totp_enabled
+        "#,
+    )
+    .bind(id)
+    .bind(totp_secret)
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// Runs the `EnableTotp` query (`:execrows`).
+/// Returns the number of affected rows.
+pub async fn enable_totp<'e, E>(
+    executor: E,
+    id: UserId,
+    step: i64,
+    totp_secret: &str,
+) -> Result<u64, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    let result = sqlx::query(
+        r#"
+        UPDATE users
+        SET totp_enabled = true, totp_last_step = $2
+        WHERE id = $1 AND deleted_at IS NULL AND NOT totp_enabled AND totp_secret = $3
+        "#,
+    )
+    .bind(id)
+    .bind(step)
+    .bind(totp_secret)
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// Runs the `AcceptTotpStep` query (`:execrows`).
+/// Returns the number of affected rows.
+pub async fn accept_totp_step<'e, E>(executor: E, id: UserId, step: i64) -> Result<u64, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    let result = sqlx::query(
+        r#"
+        UPDATE users
+        SET totp_last_step = $2
+        WHERE id = $1 AND (totp_last_step IS NULL OR totp_last_step < $2)
+        "#,
+    )
+    .bind(id)
+    .bind(step)
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// Runs the `DisableTotp` query (`:exec`).
+pub async fn disable_totp<'e, E>(executor: E, id: UserId) -> Result<(), sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query(
+        r#"
+        UPDATE users
+        SET totp_enabled = false, totp_secret = NULL, totp_last_step = NULL
+        WHERE id = $1
+        "#,
+    )
+    .bind(id)
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Runs the `DeleteRecoveryCodes` query (`:exec`).
+pub async fn delete_recovery_codes<'e, E>(executor: E, user_id: UserId) -> Result<(), sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query(
+        r#"
+        DELETE FROM totp_recovery_codes
+        WHERE user_id = $1
+        "#,
+    )
+    .bind(user_id)
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Runs the `InsertRecoveryCode` query (`:exec`).
+pub async fn insert_recovery_code<'e, E>(
+    executor: E,
+    id: TotpRecoveryCodeId,
+    user_id: UserId,
+    code_hash: &str,
+) -> Result<(), sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query(
+        r#"
+        INSERT INTO totp_recovery_codes (id, user_id, code_hash)
+        VALUES ($1, $2, $3)
+        "#,
+    )
+    .bind(id)
+    .bind(user_id)
+    .bind(code_hash)
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Runs the `UseRecoveryCode` query (`:execrows`).
+/// Returns the number of affected rows.
+pub async fn use_recovery_code<'e, E>(
+    executor: E,
+    user_id: UserId,
+    code_hash: &str,
+) -> Result<u64, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    let result = sqlx::query(
+        r#"
+        UPDATE totp_recovery_codes
+        SET used_at = now()
+        WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL
+        "#,
+    )
+    .bind(user_id)
+    .bind(code_hash)
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
 }

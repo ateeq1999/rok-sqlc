@@ -22,6 +22,7 @@ managed_columns = [
     "email_verified",
     "totp_secret",
     "totp_enabled",
+    "totp_last_step",
     "avatar_key",
     "failed_logins",
     "locked_until",
@@ -37,9 +38,9 @@ output = "src/features"
 prefix = "/api/v1"
 framework = "axum"
 # `media` is the hand-written uploads feature, and `api_keys` a hand-written
-# feature of a later release; `auth_tokens` and `outbound_mail` belong to
-# the account flows and the mail outbox.
-exclude = ["media", "api_keys", "auth_tokens", "outbound_mail"]
+# feature of a later release; `auth_tokens`, `totp_recovery_codes` and
+# `outbound_mail` belong to the account flows and the mail outbox.
+exclude = ["media", "api_keys", "auth_tokens", "outbound_mail", "totp_recovery_codes"]
 
 [api.access]
 users = "admin"
@@ -59,6 +60,7 @@ audit_log = ["create", "update", "remove", "relationships"]
 users = [
     "password_hash",
     "totp_secret",
+    "totp_last_step",
     "avatar_key",
     "failed_logins",
     "locked_until",

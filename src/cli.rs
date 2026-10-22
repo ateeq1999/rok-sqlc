@@ -185,7 +185,7 @@ where
             print_scaffolded(scaffolded);
             steps.extend([
                 "run `rok-sqlc g` to generate src/db/, src/shared/ and src/features/ from migrations/",
-                "set DATABASE_URL and JWT_SECRET (see .env.example) and apply migrations/",
+                "set DATABASE_URL, JWT_SECRET and TOTP_ENCRYPTION_KEY (see .env.example) and apply migrations/",
                 "`cargo test`, then `cargo run`",
             ]);
             print_next_steps(&steps);

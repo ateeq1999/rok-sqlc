@@ -140,6 +140,7 @@ data, `web::Data<PgPool>`, which `app::configure` registers (under axum,
 |---|---|---|
 | `JWT_SECRET` | required | the HS256 key, at least 32 bytes (`openssl rand -base64 48`) |
 | `JWT_TTL` | `3600` | seconds a session token lasts |
+| `TOTP_ENCRYPTION_KEY` | required | the AES-256 key two-factor secrets are stored under: 32 bytes in base64 (`openssl rand -base64 32`) |
 | `REQUIRE_VERIFIED_EMAIL` | `true` | sign-in answers `403` until the email is verified |
 | `APP_URL` | `http://localhost:8080` | the base of mailed links: your front end's URL |
 | `MAIL_TRANSPORT` | `log` | `log` (each mail is logged) or `smtp` |

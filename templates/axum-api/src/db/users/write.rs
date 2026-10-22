@@ -50,7 +50,8 @@ where
             created_at,
             updated_at,
             deleted_at,
-            token_version
+            token_version,
+            totp_last_step
         "#,
     );
     query.build_query_as::<User>().fetch_one(executor).await
@@ -112,7 +113,8 @@ where
             created_at,
             updated_at,
             deleted_at,
-            token_version
+            token_version,
+            totp_last_step
         "#,
     );
     query

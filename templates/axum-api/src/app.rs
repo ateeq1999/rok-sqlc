@@ -38,6 +38,7 @@ use crate::shared::mail::{Mailer, Outbox, Sender, Templates, transport};
 use crate::shared::rate_limit::RateLimit;
 use crate::shared::security::breach::{self, BreachCheck};
 use crate::shared::security::jwt::JwtKeys;
+use crate::shared::security::totp::TotpCipher;
 use crate::shared::storage::{self, ObjectStorage, Storage};
 
 /// The largest request body: 2 MiB. A JSON body over it is a `413`.
@@ -97,6 +98,7 @@ impl AppState {
             breach: breach::from_config(config),
             require_verified_email: config.require_verified_email,
             audit: Arc::new(AuditLog(AuditLogEntryService::new(pool.clone()))),
+            totp: Arc::new(TotpCipher::new(&config.totp_encryption_key)),
         });
         let storage: Arc<dyn Storage> = Arc::new(ObjectStorage::memory());
         let media = Arc::new(MediaService {

@@ -35,6 +35,10 @@ pub type TestResult = Result<(), Box<dyn std::error::Error>>;
 /// The JWT secret the test application verifies tokens with.
 const SECRET: &str = "a test secret of at least 32 bytes";
 
+/// The `TOTP_ENCRYPTION_KEY` the test application encrypts two-factor
+/// secrets with: base64 of 32 bytes.
+pub const TOTP_KEY: &str = "dGVzdCBrZXkgb2YgZXhhY3RseSB0aGlydHktdHdvIGI=";
+
 /// The `APP_URL` the test application's mailed links start with.
 pub const APP_URL: &str = "http://app.test";
 
@@ -192,6 +196,7 @@ pub fn config(overrides: &[(&str, &str)]) -> Result<Config, Box<dyn std::error::
     let mut vars: HashMap<&str, &str> = HashMap::from([
         ("DATABASE_URL", "postgres://unused"),
         ("JWT_SECRET", SECRET),
+        ("TOTP_ENCRYPTION_KEY", TOTP_KEY),
         ("JWT_TTL", "3600"),
         ("APP_URL", APP_URL),
     ]);

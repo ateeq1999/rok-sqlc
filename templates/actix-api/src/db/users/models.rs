@@ -85,6 +85,8 @@ pub struct User {
     pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
     /// The `token_version` column.
     pub token_version: i32,
+    /// The `totp_last_step` column.
+    pub totp_last_step: Option<i64>,
 }
 
 /// Input for `create`: every column the caller may supply.

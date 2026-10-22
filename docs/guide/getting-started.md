@@ -333,7 +333,7 @@ From `rok-sqlc g` on:
 2. Configure and run. `.env.example` lists every setting:
 
    ```sh
-   cp .env.example .env      # then set DATABASE_URL and JWT_SECRET in it
+   cp .env.example .env      # then set DATABASE_URL, JWT_SECRET and TOTP_ENCRYPTION_KEY in it
    set -a; . ./.env; set +a
    cargo run
    ```

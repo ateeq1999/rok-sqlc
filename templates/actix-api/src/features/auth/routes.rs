@@ -33,6 +33,10 @@ pub fn routes(cfg: &mut web::ServiceConfig, limit: &RateLimit) {
                 web::post().to(handlers::confirm_change),
             )
             .route("/invitations", web::post().to(handlers::invite))
+            .route("/2fa/setup", web::post().to(handlers::setup_totp))
+            .route("/2fa/enable", web::post().to(handlers::enable_totp))
+            .route("/2fa/disable", web::post().to(handlers::disable_totp))
+            .route("/2fa/verify", web::post().to(handlers::verify_totp))
             .default_service(web::to(no_such_route)),
     );
 }

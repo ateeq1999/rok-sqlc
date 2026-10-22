@@ -27,5 +27,6 @@ pub mod pool;
 pub mod queries;
 pub mod schema;
 pub mod search;
+pub mod totp_recovery_codes;
 pub mod types;
 pub mod users;

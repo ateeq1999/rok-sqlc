@@ -24,8 +24,9 @@ You need PostgreSQL and Rust 1.94 or newer.
 1. Create a database and apply `migrations/` to it, for example with
    `sqlx migrate run` ([sqlx-cli](https://crates.io/crates/sqlx-cli)) or
    `psql` on each file of `migrations/` in order.
-2. Set `DATABASE_URL` and `JWT_SECRET`, at least 32 bytes (`openssl rand
-   -base64 48`). `.env.example` lists every setting; `src/config.rs` reads
+2. Set `DATABASE_URL`, `JWT_SECRET`, at least 32 bytes (`openssl rand
+   -base64 48`), and `TOTP_ENCRYPTION_KEY`, 32 bytes in base64 (`openssl
+   rand -base64 32`). `.env.example` lists every setting; `src/config.rs` reads
    them from the environment.
 3. `cargo run`. The API is under `/api/v1`, health at `/health/live` and
    `/health/ready`, the OpenAPI document at `/api-docs/openapi.json` and
@@ -48,6 +49,17 @@ documents each one, the settings, sending real mail and adding a flow
 - **Sign-in.** `POST /api/v1/auth/login` answers a session token. Five
   wrong passwords in a row lock an account for 15 minutes, and an
   unverified email is a `403` while `REQUIRE_VERIFIED_EMAIL=true`.
+- **Two-factor sign-in.** `POST /api/v1/auth/2fa/setup` answers a new
+  authenticator secret (base32, its `otpauth://` URI and a QR code), and
+  `POST /api/v1/auth/2fa/enable` (`{"code"}`) turns two-factor on with a
+  code from the app, answering ten single-use recovery codes once. Then the
+  right password answers `{"requires_totp": true, "pending_token"}`, and
+  `POST /api/v1/auth/2fa/verify` (`{"pending_token", "code"}`, within 5
+  minutes) trades it, with an app code or a recovery code, for the session.
+  A code is accepted once; wrong codes count toward the lock. `POST
+  /api/v1/auth/2fa/disable` (`{"current_password"}`) turns it off. Both
+  changes are mailed. The secret is stored encrypted (AES-256-GCM under
+  `TOTP_ENCRYPTION_KEY`), the recovery codes as SHA-256.
 - **Passwords.** `POST /api/v1/auth/password/forgot` (`{"email"}`, always
   `202`) mails a link valid an hour, and `POST /api/v1/auth/password/reset`
   (`{"token", "new_password"}`) sets the new password and lifts any lock. A
@@ -120,7 +132,8 @@ was bumped, is a `401`, and the role is read from the database, so a role
 change applies at once.
 
 - `src/shared/security/` holds argon2id password hashing, single-use
-  tokens (only their SHA-256 is stored), the JWT and the breach check.
+  tokens (only their SHA-256 is stored), the JWT, the breach check and
+  two-factor's TOTP codes, secret encryption and recovery codes.
 - `src/shared/mail/` sends mail through an outbox: a flow writes its
   message as an `outbound_mail` row on its own transaction, and the sender
   delivers it (SMTP, or the log), retrying with backoff; after five
@@ -138,6 +151,7 @@ The template's `Cargo.toml` has them. Starting from a package of your own
 
 ```toml
 [dependencies]
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
 argon2 = "0.6"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["macros"] }
@@ -149,6 +163,7 @@ infer = { version = "0.22", default-features = false }
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 lettre = { version = "0.11", default-features = false, features = ["builder", "hostname", "smtp-transport", "tokio1-rustls-tls"] }
 object_store = { version = "0.13", features = ["aws"] }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 rand = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
@@ -159,6 +174,7 @@ sha2 = "0.11"
 sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "derive", "uuid", "chrono", "json"] }
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
+totp-rs = { version = "5", features = ["otpauth"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors", "request-id", "timeout", "trace"] }
 tracing = "0.1"
@@ -224,8 +240,9 @@ Change the schema with a new migration, adjust `rok-sqlc.toml`, run
 
 - `role` is a PostgreSQL enum, so the schema `Role` is `user` or `admin`.
 - `has_password` is a generated column (`password_hash IS NOT NULL`).
-- `password_hash`, `totp_secret`, `avatar_key`, `failed_logins`,
-  `locked_until`, `token_version`, `updated_at` and `deleted_at` are hidden
+- `password_hash`, `totp_secret`, `totp_last_step`, `avatar_key`,
+  `failed_logins`, `locked_until`, `token_version`, `updated_at` and
+  `deleted_at` are hidden
   (`[api.hidden]`): no response carries them.
 - The columns the server sets are managed (`[conventions]
   managed_columns`), so no request body takes them; a trigger keeps
@@ -241,8 +258,9 @@ Change the schema with a new migration, adjust `rok-sqlc.toml`, run
   `UserSort` (`created_at`, `email`).
 - `api_keys` is in the schema for a feature to come, `media` serves the
   hand-written `media` feature, and
-  `auth_tokens` (single-use mailed tokens) and `outbound_mail` (the mail
-  outbox) for the account flows; none has a generated API (`[api]
+  `auth_tokens` (single-use tokens), `totp_recovery_codes` (two-factor's
+  recovery codes) and `outbound_mail` (the mail outbox) for the account
+  flows; none has a generated API (`[api]
   exclude`).
 - `token_version` is bumped to sign an account out everywhere: a token
   carrying an older one is rejected.

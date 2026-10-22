@@ -27,6 +27,7 @@ use crate::shared::mail::{Outbox, Sender, Templates, transport};
 use crate::shared::rate_limit::RateLimit;
 use crate::shared::security::breach::{self, BreachCheck};
 use crate::shared::security::jwt::JwtKeys;
+use crate::shared::security::totp::TotpCipher;
 use crate::shared::storage::{self, ObjectStorage, Storage};
 
 /// What every worker shares, built once: by [`run`], or by a test.
@@ -58,6 +59,8 @@ pub struct AppState {
     pub media_max_upload_bytes: usize,
     /// `MEDIA_ALLOWED_TYPES`.
     pub media_allowed_types: Vec<String>,
+    /// Encrypts two-factor secrets at rest (`TOTP_ENCRYPTION_KEY`).
+    pub totp: Arc<TotpCipher>,
 }
 
 impl AppState {
@@ -76,6 +79,7 @@ impl AppState {
             storage: Arc::new(ObjectStorage::memory()),
             media_max_upload_bytes: config.media_max_upload_bytes,
             media_allowed_types: config.media_allowed_types.clone(),
+            totp: Arc::new(TotpCipher::new(&config.totp_encryption_key)),
         }
     }
 
@@ -137,6 +141,7 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
             breach: state.breach.clone(),
             require_verified_email: state.require_verified_email,
             audit: state.audit.clone(),
+            totp: state.totp.clone(),
         }));
     cfg.app_data(web::Data::new(MediaService {
         pool: state.pool.clone(),

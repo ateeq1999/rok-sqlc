@@ -66,7 +66,8 @@ where
             created_at,
             updated_at,
             deleted_at,
-            token_version
+            token_version,
+            totp_last_step
         FROM users
         WHERE deleted_at IS NULL
         "#,

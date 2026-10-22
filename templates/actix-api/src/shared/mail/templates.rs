@@ -132,6 +132,34 @@ impl Templates {
         )
     }
 
+    /// Tells `to` that two-factor sign-in was turned on.
+    #[must_use]
+    pub fn two_factor_enabled(&self, to: &str) -> Mail {
+        compose(
+            to,
+            "Two-factor sign-in is on",
+            &[
+                "Two-factor sign-in was just turned on for your account: signing in now also takes a code from your authenticator app, or one of your recovery codes.",
+                "If it wasn't you, reset your password now.",
+            ],
+            None,
+        )
+    }
+
+    /// Tells `to` that two-factor sign-in was turned off.
+    #[must_use]
+    pub fn two_factor_disabled(&self, to: &str) -> Mail {
+        compose(
+            to,
+            "Two-factor sign-in is off",
+            &[
+                "Two-factor sign-in was just turned off for your account: signing in now takes only your password.",
+                "If it wasn't you, reset your password now.",
+            ],
+            None,
+        )
+    }
+
     /// Invites `to` to set a password for the account made for them (valid
     /// 7 days).
     #[must_use]
@@ -250,5 +278,20 @@ mod tests {
         let mail = templates.password_changed("ana@example.com");
         assert_eq!(mail.subject, "Your password was changed");
         assert!(!mail.text.contains("token="));
+
+        for (mail, subject) in [
+            (
+                templates.two_factor_enabled("ana@example.com"),
+                "Two-factor sign-in is on",
+            ),
+            (
+                templates.two_factor_disabled("ana@example.com"),
+                "Two-factor sign-in is off",
+            ),
+        ] {
+            assert_eq!(mail.to, "ana@example.com");
+            assert_eq!(mail.subject, subject);
+            assert!(!mail.text.contains("token="));
+        }
     }
 }

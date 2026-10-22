@@ -10,6 +10,7 @@
 //! | `BIND_ADDR` | `0.0.0.0:8080` | where the server listens |
 //! | `JWT_SECRET` | required | the HS256 key tokens are signed with, at least 32 bytes |
 //! | `JWT_TTL` | 3600 | seconds an issued token lasts |
+//! | `TOTP_ENCRYPTION_KEY` | required | the AES-256 key two-factor secrets are stored under: 32 bytes, base64 |
 //! | `REQUIRE_VERIFIED_EMAIL` | `true` | sign-in needs a verified email |
 //! | `APP_URL` | `http://localhost:8080` | the base of the links mails carry |
 //! | `MAIL_TRANSPORT` | `log` | `log` (mails are logged) or `smtp` |
@@ -34,7 +35,11 @@ use std::env;
 use std::str::FromStr;
 use std::time::Duration;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
+
 use crate::db::pool::PoolSettings;
+use crate::shared::security::totp::KEY_BYTES as TOTP_KEY_BYTES;
 use crate::shared::storage::StorageUrl;
 
 /// Where the server listens when `BIND_ADDR` is not set.
@@ -100,6 +105,9 @@ pub struct Config {
     pub jwt_secret: String,
     /// `JWT_TTL`: how long an issued token lasts.
     pub jwt_ttl: Duration,
+    /// `TOTP_ENCRYPTION_KEY`: the key two-factor secrets are encrypted
+    /// with at rest (AES-256-GCM).
+    pub totp_encryption_key: [u8; TOTP_KEY_BYTES],
     /// `REQUIRE_VERIFIED_EMAIL`: sign-in answers `403` until the email is
     /// verified.
     pub require_verified_email: bool,
@@ -147,6 +155,16 @@ pub enum ConfigError {
         len: usize,
         /// The least it may be.
         min: usize,
+    },
+    /// A key is not base64 of the bytes it needs.
+    #[error(
+        "environment variable `{name}` is not {bytes} bytes in base64 (try `openssl rand -base64 {bytes}`)"
+    )]
+    NotAKey {
+        /// The variable.
+        name: &'static str,
+        /// The bytes it needs.
+        bytes: usize,
     },
     /// A variable is not a whole number.
     #[error("environment variable `{name}` is `{value}`, which is not a whole number")]
@@ -214,6 +232,7 @@ impl Config {
             bind_addr: var("BIND_ADDR").unwrap_or_else(|| DEFAULT_BIND_ADDR.to_owned()),
             jwt_secret: vars.secret("JWT_SECRET", MIN_JWT_SECRET_BYTES)?,
             jwt_ttl: Duration::from_secs(vars.number("JWT_TTL")?.unwrap_or(DEFAULT_JWT_TTL_SECS)),
+            totp_encryption_key: vars.key("TOTP_ENCRYPTION_KEY")?,
             require_verified_email: vars.flag("REQUIRE_VERIFIED_EMAIL")?.unwrap_or(true),
             app_url: var("APP_URL").unwrap_or_else(|| DEFAULT_APP_URL.to_owned()),
             mail_transport,
@@ -274,6 +293,20 @@ impl Vars<'_> {
         Ok(value)
     }
 
+    /// A key that must be set: base64 (standard, padded) of exactly
+    /// [`TOTP_KEY_BYTES`] bytes.
+    fn key(&self, name: &'static str) -> Result<[u8; TOTP_KEY_BYTES], ConfigError> {
+        let value = self.required(name)?;
+        STANDARD
+            .decode(value.trim())
+            .ok()
+            .and_then(|bytes| <[u8; TOTP_KEY_BYTES]>::try_from(bytes).ok())
+            .ok_or(ConfigError::NotAKey {
+                name,
+                bytes: TOTP_KEY_BYTES,
+            })
+    }
+
     /// A whole number, when the variable is set.
     fn number<T: FromStr>(&self, name: &'static str) -> Result<Option<T>, ConfigError> {
         match (self.0)(name) {
@@ -315,9 +348,13 @@ mod tests {
         Config::from_vars(|name| vars.get(name).cloned())
     }
 
+    /// Base64 of the 32 bytes `01234567890123456789012345678901`.
+    const TOTP_KEY: &str = "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=";
+
     const REQUIRED: &[(&str, &str)] = &[
         ("DATABASE_URL", "postgres://db"),
         ("JWT_SECRET", "a test secret of at least 32 bytes"),
+        ("TOTP_ENCRYPTION_KEY", TOTP_KEY),
     ];
 
     #[test]
@@ -380,7 +417,14 @@ mod tests {
             )
         );
         let secret = "x".repeat(32);
-        assert!(read(&[("DATABASE_URL", "postgres://db"), ("JWT_SECRET", &secret)]).is_ok());
+        assert!(
+            read(&[
+                ("DATABASE_URL", "postgres://db"),
+                ("JWT_SECRET", &secret),
+                ("TOTP_ENCRYPTION_KEY", TOTP_KEY),
+            ])
+            .is_ok()
+        );
     }
 
     #[test]
@@ -447,6 +491,37 @@ mod tests {
             Some(
                 "environment variable `STORAGE_URL` is `ftp://files`, which is not one of file://<dir>, s3://<bucket>, memory://"
             )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_totp_key_is_32_bytes_in_base64() -> Result<(), ConfigError> {
+        assert_eq!(
+            &read(REQUIRED)?.totp_encryption_key,
+            b"01234567890123456789012345678901"
+        );
+        let refusal = Some(
+            "environment variable `TOTP_ENCRYPTION_KEY` is not 32 bytes in base64 (try `openssl rand -base64 32`)",
+        );
+        for key in [
+            "",
+            "not base64!",
+            "c2hvcnQ=",
+            "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEy",
+        ] {
+            let mut vars = REQUIRED.to_vec();
+            vars.retain(|(name, _)| *name != "TOTP_ENCRYPTION_KEY");
+            vars.push(("TOTP_ENCRYPTION_KEY", key));
+            let error = read(&vars).err().map(|err| err.to_string());
+            assert_eq!(error.as_deref(), refusal, "{key}");
+        }
+        let mut vars = REQUIRED.to_vec();
+        vars.retain(|(name, _)| *name != "TOTP_ENCRYPTION_KEY");
+        let error = read(&vars).err().map(|err| err.to_string());
+        assert_eq!(
+            error.as_deref(),
+            Some("environment variable `TOTP_ENCRYPTION_KEY` is not set")
         );
         Ok(())
     }

@@ -33,6 +33,9 @@ use serde_json::Value;
 /// The target document.
 const TARGET: &str = include_str!("spec/openapi.json");
 
+/// An unused `TOTP_ENCRYPTION_KEY`: base64 of 32 bytes.
+const TOTP_KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
 /// The target operations the application covers.
 const COVERED: &[(&str, &str)] = &[
     ("get", "/api/v1/users"),
@@ -55,6 +58,10 @@ const COVERED: &[(&str, &str)] = &[
     ("post", "/api/v1/auth/email/change"),
     ("post", "/api/v1/auth/email/change/confirm"),
     ("post", "/api/v1/auth/invitations"),
+    ("post", "/api/v1/auth/2fa/setup"),
+    ("post", "/api/v1/auth/2fa/enable"),
+    ("post", "/api/v1/auth/2fa/disable"),
+    ("post", "/api/v1/auth/2fa/verify"),
     ("get", "/api/v1/media"),
     ("post", "/api/v1/media"),
     ("get", "/api/v1/media/{id}"),
@@ -464,6 +471,7 @@ async fn served_document() -> Result<Value, Box<dyn std::error::Error>> {
     let config = Config::from_vars(|name| match name {
         "DATABASE_URL" => Some("postgres://localhost/unused".to_owned()),
         "JWT_SECRET" => Some("unused, but at least 32 bytes long".to_owned()),
+        "TOTP_ENCRYPTION_KEY" => Some(TOTP_KEY.to_owned()),
         _ => None,
     })?;
     let state = AppState::new(pool, &config);

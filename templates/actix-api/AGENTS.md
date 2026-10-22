@@ -107,7 +107,7 @@ units, time is UTC, and ids are UUIDs.
 ## Accounts
 
 `features/auth/` (sign-up, sign-in, email verification, the password
-flows, email change, invitations) and `features/account/` (`/auth/me`,
+flows, email change, invitations, two-factor sign-in) and `features/account/` (`/auth/me`,
 `/users/me`) are hand-written and follow the rules above. Keep to how
 they work:
 
@@ -115,11 +115,15 @@ they work:
   `queries/account.sql`; SQL `shared/` runs goes in a file named after no
   feature (`queries/session.sql`, `queries/mail.sql`). Run `rok-sqlc g`
   after editing one.
-- **Mailed links.** A token purpose (the `auth_tokens.purpose` check), an
-  arm in `link_kind` (lifetime and message) in `auth/service.rs`, and a
+- **Mailed links.** A token purpose (the `auth_tokens.purpose` check), its
+  arms in `ttl_of` (lifetime) and `link_mail` (message) in
+  `auth/service.rs`, and a
   `Templates` method in `shared/mail/templates.rs`. Issue and mail it with
   `mail_link` on the flow's transaction, commit with `outbox.commit(tx)`,
   and redeem it with `consume_token`. Never store or log a raw token.
+- **Secrets at rest.** Two-factor secrets are stored sealed with
+  `TotpCipher` (`shared/security/totp.rs`, `TOTP_ENCRYPTION_KEY`), and
+  recovery codes as hashes, like tokens.
 - **Answers.** A body of the wrong shape is `422` (the DTO's rules); a flow
   refusing a well-formed request is `400` with `AppError::InvalidToken`,
   `WrongPassword` or `BreachedPassword`. Don't tell a caller whether an

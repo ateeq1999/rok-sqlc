@@ -9,3 +9,6 @@ pub mod breach;
 pub mod jwt;
 pub mod password;
 pub mod token;
+/// Two-factor sign-in: TOTP codes, the secret encrypted at rest, and the
+/// recovery codes.
+pub mod totp;
