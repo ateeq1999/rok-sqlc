@@ -124,6 +124,11 @@ they work:
   refusing a well-formed request is `400` with `AppError::InvalidToken`,
   `WrongPassword` or `BreachedPassword`. Don't tell a caller whether an
   email has an account where the flow answers `202`.
+- **API keys.** `features/api_keys/` makes, lists and revokes keys
+  (`queries/api_keys.sql`); `shared/auth.rs` checks a presented one
+  with `shared/security/api_key.rs` (`queries/session.sql`), and
+  `AuthUser::credential` says whether the caller sent a key. A route
+  only a session may use goes under `api_key::SESSION_ONLY`.
 - **Sessions.** A change that must sign a user out bumps
   `users.token_version`; disabling sets `is_active = false`. `AuthUser`
   checks both on every request.

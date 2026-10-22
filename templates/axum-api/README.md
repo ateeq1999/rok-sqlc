@@ -72,6 +72,14 @@ documents each one, the settings, sending real mail and adding a flow
   `DELETE /api/v1/users/me/avatar` removes it. Every user response
   answers `avatar_url`, `/api/v1/avatars/<file>` or `null`, which anyone
   may fetch, cacheable for good (a new photo gets a new name).
+- **API keys.** `src/features/api_keys/`: `POST /api/v1/api-keys`
+  (`{"name", "scope"?, "expires_in_days"?}`) answers a `rok_…` key once
+  (only its prefix and SHA-256 are stored); `GET` lists the caller's
+  active keys and `DELETE /api/v1/api-keys/{id}` revokes one. A key works
+  wherever a session does, as `Authorization: Bearer rok_…` or
+  `X-API-Key`, except under `/auth` and `/api-keys` (`403`); a `read`
+  key only for `GET`, `HEAD` and `OPTIONS`. At most 25 active keys
+  (`409 conflict` past it); `expires_in_days` is 1 to 365.
 
 Every `/auth` route is limited to `AUTH_RATE_LIMIT` requests a minute per
 IP (`429` past it). A flow refusing a well-formed request answers `400`
