@@ -87,6 +87,8 @@ pub struct User {
     pub token_version: i32,
     /// The `totp_last_step` column.
     pub totp_last_step: Option<i64>,
+    /// The `avatar_url` column.
+    pub avatar_url: Option<String>,
 }
 
 /// Input for `create`: every column the caller may supply.

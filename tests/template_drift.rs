@@ -28,6 +28,8 @@ const SHARED: &[&str] = &[
     "src/shared/rate_limit/limiter.rs",
     // The `Storage` port and its `object_store` implementation.
     "src/shared/storage",
+    // The profile photos' image processing: decode, crop, re-encode.
+    "src/shared/thumbnail.rs",
 ];
 
 /// The features whose framework-independent files both templates share.

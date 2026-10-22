@@ -150,6 +150,13 @@ sends. A file's type is detected from its bytes, never taken from the
 request. Tests store in memory; swap in your own with
 `AppState::with_storage`.
 
+Profile photos (`features/account/`, `PUT`/`DELETE /users/me/avatar`)
+use the same port under `avatars/<random>.jpg`. `shared/thumbnail.rs`
+decodes (JPEG, PNG, WebP, under size limits), crops and re-encodes them
+on a blocking thread. `users.avatar_url` is a generated column
+(`migrations/0005_avatars.sql`), so every user response, the generated
+`users` feature's included, answers it.
+
 ## Checks
 
 `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,

@@ -8,6 +8,16 @@ use crate::db::users::models::{User, UserId};
 /// The longest display name, in characters.
 pub const DISPLAY_NAME_MAX: u64 = 100;
 
+/// The largest `PUT /users/me/avatar` body: 2 MiB.
+pub const AVATAR_MAX_BYTES: usize = 2 * 1024 * 1024;
+
+/// A profile photo's width and height, in pixels.
+pub const AVATAR_SIDE: u32 = 256;
+
+/// How long `GET /avatars/{file}` may be cached: for good, since a new
+/// photo always gets a new file name.
+pub const AVATAR_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
+
 /// `PATCH /users/me`'s body. A field left out keeps its value; the display
 /// name is trimmed, and `null` or an empty one clears it.
 #[derive(
@@ -47,6 +57,9 @@ pub struct UserResponse {
     pub totp_enabled: bool,
     /// When the account was created.
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// The profile photo's public, cacheable URL,
+    /// `/api/v1/avatars/<file>`, or `null` without one.
+    pub avatar_url: Option<String>,
 }
 
 impl From<User> for UserResponse {
@@ -61,6 +74,7 @@ impl From<User> for UserResponse {
             email_verified: row.email_verified,
             totp_enabled: row.totp_enabled,
             created_at: row.created_at,
+            avatar_url: row.avatar_url,
         }
     }
 }

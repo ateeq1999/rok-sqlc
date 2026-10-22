@@ -16,6 +16,7 @@ base64 = "0.22"
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 governor = { version = "0.10", default-features = false, features = ["std"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 infer = { version = "0.22", default-features = false }
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 lettre = { version = "0.11", default-features = false, features = ["builder", "hostname", "smtp-transport", "tokio1-rustls-tls"] }

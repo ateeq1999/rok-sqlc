@@ -30,7 +30,8 @@ where
             updated_at,
             deleted_at,
             token_version,
-            totp_last_step
+            totp_last_step,
+            avatar_url
         FROM users
         WHERE id = $1 AND deleted_at IS NULL
         "#,
@@ -86,7 +87,8 @@ where
             updated_at,
             deleted_at,
             token_version,
-            totp_last_step
+            totp_last_step,
+            avatar_url
         FROM users
         WHERE lower(email) = lower($1) AND deleted_at IS NULL
         "#,
@@ -122,7 +124,8 @@ where
             updated_at,
             deleted_at,
             token_version,
-            totp_last_step
+            totp_last_step,
+            avatar_url
         FROM users
         WHERE deleted_at IS NULL
         ORDER BY id
@@ -163,7 +166,8 @@ where
             updated_at,
             deleted_at,
             token_version,
-            totp_last_step
+            totp_last_step,
+            avatar_url
         FROM users
         WHERE deleted_at IS NULL
         ORDER BY id
@@ -224,7 +228,8 @@ where
             updated_at,
             deleted_at,
             token_version,
-            totp_last_step
+            totp_last_step,
+            avatar_url
         FROM users
         "#,
     );
@@ -273,7 +278,8 @@ where
             updated_at,
             deleted_at,
             token_version,
-            totp_last_step
+            totp_last_step,
+            avatar_url
         FROM users
         "#,
     );

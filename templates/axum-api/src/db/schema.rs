@@ -161,4 +161,12 @@ ALTER TABLE auth_tokens ADD CONSTRAINT auth_tokens_purpose_check CHECK (
 CREATE UNIQUE INDEX api_keys_key_hash_key ON api_keys (key_hash);
 
 CREATE INDEX api_keys_user_id_active_idx ON api_keys (user_id) WHERE revoked_at IS NULL;
+-- Profile photos. `avatar_key` (0001) is the photo's storage key,
+-- `avatars/<random>.jpg`, set by `PUT /users/me/avatar`; `avatar_url` is
+-- the public URL every user response answers, `/api/v1/avatars/<random>.jpg`
+-- (`GET /avatars/{file}`), or `NULL` without a photo. Computed here, so
+-- the generated `users` feature answers it too; `rok-sqlc.toml` hides the
+-- key.
+ALTER TABLE users ADD COLUMN avatar_url TEXT
+    GENERATED ALWAYS AS ('/api/v1/' || avatar_key) STORED;
 "#;

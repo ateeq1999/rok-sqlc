@@ -133,17 +133,20 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
         .app_data(state.outbox.clone())
         .app_data(state.templates.clone());
     register_services(cfg, &state.pool);
-    cfg.app_data(web::Data::new(AccountService::new(state.pool.clone())))
-        .app_data(web::Data::new(AuthService {
-            pool: state.pool.clone(),
-            keys: state.keys.clone().into_inner(),
-            outbox: state.outbox.clone().into_inner(),
-            templates: state.templates.clone().into_inner(),
-            breach: state.breach.clone(),
-            require_verified_email: state.require_verified_email,
-            audit: state.audit.clone(),
-            totp: state.totp.clone(),
-        }));
+    cfg.app_data(web::Data::new(AccountService::new(
+        state.pool.clone(),
+        state.storage.clone(),
+    )))
+    .app_data(web::Data::new(AuthService {
+        pool: state.pool.clone(),
+        keys: state.keys.clone().into_inner(),
+        outbox: state.outbox.clone().into_inner(),
+        templates: state.templates.clone().into_inner(),
+        breach: state.breach.clone(),
+        require_verified_email: state.require_verified_email,
+        audit: state.audit.clone(),
+        totp: state.totp.clone(),
+    }));
     cfg.app_data(web::Data::new(MediaService {
         pool: state.pool.clone(),
         storage: state.storage.clone(),

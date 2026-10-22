@@ -93,6 +93,8 @@ pub struct UserResponse {
     pub totp_enabled: bool,
     /// The `created_at` column.
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// The `avatar_url` column.
+    pub avatar_url: Option<String>,
 }
 
 impl From<User> for UserResponse {
@@ -107,6 +109,7 @@ impl From<User> for UserResponse {
             email_verified: row.email_verified,
             totp_enabled: row.totp_enabled,
             created_at: row.created_at,
+            avatar_url: row.avatar_url,
         }
     }
 }

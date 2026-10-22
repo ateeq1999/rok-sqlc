@@ -50,7 +50,8 @@ where
             updated_at,
             deleted_at,
             token_version,
-            totp_last_step
+            totp_last_step,
+            avatar_url
         FROM users
         WHERE id = ANY($1) AND deleted_at IS NULL
         "#,
@@ -112,6 +113,7 @@ impl<'r> sqlx::FromRow<'r, PgRow> for ApiKeyWithUser {
                     deleted_at: row.try_get("r_deleted_at")?,
                     token_version: row.try_get("r_token_version")?,
                     totp_last_step: row.try_get("r_totp_last_step")?,
+                    avatar_url: row.try_get("r_avatar_url")?,
                 })
             } else {
                 None
@@ -161,7 +163,8 @@ where
             r.updated_at AS r_updated_at,
             r.deleted_at AS r_deleted_at,
             r.token_version AS r_token_version,
-            r.totp_last_step AS r_totp_last_step
+            r.totp_last_step AS r_totp_last_step,
+            r.avatar_url AS r_avatar_url
         FROM api_keys AS t
         LEFT JOIN users AS r
             ON r.id = t.user_id
