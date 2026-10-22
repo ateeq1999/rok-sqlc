@@ -11,10 +11,17 @@
 //! from the database, not the token, so a promotion or demotion applies on
 //! the next request; a caller who is not an admin is a `403` for
 //! `AdminUser`. Both answer through [`AppError`].
+//!
+//! An API key stands in for the JWT: `Authorization: Bearer rok_…` (a key
+//! is told apart by its prefix) or `X-API-Key`. It is checked by
+//! [`api_key::authenticate`]: unknown, revoked or expired keys, and keys of
+//! a deleted or disabled account, are a `401`; a `read` key on a method
+//! that isn't safe, and any key on `/api/v1/auth` or `/api/v1/api-keys`, a
+//! `403`. [`AuthUser::credential`] says which one the caller sent.
 
 use std::sync::Arc;
 
-use axum::extract::{FromRef, FromRequestParts};
+use axum::extract::{FromRef, FromRequestParts, OriginalUri};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, header};
 use sqlx::PgPool;
@@ -23,6 +30,8 @@ use uuid::Uuid;
 use crate::db::queries::session::{SessionStateRow, session_state};
 pub use crate::db::types::Role;
 use crate::error::AppError;
+pub use crate::shared::security::api_key::Credential;
+use crate::shared::security::api_key::{self, Presented};
 pub use crate::shared::security::jwt::{Claims, JwtKeys};
 
 /// A signed-in caller with a live, active account. Take it in a handler to
@@ -33,6 +42,8 @@ pub struct AuthUser {
     pub id: Uuid,
     /// The account's role, from the database.
     pub role: Role,
+    /// How the caller proved who they are: a session or an API key.
+    pub credential: Credential,
 }
 
 /// A signed-in caller whose account has the `admin` role.
@@ -48,10 +59,28 @@ where
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, AppError> {
-        let claims = credentials(&parts.headers, &Arc::<JwtKeys>::from_ref(state))?;
         let pool = PgPool::from_ref(state);
-        let account = session_state(&pool, claims.sub.into()).await?;
-        admit(&claims, account)
+        match credentials(&parts.headers)? {
+            Presented::Session(token) => {
+                let claims = Arc::<JwtKeys>::from_ref(state).decode(token)?;
+                let account = session_state(&pool, claims.sub.into()).await?;
+                admit(&claims, account)
+            }
+            Presented::ApiKey(key) => {
+                // A nested router sees its own part of the path; the rules
+                // name whole paths.
+                let path = parts
+                    .extensions
+                    .get::<OriginalUri>()
+                    .map_or_else(|| parts.uri.path(), |original| original.path());
+                let owner = api_key::authenticate(&pool, key, parts.method.as_str(), path).await?;
+                Ok(AuthUser {
+                    id: owner.id,
+                    role: owner.role,
+                    credential: Credential::ApiKey(owner.scope),
+                })
+            }
+        }
     }
 }
 
@@ -72,14 +101,13 @@ where
     }
 }
 
-/// The verified claims of the bearer token in `headers`.
-fn credentials(headers: &HeaderMap, keys: &JwtKeys) -> Result<Claims, AppError> {
-    let token = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .ok_or_else(|| AppError::Unauthorized("a bearer token is required".to_owned()))?;
-    keys.decode(token)
+/// The credential `headers` present: a bearer token, or an API key.
+fn credentials(headers: &HeaderMap) -> Result<Presented<'_>, AppError> {
+    let value = |name| headers.get(name).and_then(|value| value.to_str().ok());
+    api_key::presented(
+        value(header::AUTHORIZATION.as_str()),
+        value(api_key::HEADER),
+    )
 }
 
 /// The caller of a valid token, given its account's `state` (`None` for no
@@ -93,6 +121,7 @@ fn admit(claims: &Claims, state: Option<SessionStateRow>) -> Result<AuthUser, Ap
     Ok(AuthUser {
         id: claims.sub,
         role: state.role,
+        credential: Credential::Session,
     })
 }
 
@@ -125,7 +154,8 @@ mod tests {
             user,
             AuthUser {
                 id: claims.sub,
-                role: Role::Admin
+                role: Role::Admin,
+                credential: Credential::Session,
             }
         );
         Ok(())

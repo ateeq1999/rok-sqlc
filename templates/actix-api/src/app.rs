@@ -16,6 +16,7 @@ use crate::db::audit_log_entry::models::NewAuditLogEntry;
 use crate::db::pool::init_pool;
 use crate::error::AppError;
 use crate::features::account::{self, AccountService};
+use crate::features::api_keys::{self, ApiKeyService};
 use crate::features::audit_log_entry::AuditLogEntryService;
 use crate::features::auth::service::{AuditEntry, AuditTrail};
 use crate::features::auth::{self, AuthService};
@@ -121,7 +122,9 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
     health::routes(cfg);
     cfg.service(web::redirect("/docs", "/docs/").see_other())
         .service(SwaggerUi::new("/docs/{_:.*}").url("/api-docs/openapi.json", document()));
+    cfg.app_data(web::Data::new(ApiKeyService::new(state.pool.clone())));
     account::routes(cfg, &state.rate_limit);
+    api_keys::routes(cfg);
     auth::routes(cfg, &state.rate_limit);
     configure_all(cfg);
 }

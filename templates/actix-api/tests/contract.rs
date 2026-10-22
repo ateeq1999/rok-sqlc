@@ -55,6 +55,9 @@ const COVERED: &[(&str, &str)] = &[
     ("post", "/api/v1/auth/email/change"),
     ("post", "/api/v1/auth/email/change/confirm"),
     ("post", "/api/v1/auth/invitations"),
+    ("get", "/api/v1/api-keys"),
+    ("post", "/api/v1/api-keys"),
+    ("delete", "/api/v1/api-keys/{id}"),
 ];
 
 /// The differences the application still has, and why.

@@ -6,6 +6,7 @@
 //! (`pub mod <name>;`) and merge its router in `app.rs`.
 
 pub mod account;
+pub mod api_keys;
 pub mod auth;
 mod generated;
 pub use generated::*;

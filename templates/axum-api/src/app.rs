@@ -27,6 +27,7 @@ use crate::db::audit_log_entry::models::NewAuditLogEntry;
 use crate::db::pool::init_pool;
 use crate::error::AppError;
 use crate::features::account::{self, AccountService};
+use crate::features::api_keys::{self, ApiKeyService};
 use crate::features::audit_log_entry::AuditLogEntryService;
 use crate::features::auth::service::{AuditEntry, AuditTrail};
 use crate::features::auth::{self, AuthService};
@@ -73,6 +74,8 @@ pub struct AppState {
     pub auth: Arc<AuthService>,
     /// `account`'s service.
     pub account: Arc<AccountService>,
+    /// `api_keys`'s service.
+    pub api_keys: Arc<ApiKeyService>,
 }
 
 impl AppState {
@@ -94,6 +97,7 @@ impl AppState {
         AppState {
             services: register_services(&pool),
             account: Arc::new(AccountService::new(pool.clone())),
+            api_keys: Arc::new(ApiKeyService::new(pool.clone())),
             auth,
             pool,
             keys,
@@ -173,6 +177,7 @@ pub fn router(state: AppState) -> Router {
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", document()))
         .merge(account::routes(&state.rate_limit))
         .merge(auth::routes(&state.rate_limit))
+        .merge(api_keys::routes())
         .merge(routes())
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .layer(middleware::from_fn_with_state(REQUEST_TIMEOUT, time_out))

@@ -41,10 +41,10 @@ const FEATURE_FILES: &[&str] = &[
     "service_api.rs",
 ];
 
-/// The hand-written features (the M5 account flows) whose [`HAND_WRITTEN_FILES`]
+/// The hand-written features (the M5 account flows, API keys) whose [`HAND_WRITTEN_FILES`]
 /// both templates share: they have no `model.rs`, `repo.rs` or
 /// `service_api.rs`.
-const HAND_WRITTEN: &[&str] = &["auth", "account"];
+const HAND_WRITTEN: &[&str] = &["auth", "account", "api_keys"];
 
 /// The files of a hand-written feature no framework shows through.
 const HAND_WRITTEN_FILES: &[&str] = &["dto.rs", "service.rs"];
