@@ -60,6 +60,7 @@ pub fn table(mut columns: Vec<Column>, primary_key: &[&str]) -> Table {
         foreign_keys: Vec::new(),
         unique_keys: Vec::new(),
         key_constraints: Vec::new(),
+        named_constraints: Vec::new(),
         version_column: None,
         soft_delete_column: None,
         tenant_column: None,

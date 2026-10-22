@@ -5,6 +5,7 @@ use super::*;
 mod alter_column;
 mod alter_table;
 mod check_rules;
+mod constraint_changes;
 mod create_table;
 mod enums;
 mod recovered;
