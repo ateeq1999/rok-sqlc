@@ -73,7 +73,7 @@ pub struct AppState {
     /// `audit_log` feature). A test swaps the breach check or the audit
     /// trail with [`AppState::with_breach`] or [`AppState::with_audit`].
     pub auth: Arc<AuthService>,
-    /// `account`'s service.
+    /// `account`'s service, its profile photos in `storage`.
     pub account: Arc<AccountService>,
     /// Where uploaded bytes are stored: in memory from [`AppState::new`];
     /// [`run`] opens `STORAGE_URL` with [`AppState::with_storage`].
@@ -105,11 +105,12 @@ impl AppState {
             max_upload_bytes: config.media_max_upload_bytes,
             allowed_types: config.media_allowed_types.clone(),
         });
+        let account = Arc::new(AccountService::new(pool.clone(), storage.clone()));
         AppState {
             services: register_services(&pool),
             storage,
             media,
-            account: Arc::new(AccountService::new(pool.clone())),
+            account,
             auth,
             pool,
             keys,
@@ -130,6 +131,7 @@ impl AppState {
     #[must_use]
     pub fn with_storage(mut self, storage: Arc<dyn Storage>) -> Self {
         Arc::make_mut(&mut self.media).storage = storage.clone();
+        Arc::make_mut(&mut self.account).storage = storage.clone();
         self.storage = storage;
         self
     }

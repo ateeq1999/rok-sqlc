@@ -85,6 +85,8 @@ pub struct User {
     pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
     /// The `token_version` column.
     pub token_version: i32,
+    /// The `avatar_url` column.
+    pub avatar_url: Option<String>,
 }
 
 /// Input for `create`: every column the caller may supply.

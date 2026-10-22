@@ -76,6 +76,10 @@ pub struct UserFilter {
     pub deleted_at_is_null: Option<bool>,
     /// Conditions on the `token_version` column.
     pub token_version: Vec<Ordered<i32>>,
+    /// Conditions on the `avatar_url` column.
+    pub avatar_url: Vec<Text>,
+    /// Whether the `avatar_url` column is `NULL`.
+    pub avatar_url_is_null: Option<bool>,
     /// Matches rows with at least one of their `audit_log_entry_by_actor_user` (`audit_log` rows) matching this filter.
     pub audit_log_entry_by_actor_user: Option<Box<AuditLogEntryFilter>>,
     /// Matches rows with at least one of their `audit_log_entry_by_target_user` (`audit_log` rows) matching this filter.
@@ -178,6 +182,10 @@ impl UserFilter {
         for condition in self.token_version {
             condition.push("token_version", query);
         }
+        for condition in self.avatar_url {
+            condition.push("avatar_url", query);
+        }
+        push_null_check("avatar_url", self.avatar_url_is_null, query);
         if let Some(filter) = self.audit_log_entry_by_actor_user {
             let alias = open_exists("audit_log", depth, query)?;
             correlate(&alias, "actor_user_id", outer, "id", query);
@@ -250,6 +258,8 @@ pub enum UserSortKey {
     DeletedAt,
     /// Sorts by the `token_version` column.
     TokenVersion,
+    /// Sorts by the `avatar_url` column.
+    AvatarUrl,
 }
 
 impl UserSortKey {
@@ -274,6 +284,7 @@ impl UserSortKey {
             Self::UpdatedAt => "updated_at",
             Self::DeletedAt => "deleted_at",
             Self::TokenVersion => "token_version",
+            Self::AvatarUrl => "avatar_url",
         }
     }
 }

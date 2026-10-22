@@ -29,7 +29,8 @@ where
             created_at,
             updated_at,
             deleted_at,
-            token_version
+            token_version,
+            avatar_url
         FROM users
         WHERE id = $1 AND deleted_at IS NULL
         "#,
@@ -84,7 +85,8 @@ where
             created_at,
             updated_at,
             deleted_at,
-            token_version
+            token_version,
+            avatar_url
         FROM users
         WHERE lower(email) = lower($1) AND deleted_at IS NULL
         "#,
@@ -119,7 +121,8 @@ where
             created_at,
             updated_at,
             deleted_at,
-            token_version
+            token_version,
+            avatar_url
         FROM users
         WHERE deleted_at IS NULL
         ORDER BY id
@@ -159,7 +162,8 @@ where
             created_at,
             updated_at,
             deleted_at,
-            token_version
+            token_version,
+            avatar_url
         FROM users
         WHERE deleted_at IS NULL
         ORDER BY id
@@ -219,7 +223,8 @@ where
             created_at,
             updated_at,
             deleted_at,
-            token_version
+            token_version,
+            avatar_url
         FROM users
         "#,
     );
@@ -267,7 +272,8 @@ where
             created_at,
             updated_at,
             deleted_at,
-            token_version
+            token_version,
+            avatar_url
         FROM users
         "#,
     );

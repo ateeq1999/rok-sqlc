@@ -104,6 +104,9 @@ pub struct UserResponse {
     pub totp_enabled: bool,
     /// When the account was created.
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// The profile photo's public, cacheable URL,
+    /// `/api/v1/avatars/<file>`, or `null` without one.
+    pub avatar_url: Option<String>,
 }
 
 impl From<User> for UserResponse {
@@ -118,6 +121,7 @@ impl From<User> for UserResponse {
             email_verified: row.email_verified,
             totp_enabled: row.totp_enabled,
             created_at: row.created_at,
+            avatar_url: row.avatar_url,
         }
     }
 }

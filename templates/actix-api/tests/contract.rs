@@ -60,38 +60,13 @@ const COVERED: &[(&str, &str)] = &[
     ("get", "/api/v1/media/{id}"),
     ("delete", "/api/v1/media/{id}"),
     ("get", "/api/v1/media/{id}/content"),
+    ("put", "/api/v1/users/me/avatar"),
+    ("delete", "/api/v1/users/me/avatar"),
+    ("get", "/api/v1/avatars/{file}"),
 ];
 
 /// The differences the application still has, and why.
 const KNOWN: &[(&str, &str)] = &[
-    (
-        "GET /api/v1/users: response 200: properties.items.items.properties: target has `avatar_url`, served has not",
-        "`avatar_url` comes with uploads (a later release)",
-    ),
-    (
-        "GET /api/v1/users/{id}: response 200: properties: target has `avatar_url`, served has not",
-        "`avatar_url` comes with uploads (a later release)",
-    ),
-    (
-        "PATCH /api/v1/users/{id}: response 200: properties: target has `avatar_url`, served has not",
-        "`avatar_url` comes with uploads (a later release)",
-    ),
-    (
-        "POST /api/v1/auth/register: response 201: properties: target has `avatar_url`, served has not",
-        "`avatar_url` comes with uploads (a later release)",
-    ),
-    (
-        "GET /api/v1/auth/me: response 200: properties: target has `avatar_url`, served has not",
-        "`avatar_url` comes with uploads (a later release)",
-    ),
-    (
-        "GET /api/v1/users/me: response 200: properties: target has `avatar_url`, served has not",
-        "`avatar_url` comes with uploads (a later release)",
-    ),
-    (
-        "PATCH /api/v1/users/me: response 200: properties: target has `avatar_url`, served has not",
-        "`avatar_url` comes with uploads (a later release)",
-    ),
     (
         "DELETE /api/v1/users/{id}: parameter `permanent` (query): served has it, target has not",
         "every generated soft-delete `DELETE` takes `?permanent=true` (ADR 0016)",
@@ -103,10 +78,6 @@ const KNOWN: &[(&str, &str)] = &[
     (
         "GET /api/v1/audit-log: parameter `order` (query): served has it, target has not",
         "every generated list takes `order` (ADR 0016)",
-    ),
-    (
-        "POST /api/v1/auth/invitations: response 201: properties: target has `avatar_url`, served has not",
-        "`avatar_url` comes with uploads (a later release)",
     ),
 ];
 
@@ -537,6 +508,8 @@ async fn a_mismatch_breaks_the_contract_with_a_readable_list()
             "GET /api/v1/users/me: response 200: properties.email.type: target \"string\", served \"integer\"",
             "PATCH /api/v1/users/me: response 200: properties.email.type: target \"string\", served \"integer\"",
             "POST /api/v1/auth/invitations: response 201: properties.email.type: target \"string\", served \"integer\"",
+            "PUT /api/v1/users/me/avatar: response 200: properties.email.type: target \"string\", served \"integer\"",
+            "DELETE /api/v1/users/me/avatar: response 200: properties.email.type: target \"string\", served \"integer\"",
         ]
     );
     Ok(())

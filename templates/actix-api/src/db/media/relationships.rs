@@ -49,7 +49,8 @@ where
             created_at,
             updated_at,
             deleted_at,
-            token_version
+            token_version,
+            avatar_url
         FROM users
         WHERE id = ANY($1) AND deleted_at IS NULL
         "#,
@@ -107,6 +108,7 @@ impl<'r> sqlx::FromRow<'r, PgRow> for MediaWithOwner {
                     updated_at: row.try_get("r_updated_at")?,
                     deleted_at: row.try_get("r_deleted_at")?,
                     token_version: row.try_get("r_token_version")?,
+                    avatar_url: row.try_get("r_avatar_url")?,
                 })
             } else {
                 None
@@ -152,7 +154,8 @@ where
             r.created_at AS r_created_at,
             r.updated_at AS r_updated_at,
             r.deleted_at AS r_deleted_at,
-            r.token_version AS r_token_version
+            r.token_version AS r_token_version,
+            r.avatar_url AS r_avatar_url
         FROM media AS t
         LEFT JOIN users AS r
             ON r.id = t.owner_id

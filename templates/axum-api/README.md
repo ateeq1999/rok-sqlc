@@ -65,6 +65,13 @@ documents each one, the settings, sending real mail and adding a flow
   password with it through `POST /api/v1/auth/password/reset`.
 - **The account.** `GET /api/v1/auth/me` and `GET`/`PATCH
   /api/v1/users/me` are the signed-in user's own.
+- **Profile photo.** `PUT /api/v1/users/me/avatar` takes a raw JPEG, PNG
+  or WebP image of at most 2 MiB (`413` past it; anything undecodable, or
+  over 8192×8192 pixels, is a `422`), stores a 256×256 JPEG of its centre
+  (re-encoded, so no EXIF survives) and deletes the previous one;
+  `DELETE /api/v1/users/me/avatar` removes it. Every user response
+  answers `avatar_url`, `/api/v1/avatars/<file>` or `null`, which anyone
+  may fetch, cacheable for good (a new photo gets a new name).
 
 Every `/auth` route is limited to `AUTH_RATE_LIMIT` requests a minute per
 IP (`429` past it). A flow refusing a well-formed request answers `400`
@@ -145,6 +152,7 @@ base64 = "0.22"
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 governor = { version = "0.10", default-features = false, features = ["std"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 infer = { version = "0.22", default-features = false }
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 lettre = { version = "0.11", default-features = false, features = ["builder", "hostname", "smtp-transport", "tokio1-rustls-tls"] }
@@ -207,6 +215,7 @@ and rate-limit tests need no database. The lints in `Cargo.toml` deny
   `migrations/`, `queries/`, `src/{lib,main,app,config,error,openapi}.rs`,
   `src/shared/{mod,auth}.rs`, `src/shared/rate_limit/`,
   `src/shared/security/`, `src/shared/mail/`, `src/shared/storage/`,
+  `src/shared/thumbnail.rs`,
   `src/features/mod.rs`, the hand-written `src/features/{auth,account,media}/`,
   each feature's `service.rs` (business rules go there), `tests/`, and this README.
 
