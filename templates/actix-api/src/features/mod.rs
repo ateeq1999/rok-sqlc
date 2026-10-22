@@ -8,4 +8,5 @@
 pub mod account;
 pub mod auth;
 mod generated;
+pub mod media;
 pub use generated::*;

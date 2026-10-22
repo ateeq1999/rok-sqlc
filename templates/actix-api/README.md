@@ -67,6 +67,33 @@ IP (`429` past it). A flow refusing a well-formed request answers `400`
 with `invalid_token`, `wrong_password` or `breached_password`; a body of the
 wrong shape answers `422`.
 
+## Uploads
+
+`/api/v1/media` holds each signed-in user's files (the hand-written
+`media` feature):
+
+- `POST /api/v1/media` takes the raw file as its body (its `Content-Type`
+  is ignored), at most `MEDIA_MAX_UPLOAD_BYTES` (10 MiB; `413` past it).
+  The type is detected from the bytes and must be one of
+  `MEDIA_ALLOWED_TYPES` (JPEG, PNG, WebP, GIF and PDF; else `415`).
+  `?filename=` or the `X-Filename` header names the file (255 characters
+  at most). It answers `201` with the file's metadata and its `url`,
+  `/api/v1/media/{id}/content`.
+- `GET /api/v1/media` lists the caller's files, newest first
+  (`?page=&per_page=`); `GET` and `DELETE /api/v1/media/{id}` read or
+  delete one.
+- `GET /api/v1/media/{id}/content` answers the bytes with the detected
+  `Content-Type`, `X-Content-Type-Options: nosniff`, and
+  `Content-Disposition: attachment` for anything but an image.
+
+Another user's file is a `404`. The upload route has its own `PayloadConfig`,
+in place of actix-web's default limit. The bytes go through the
+`Storage` port in `src/shared/storage/` (put, get and delete by key, the
+content type kept), over `object_store`, chosen by `STORAGE_URL`:
+`file://./storage` (the default, a `storage/` directory where the server
+runs), `s3://<bucket>` (the credentials, region and `AWS_ENDPOINT` come
+from the `AWS_*` variables) or `memory://`. The tests store in memory.
+
 Every other route but health needs `Authorization: Bearer <token>`: an
 HS256 JWT signed with `JWT_SECRET`, with `sub` (the user's id), `role`
 (`user` or `admin`), `tv` (the account's `token_version`) and `exp`.
@@ -92,10 +119,13 @@ actix-web = "4"
 argon2 = "0.6"
 async-trait = "0.1"
 base64 = "0.22"
+bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 governor = { version = "0.10", default-features = false, features = ["std"] }
+infer = { version = "0.22", default-features = false }
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 lettre = { version = "0.11", default-features = false, features = ["builder", "hostname", "smtp-transport", "tokio1-rustls-tls"] }
+object_store = { version = "0.13", features = ["aws"] }
 rand = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
@@ -150,9 +180,9 @@ test needs no database. The lints in `Cargo.toml` deny `unwrap`, `expect`,
 - **Yours** (first line `Scaffolded once`, or no header): `rok-sqlc.toml`,
   `migrations/`, `queries/`, `src/{lib,main,app,config,error,openapi}.rs`,
   `src/shared/{mod,auth}.rs`, `src/shared/rate_limit/`,
-  `src/shared/security/`, `src/shared/mail/`, `src/features/mod.rs`, the hand-written
-  `src/features/{auth,account}/`, each feature's `service.rs` (business
-  rules go there), `tests/`, and this README.
+  `src/shared/security/`, `src/shared/mail/`, `src/shared/storage/`,
+  `src/features/mod.rs`, the hand-written `src/features/{auth,account,media}/`,
+  each feature's `service.rs` (business rules go there), `tests/`, and this README.
 
 `queries/` holds hand-written SQL, one file per feature: `rok-sqlc g` turns
 `queries/auth.sql` into `src/db/queries/auth.rs`, one function per query.
@@ -183,7 +213,8 @@ Change the schema with a new migration, adjust `rok-sqlc.toml`, run
   (`AuditLogEntryResponse`), served at `/audit-log`, read-only.
 - `[api.search]` and `[api.sort]` give the users list its `q` and
   `UserSort` (`created_at`, `email`).
-- `media` and `api_keys` are in the schema for the features to come, and
+- `api_keys` is in the schema for a feature to come, `media` serves the
+  hand-written `media` feature, and
   `auth_tokens` (single-use mailed tokens) and `outbound_mail` (the mail
   outbox) for the account flows; none has a generated API (`[api]
   exclude`).
@@ -203,7 +234,7 @@ features on top of this one, for this template and the axum one:
   `requires_totp`/`pending_token`, which `LoginResponse` already carries);
 - `api-keys` (create returning the key once, revoke, an unpaginated list),
   with an `ApiKey` extractor;
-- uploads: avatars (`avatar_url`) and `media`, behind a storage port;
+- avatars (`avatar_url`), stored through the `Storage` port;
 - `POST /users` with a password, and the business rules of `update` and
   `remove` (not yourself, not the last admin), with their audit-log
   entries.

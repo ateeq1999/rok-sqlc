@@ -19,6 +19,7 @@ use crate::features::account::{self, AccountService};
 use crate::features::audit_log_entry::AuditLogEntryService;
 use crate::features::auth::service::{AuditEntry, AuditTrail};
 use crate::features::auth::{self, AuthService};
+use crate::features::media::{self, MediaService};
 use crate::features::{configure_all, register_services};
 use crate::openapi::document;
 use crate::shared::health;
@@ -26,6 +27,7 @@ use crate::shared::mail::{Outbox, Sender, Templates, transport};
 use crate::shared::rate_limit::RateLimit;
 use crate::shared::security::breach::{self, BreachCheck};
 use crate::shared::security::jwt::JwtKeys;
+use crate::shared::storage::{self, ObjectStorage, Storage};
 
 /// What every worker shares, built once: by [`run`], or by a test.
 #[derive(Clone)]
@@ -49,6 +51,13 @@ pub struct AppState {
     /// Where `auth` records what admins do: the `audit_log` feature, or a
     /// test's own.
     pub audit: Arc<dyn AuditTrail>,
+    /// Where uploaded bytes are stored: in memory from [`AppState::new`];
+    /// [`run`] opens `STORAGE_URL` with [`AppState::with_storage`].
+    pub storage: Arc<dyn Storage>,
+    /// `MEDIA_MAX_UPLOAD_BYTES`.
+    pub media_max_upload_bytes: usize,
+    /// `MEDIA_ALLOWED_TYPES`.
+    pub media_allowed_types: Vec<String>,
 }
 
 impl AppState {
@@ -64,7 +73,17 @@ impl AppState {
             rate_limit: RateLimit::per_minute(config.auth_rate_limit, config.trust_proxy),
             require_verified_email: config.require_verified_email,
             audit: Arc::new(AuditLog(AuditLogEntryService::new(pool))),
+            storage: Arc::new(ObjectStorage::memory()),
+            media_max_upload_bytes: config.media_max_upload_bytes,
+            media_allowed_types: config.media_allowed_types.clone(),
         }
+    }
+
+    /// This state, storing uploads in `storage`.
+    #[must_use]
+    pub fn with_storage(mut self, storage: Arc<dyn Storage>) -> Self {
+        self.storage = storage;
+        self
     }
 }
 
@@ -75,7 +94,8 @@ pub async fn run(config: Config) -> std::io::Result<()> {
         .await
         .map_err(std::io::Error::other)?;
     let mailer = transport::from_config(&config).map_err(std::io::Error::other)?;
-    let state = AppState::new(pool, &config);
+    let storage = storage::open(&config.storage_url).map_err(std::io::Error::other)?;
+    let state = AppState::new(pool, &config).with_storage(storage);
     let sender = Sender::new(state.pool.clone(), mailer, &state.outbox);
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let sending = actix_web::rt::spawn(sender.run(async {
@@ -118,11 +138,18 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
             require_verified_email: state.require_verified_email,
             audit: state.audit.clone(),
         }));
+    cfg.app_data(web::Data::new(MediaService {
+        pool: state.pool.clone(),
+        storage: state.storage.clone(),
+        max_upload_bytes: state.media_max_upload_bytes,
+        allowed_types: state.media_allowed_types.clone(),
+    }));
     health::routes(cfg);
     cfg.service(web::redirect("/docs", "/docs/").see_other())
         .service(SwaggerUi::new("/docs/{_:.*}").url("/api-docs/openapi.json", document()));
     account::routes(cfg, &state.rate_limit);
     auth::routes(cfg, &state.rate_limit);
+    media::routes(cfg, state.media_max_upload_bytes);
     configure_all(cfg);
 }
 

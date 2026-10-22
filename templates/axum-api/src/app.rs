@@ -30,6 +30,7 @@ use crate::features::account::{self, AccountService};
 use crate::features::audit_log_entry::AuditLogEntryService;
 use crate::features::auth::service::{AuditEntry, AuditTrail};
 use crate::features::auth::{self, AuthService};
+use crate::features::media::{self, MediaService};
 use crate::features::{Services, register_services, routes};
 use crate::openapi::document;
 use crate::shared::health;
@@ -37,6 +38,7 @@ use crate::shared::mail::{Mailer, Outbox, Sender, Templates, transport};
 use crate::shared::rate_limit::RateLimit;
 use crate::shared::security::breach::{self, BreachCheck};
 use crate::shared::security::jwt::JwtKeys;
+use crate::shared::storage::{self, ObjectStorage, Storage};
 
 /// The largest request body: 2 MiB. A JSON body over it is a `413`.
 const BODY_LIMIT: usize = 2 * 1024 * 1024;
@@ -73,6 +75,11 @@ pub struct AppState {
     pub auth: Arc<AuthService>,
     /// `account`'s service.
     pub account: Arc<AccountService>,
+    /// Where uploaded bytes are stored: in memory from [`AppState::new`];
+    /// [`run`] opens `STORAGE_URL` with [`AppState::with_storage`].
+    pub storage: Arc<dyn Storage>,
+    /// `media`'s service, over `storage` and the `MEDIA_*` settings.
+    pub media: Arc<MediaService>,
 }
 
 impl AppState {
@@ -91,8 +98,17 @@ impl AppState {
             require_verified_email: config.require_verified_email,
             audit: Arc::new(AuditLog(AuditLogEntryService::new(pool.clone()))),
         });
+        let storage: Arc<dyn Storage> = Arc::new(ObjectStorage::memory());
+        let media = Arc::new(MediaService {
+            pool: pool.clone(),
+            storage: storage.clone(),
+            max_upload_bytes: config.media_max_upload_bytes,
+            allowed_types: config.media_allowed_types.clone(),
+        });
         AppState {
             services: register_services(&pool),
+            storage,
+            media,
             account: Arc::new(AccountService::new(pool.clone())),
             auth,
             pool,
@@ -107,6 +123,14 @@ impl AppState {
     #[must_use]
     pub fn with_breach(mut self, breach: Arc<dyn BreachCheck>) -> Self {
         Arc::make_mut(&mut self.auth).breach = breach;
+        self
+    }
+
+    /// This state, storing uploads in `storage`.
+    #[must_use]
+    pub fn with_storage(mut self, storage: Arc<dyn Storage>) -> Self {
+        Arc::make_mut(&mut self.media).storage = storage.clone();
+        self.storage = storage;
         self
     }
 
@@ -125,7 +149,8 @@ pub async fn run(config: Config) -> std::io::Result<()> {
         .await
         .map_err(std::io::Error::other)?;
     let mailer = transport::from_config(&config).map_err(std::io::Error::other)?;
-    let state = AppState::new(pool, &config);
+    let storage = storage::open(&config.storage_url).map_err(std::io::Error::other)?;
+    let state = AppState::new(pool, &config).with_storage(storage);
     let listener = TcpListener::bind(&config.bind_addr).await?;
     tracing::info!(addr = %config.bind_addr, "listening");
     serve(listener, state, mailer, shutdown_signal()).await
@@ -173,6 +198,7 @@ pub fn router(state: AppState) -> Router {
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", document()))
         .merge(account::routes(&state.rate_limit))
         .merge(auth::routes(&state.rate_limit))
+        .merge(media::routes(state.media.max_upload_bytes))
         .merge(routes())
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .layer(middleware::from_fn_with_state(REQUEST_TIMEOUT, time_out))
