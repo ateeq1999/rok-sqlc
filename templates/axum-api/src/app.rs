@@ -32,6 +32,7 @@ use crate::features::audit_log_entry::AuditLogEntryService;
 use crate::features::auth::service::{AuditEntry, AuditTrail};
 use crate::features::auth::{self, AuthService};
 use crate::features::media::{self, MediaService};
+use crate::features::two_factor::{self, TwoFactorService};
 use crate::features::{Services, register_services, routes};
 use crate::openapi::document;
 use crate::shared::health;
@@ -75,6 +76,9 @@ pub struct AppState {
     /// `audit_log` feature). A test swaps the breach check or the audit
     /// trail with [`AppState::with_breach`] or [`AppState::with_audit`].
     pub auth: Arc<AuthService>,
+    /// `two_factor`'s service, over the parts above and the cipher
+    /// (`TOTP_ENCRYPTION_KEY`).
+    pub two_factor: Arc<TwoFactorService>,
     /// `account`'s service, its profile photos in `storage`.
     pub account: Arc<AccountService>,
     /// `api_keys`'s service.
@@ -104,6 +108,12 @@ impl AppState {
             breach: breach::from_config(config),
             require_verified_email: config.require_verified_email,
             audit: Arc::new(AuditLog(AuditLogEntryService::new(pool.clone()))),
+        });
+        let two_factor = Arc::new(TwoFactorService {
+            pool: pool.clone(),
+            keys: keys.clone(),
+            outbox: Arc::new(outbox.clone()),
+            templates: templates.clone(),
             totp: Arc::new(TotpCipher::new(&config.totp_encryption_key)),
         });
         let storage = storage::open(&config.storage_url)?;
@@ -121,6 +131,7 @@ impl AppState {
             account,
             api_keys: Arc::new(ApiKeyService::new(pool.clone())),
             auth,
+            two_factor,
             pool,
             keys,
             outbox,
@@ -195,10 +206,10 @@ pub async fn serve(
 
 /// The whole application over `state`: `/health/live` and
 /// `/health/ready`, the `OpenAPI` document at `/api-docs/openapi.json` with
-/// Swagger UI at `/docs/`, every feature's routes (the hand-written `account` and
-/// `auth`, their `/auth` routes behind `state.rate_limit`), and the middleware:
-/// tracing, request ids (`x-request-id`), CORS, a timeout and a body
-/// limit. Tests drive the same router.
+/// Swagger UI at `/docs/`, every feature's routes (the hand-written
+/// `account`, `auth` and `two_factor`, their `/auth` routes behind
+/// `state.rate_limit`), and the middleware: tracing, request ids
+/// (`x-request-id`), CORS, a timeout and a body limit. Tests drive the same router.
 ///
 /// Mount a hand-written feature by merging its `routes()` here; wrap the
 /// routes that need it in `state.rate_limit.clone()` (a `Layer`).
@@ -209,6 +220,7 @@ pub fn router(state: AppState) -> Router {
         .merge(account::routes(&state.rate_limit))
         .merge(auth::routes(&state.rate_limit))
         .merge(api_keys::routes())
+        .merge(two_factor::routes(&state.rate_limit))
         .merge(media::routes(state.media.max_upload_bytes))
         .merge(routes())
         .layer(DefaultBodyLimit::max(BODY_LIMIT))

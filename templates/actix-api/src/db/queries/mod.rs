@@ -8,3 +8,4 @@ pub mod auth;
 pub mod mail;
 pub mod media;
 pub mod session;
+pub mod two_factor;

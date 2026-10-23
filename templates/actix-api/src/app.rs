@@ -21,6 +21,7 @@ use crate::features::audit_log_entry::AuditLogEntryService;
 use crate::features::auth::service::{AuditEntry, AuditTrail};
 use crate::features::auth::{self, AuthService};
 use crate::features::media::{self, MediaService};
+use crate::features::two_factor::{self, TwoFactorService};
 use crate::features::{configure_all, register_services};
 use crate::openapi::document;
 use crate::shared::health;
@@ -126,9 +127,10 @@ pub async fn run(config: Config) -> std::io::Result<()> {
 /// outbox and templates as app data, every feature's service,
 /// `/health/live` and `/health/ready`, the `OpenAPI` document at
 /// `/api-docs/openapi.json` with Swagger UI at `/docs/`, and every feature's
-/// routes: the hand-written `account` and `auth` first, so that
-/// `/users/me` is not taken for `/users/{id}`. Tests build the same application with
-/// `actix_web::test::init_service(App::new().configure(...))`.
+/// routes: the hand-written `account`, `two_factor` and `auth` first, so
+/// that `/users/me` is not taken for `/users/{id}` and the `/auth` scope
+/// doesn't swallow `/auth/me` or `/auth/2fa`. Tests build the same
+/// application with `actix_web::test::init_service(App::new().configure(...))`.
 pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
     cfg.app_data(web::Data::new(state.pool.clone()))
         .app_data(state.keys.clone())
@@ -147,6 +149,12 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
         breach: state.breach.clone(),
         require_verified_email: state.require_verified_email,
         audit: state.audit.clone(),
+    }))
+    .app_data(web::Data::new(TwoFactorService {
+        pool: state.pool.clone(),
+        keys: state.keys.clone().into_inner(),
+        outbox: state.outbox.clone().into_inner(),
+        templates: state.templates.clone().into_inner(),
         totp: state.totp.clone(),
     }));
     cfg.app_data(web::Data::new(MediaService {
@@ -161,6 +169,7 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
     cfg.app_data(web::Data::new(ApiKeyService::new(state.pool.clone())));
     account::routes(cfg, &state.rate_limit);
     api_keys::routes(cfg);
+    two_factor::routes(cfg, &state.rate_limit);
     auth::routes(cfg, &state.rate_limit);
     media::routes(cfg);
     configure_all(cfg);

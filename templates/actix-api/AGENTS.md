@@ -107,14 +107,15 @@ units, time is UTC, and ids are UUIDs.
 ## Accounts
 
 `features/auth/` (sign-up, sign-in, email verification, the password
-flows, email change, invitations, two-factor sign-in) and `features/account/` (`/auth/me`,
-`/users/me`) are hand-written and follow the rules above. Keep to how
-they work:
+flows, email change, invitations), `features/two_factor/`
+(`/auth/2fa/*`) and `features/account/` (`/auth/me`, `/users/me`) are
+hand-written and follow the rules above. Keep to how they work:
 
-- **SQL.** `auth`'s goes in `queries/auth.sql`, `account`'s in
-  `queries/account.sql`; SQL `shared/` runs goes in a file named after no
-  feature (`queries/session.sql`, `queries/mail.sql`). Run `rok-sqlc g`
-  after editing one.
+- **SQL.** `auth`'s goes in `queries/auth.sql`, `two_factor`'s in
+  `queries/two_factor.sql`, `account`'s in `queries/account.sql`; SQL
+  `shared/` runs goes in a file named after no feature
+  (`queries/session.sql`, `queries/mail.sql`). Run `rok-sqlc g` after
+  editing one.
 - **Mailed links.** A token purpose (the `auth_tokens.purpose` check), its
   arm in `policy` (lifetime and message) in
   `shared/security/auth_token.rs`, and a `Templates` method in

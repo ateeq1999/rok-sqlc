@@ -28,10 +28,6 @@ pub fn routes(limit: &RateLimit) -> Router<AppState> {
         .route("/email/change", post(handlers::request_change))
         .route("/email/change/confirm", post(handlers::confirm_change))
         .route("/invitations", post(handlers::invite))
-        .route("/2fa/setup", post(handlers::setup_totp))
-        .route("/2fa/enable", post(handlers::enable_totp))
-        .route("/2fa/disable", post(handlers::disable_totp))
-        .route("/2fa/verify", post(handlers::verify_totp))
         .fallback(no_such_route)
         .method_not_allowed_fallback(no_such_route)
         .layer(limit.clone());
