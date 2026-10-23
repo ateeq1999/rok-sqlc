@@ -162,7 +162,7 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
     account::routes(cfg, &state.rate_limit);
     api_keys::routes(cfg);
     auth::routes(cfg, &state.rate_limit);
-    media::routes(cfg, state.media_max_upload_bytes);
+    media::routes(cfg);
     configure_all(cfg);
 }
 

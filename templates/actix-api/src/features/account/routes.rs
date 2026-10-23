@@ -5,7 +5,6 @@
 
 use actix_web::web;
 
-use super::dto::AVATAR_MAX_BYTES;
 use super::handlers;
 use crate::shared::rate_limit::RateLimit;
 
@@ -14,7 +13,8 @@ use crate::shared::rate_limit::RateLimit;
 /// `/api/v1/auth` nor `/api/v1/users/{id}` captures them;
 /// `/api/v1/auth/me` counts against the `/auth` rate `limit` like the rest
 /// of `/auth`. `PUT /api/v1/users/me/avatar` reads a raw body of at most
-/// 2 MiB, its own `PayloadConfig`.
+/// 2 MiB, read after the caller is authenticated (see
+/// [`crate::shared::body`]).
 pub fn routes(cfg: &mut web::ServiceConfig, limit: &RateLimit) {
     cfg.service(
         web::resource("/api/v1/auth/me")
@@ -28,7 +28,6 @@ pub fn routes(cfg: &mut web::ServiceConfig, limit: &RateLimit) {
     )
     .service(
         web::resource("/api/v1/users/me/avatar")
-            .app_data(web::PayloadConfig::new(AVATAR_MAX_BYTES))
             .route(web::put().to(handlers::upload_avatar))
             .route(web::delete().to(handlers::remove_avatar)),
     )

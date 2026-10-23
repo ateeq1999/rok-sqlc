@@ -103,9 +103,9 @@ pub async fn update_me(
 pub async fn upload_avatar(
     service: web::Data<AccountService>,
     caller: AuthUser,
-    body: Result<web::Bytes, actix_web::Error>,
+    body: web::Payload,
 ) -> Result<HttpResponse, AppError> {
-    let image = body::limited(body, AVATAR_MAX_BYTES, "image")?;
+    let image = body::read(body, AVATAR_MAX_BYTES, "image").await?;
     let user = service.set_avatar(caller.id.into(), image).await?;
     Ok(HttpResponse::Ok().json(UserResponse::from(user)))
 }

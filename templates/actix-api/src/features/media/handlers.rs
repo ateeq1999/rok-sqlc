@@ -71,9 +71,9 @@ pub async fn upload(
     caller: AuthUser,
     query: web::Query<UploadMediaQuery>,
     request: HttpRequest,
-    body: Result<web::Bytes, actix_web::Error>,
+    body: web::Payload,
 ) -> Result<HttpResponse, AppError> {
-    let bytes = body::limited(body, service.max_upload_bytes, "file")?;
+    let bytes = body::read(body, service.max_upload_bytes, "file").await?;
     let filename = query.into_inner().filename.or_else(|| {
         request
             .headers()

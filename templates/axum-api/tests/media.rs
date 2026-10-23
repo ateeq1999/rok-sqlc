@@ -311,3 +311,19 @@ async fn the_state_stores_uploads_where_storage_url_says() -> TestResult {
     assert_eq!(stored?, b"stored");
     Ok(())
 }
+
+#[tokio::test]
+async fn an_unauthenticated_upload_is_refused_whatever_its_size() -> TestResult {
+    let Some(db) = Database::fresh().await? else {
+        return Ok(());
+    };
+    let state = state(&db.pool)?;
+    let mut big = PNG.to_vec();
+    big.resize(9 * 1024 * 1024, 0);
+    for token in [None, Some("rok_unknown0_00000000000000000000000000000000")] {
+        let answer = send(&state, token, Method::POST, MEDIA, &[], big.clone()).await?;
+        assert_eq!(answer.status, StatusCode::UNAUTHORIZED, "{token:?}");
+        assert_eq!(answer.json()?["error"]["code"], "unauthorized");
+    }
+    db.drop().await
+}
