@@ -98,7 +98,12 @@ pub(super) fn apply_alter(
                 alter_column(table, &ident_name(column_name), op, enums)?;
             }
             AlterTableOperation::RenameConstraint { old_name, new_name } => {
-                rename_constraint(table, &ident_name(old_name), &ident_name(new_name));
+                rename_constraint(
+                    table,
+                    &ident_name(old_name),
+                    &ident_name(new_name),
+                    warnings,
+                )?;
             }
             // Clauses that leave the columns and keys as they are. Triggers
             // are followed by `CREATE` and `DROP TRIGGER` only.
@@ -282,10 +287,7 @@ pub(super) fn drop_column(
     };
     table.columns.remove(index);
     if table.primary_key.iter().any(|key| key == name) {
-        table.primary_key.clear();
-        for column in &mut table.columns {
-            column.is_primary_key = false;
-        }
+        clear_primary_key(table);
     }
     table
         .unique_keys
@@ -296,6 +298,15 @@ pub(super) fn drop_column(
     table.foreign_keys.retain(|key| key.column != name);
     drop_column_constraints(table, name);
     Ok(())
+}
+
+/// Leaves `table` without a primary key; its columns stay as they are
+/// (still `NOT NULL`).
+pub(super) fn clear_primary_key(table: &mut Table) {
+    table.primary_key.clear();
+    for column in &mut table.columns {
+        column.is_primary_key = false;
+    }
 }
 
 fn rename_column(table: &mut Table, old: &str, new: &str) -> std::result::Result<(), String> {

@@ -9,7 +9,7 @@ use sqlparser::ast::{Expr, Ident, visit_expressions, visit_expressions_mut};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 
-use super::alter::column_index;
+use super::alter::{clear_primary_key, column_index};
 use super::checks::{apply_range_check, range_check};
 use super::enums::{restrict_to_values, value_list_check};
 use super::names::{default_check_or_foreign_key_name, ident_name, table_constraint_names};
@@ -79,10 +79,7 @@ pub(super) fn drop_constraint(
     if let Some(index) = position(&table.key_constraints, |key| key.name == name) {
         let key = table.key_constraints.remove(index);
         if key.primary {
-            table.primary_key.clear();
-            for column in &mut table.columns {
-                column.is_primary_key = false;
-            }
+            clear_primary_key(table);
         } else {
             let unique = UniqueKey::new(key.columns);
             if let Some(index) = position(&table.unique_keys, |key| *key == unique) {
@@ -103,9 +100,33 @@ pub(super) fn drop_constraint(
     }
 }
 
-/// Applies `RENAME CONSTRAINT` to a constraint of any kind. An unknown name
-/// changes nothing.
-pub(super) fn rename_constraint(table: &mut Table, old: &str, new: &str) {
+/// Applies `RENAME CONSTRAINT` to a constraint of any kind. Like PostgreSQL,
+/// a `new` name the table already has fails, and so does an unknown `old`
+/// one, unless it has the name PostgreSQL gives a kind the model doesn't
+/// track (`…_not_null`, `…_excl`): that changes nothing and adds a warning
+/// to `warnings`.
+pub(super) fn rename_constraint(
+    table: &mut Table,
+    old: &str,
+    new: &str,
+    warnings: &mut Vec<String>,
+) -> std::result::Result<(), String> {
+    if !table_constraint_names(table).any(|name| name == old) {
+        if old.ends_with("_not_null") || old.ends_with("_excl") {
+            warnings.push(format!(
+                "RENAME CONSTRAINT: constraint `{old}` is not one rok-sqlc tracks (such as an EXCLUDE or NOT NULL constraint); the statement changes nothing in the generated code"
+            ));
+            return Ok(());
+        }
+        return Err(format!(
+            "RENAME CONSTRAINT: constraint `{old}` does not exist"
+        ));
+    }
+    if old != new && table_constraint_names(table).any(|name| name == new) {
+        return Err(format!(
+            "RENAME CONSTRAINT: constraint `{new}` already exists"
+        ));
+    }
     let names = table
         .key_constraints
         .iter_mut()
@@ -122,6 +143,7 @@ pub(super) fn rename_constraint(table: &mut Table, old: &str, new: &str) {
             new.clone_into(name);
         }
     }
+    Ok(())
 }
 
 /// Follows a column rename in the named constraints, their check

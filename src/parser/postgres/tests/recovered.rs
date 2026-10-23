@@ -179,7 +179,6 @@ fn renaming_a_key_constraint_or_its_index_renames_the_constraint() {
         "CREATE TABLE t (id BIGINT PRIMARY KEY, a TEXT UNIQUE, b TEXT);
          ALTER INDEX t_pkey RENAME TO t_primary;
          ALTER TABLE t RENAME CONSTRAINT t_a_key TO t_a_unique;
-         ALTER TABLE t RENAME CONSTRAINT some_check TO other_check;
          ALTER INDEX IF EXISTS missing RENAME TO still_missing;
          ALTER TABLE t ADD UNIQUE (a, b), ADD UNIQUE (a);",
     );

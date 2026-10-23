@@ -258,3 +258,46 @@ fn an_any_array_check_in_create_table_stays_plain_text() {
     );
     assert_eq!(table.columns[1].value_list, None);
 }
+
+#[test]
+fn renaming_a_missing_constraint_fails_the_table() {
+    let parsed = parse(
+        "CREATE TABLE notes (id BIGSERIAL PRIMARY KEY, body TEXT);
+         ALTER TABLE notes RENAME CONSTRAINT notes_body_chek TO notes_body_nonempty;",
+    );
+    assert!(parsed.schema.tables.is_empty());
+    assert_eq!(
+        parsed.failures[0].reason,
+        "RENAME CONSTRAINT: constraint `notes_body_chek` does not exist"
+    );
+}
+
+#[test]
+fn renaming_to_a_taken_name_fails_the_table() {
+    let parsed = parse(
+        "CREATE TABLE notes (id BIGSERIAL PRIMARY KEY, body TEXT CHECK (body <> ''));
+         ALTER TABLE notes RENAME CONSTRAINT notes_body_check TO notes_pkey;",
+    );
+    assert!(parsed.schema.tables.is_empty());
+    assert_eq!(
+        parsed.failures[0].reason,
+        "RENAME CONSTRAINT: constraint `notes_pkey` already exists"
+    );
+}
+
+#[test]
+fn renaming_a_not_null_constraint_warns() {
+    let parsed = parse(
+        "CREATE TABLE notes (id BIGSERIAL PRIMARY KEY, body TEXT NOT NULL);
+         ALTER TABLE notes RENAME CONSTRAINT notes_body_not_null TO body_required;",
+    );
+    assert!(parsed.failures.is_empty(), "{:?}", parsed.failures);
+    assert_eq!(parsed.warnings.len(), 1, "{:?}", parsed.warnings);
+    assert!(
+        parsed.warnings[0].contains(
+            "RENAME CONSTRAINT: constraint `notes_body_not_null` is not one rok-sqlc tracks"
+        ),
+        "{:?}",
+        parsed.warnings
+    );
+}

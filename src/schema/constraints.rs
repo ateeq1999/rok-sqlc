@@ -90,13 +90,14 @@ impl UniqueKey {
         {
             condition = inner.trim();
         }
-        let Some(subject) = condition
-            .strip_suffix("IS NULL")
-            .or_else(|| condition.strip_suffix("is null"))
-        else {
+        let words: Vec<&str> = condition.split_whitespace().collect();
+        let [subject @ .., is, null] = words.as_slice() else {
             return false;
         };
-        let subject = subject.trim();
+        if !is.eq_ignore_ascii_case("is") || !null.eq_ignore_ascii_case("null") {
+            return false;
+        }
+        let subject = subject.join(" ");
         subject == column || subject == format!("\"{}\"", column.replace('"', "\"\""))
     }
 }
@@ -119,6 +120,9 @@ mod tests {
         assert!(UniqueKey::new(vec!["sku".to_owned()]).counts(None));
         assert!(partial("deleted_at IS NULL").counts(soft_delete));
         assert!(partial("(deleted_at IS NULL)").counts(soft_delete));
+        assert!(partial("deleted_at Is Null").counts(soft_delete));
+        assert!(partial("deleted_at is  NULL").counts(soft_delete));
+        assert!(!partial("deleted_at is not null").counts(soft_delete));
         assert!(!partial("deleted_at IS NULL").counts(None));
         assert!(!partial("archived_at IS NULL").counts(soft_delete));
         assert!(!partial("deleted_at IS NOT NULL").counts(soft_delete));
