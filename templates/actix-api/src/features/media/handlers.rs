@@ -3,13 +3,14 @@
 //! The `media` handlers: each parses the request, calls one
 //! [`MediaService`] method, and answers.
 
-use actix_web::http::{StatusCode, header};
+use actix_web::http::header;
 use actix_web::{HttpRequest, HttpResponse, web};
 
 use super::dto::{ListMediaQuery, MediaResponse, UploadMediaQuery};
 use super::service::MediaService;
 use crate::error::AppError;
 use crate::shared::auth::AuthUser;
+use crate::shared::body;
 use crate::shared::response::{ErrorBody, PaginatedResponse};
 
 /// The header an upload may name its file in, when the query string
@@ -72,18 +73,7 @@ pub async fn upload(
     request: HttpRequest,
     body: Result<web::Bytes, actix_web::Error>,
 ) -> Result<HttpResponse, AppError> {
-    // Over the route's `PayloadConfig` limit, actix-web's own answer is a
-    // plain-text `413`: answer the wire standard's instead.
-    let bytes = match body {
-        Ok(bytes) => bytes,
-        Err(error) if error.as_response_error().status_code() == StatusCode::PAYLOAD_TOO_LARGE => {
-            return Err(AppError::PayloadTooLarge(format!(
-                "the file is larger than {} bytes",
-                service.max_upload_bytes
-            )));
-        }
-        Err(error) => return Err(AppError::BadRequest(error.to_string())),
-    };
+    let bytes = body::limited(body, service.max_upload_bytes, "file")?;
     let filename = query.into_inner().filename.or_else(|| {
         request
             .headers()

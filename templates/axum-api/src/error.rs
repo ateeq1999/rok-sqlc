@@ -87,6 +87,13 @@ pub enum AppError {
 }
 
 impl AppError {
+    /// The `413 payload_too_large` of a `what` (such as `file`) over
+    /// `limit` bytes.
+    #[must_use]
+    pub fn too_large(what: &str, limit: usize) -> Self {
+        AppError::PayloadTooLarge(format!("the {what} is larger than {limit} bytes"))
+    }
+
     /// The wire standard's `snake_case` code.
     #[must_use]
     pub fn code(&self) -> &'static str {

@@ -3,13 +3,14 @@
 //! The `account` handlers: each parses the request, calls one
 //! [`AccountService`] method, and answers.
 
-use actix_web::http::{StatusCode, header};
+use actix_web::http::header;
 use actix_web::{HttpResponse, web};
 
 use super::dto::{AVATAR_CACHE_CONTROL, AVATAR_MAX_BYTES, UpdateProfileDto, UserResponse};
 use super::service::AccountService;
 use crate::error::AppError;
 use crate::shared::auth::AuthUser;
+use crate::shared::body;
 use crate::shared::response::ErrorBody;
 use crate::shared::validation::ValidatedJson;
 
@@ -104,17 +105,7 @@ pub async fn upload_avatar(
     caller: AuthUser,
     body: Result<web::Bytes, actix_web::Error>,
 ) -> Result<HttpResponse, AppError> {
-    // Over the route's `PayloadConfig` limit, actix-web's own answer is a
-    // plain-text `413`: answer the wire standard's instead.
-    let image = match body {
-        Ok(image) => image,
-        Err(error) if error.as_response_error().status_code() == StatusCode::PAYLOAD_TOO_LARGE => {
-            return Err(AppError::PayloadTooLarge(format!(
-                "the image is larger than {AVATAR_MAX_BYTES} bytes"
-            )));
-        }
-        Err(error) => return Err(AppError::BadRequest(error.to_string())),
-    };
+    let image = body::limited(body, AVATAR_MAX_BYTES, "image")?;
     let user = service.set_avatar(caller.id.into(), image).await?;
     Ok(HttpResponse::Ok().json(UserResponse::from(user)))
 }

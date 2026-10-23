@@ -9,13 +9,14 @@ use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::extract::rejection::BytesRejection;
-use axum::http::{StatusCode, header};
+use axum::http::header;
 use axum::response::{IntoResponse, Response};
 
 use super::dto::{AVATAR_CACHE_CONTROL, AVATAR_MAX_BYTES, UpdateProfileDto, UserResponse};
 use super::service::AccountService;
 use crate::error::AppError;
 use crate::shared::auth::AuthUser;
+use crate::shared::body;
 use crate::shared::response::ErrorBody;
 use crate::shared::validation::{Path, ValidatedJson};
 
@@ -110,17 +111,7 @@ pub async fn upload_avatar(
     caller: AuthUser,
     body: Result<Bytes, BytesRejection>,
 ) -> Result<Response, AppError> {
-    // Over the route's `DefaultBodyLimit`, axum's own answer is a
-    // plain-text `413`: answer the wire standard's instead.
-    let image = match body {
-        Ok(image) => image,
-        Err(rejection) if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE => {
-            return Err(AppError::PayloadTooLarge(format!(
-                "the image is larger than {AVATAR_MAX_BYTES} bytes"
-            )));
-        }
-        Err(rejection) => return Err(AppError::BadRequest(rejection.body_text())),
-    };
+    let image = body::limited(body, AVATAR_MAX_BYTES, "image")?;
     let user = service.set_avatar(caller.id.into(), image).await?;
     Ok(Json(UserResponse::from(user)).into_response())
 }

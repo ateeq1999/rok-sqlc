@@ -16,6 +16,7 @@ use super::dto::{ListMediaQuery, MediaResponse, UploadMediaQuery};
 use super::service::MediaService;
 use crate::error::AppError;
 use crate::shared::auth::AuthUser;
+use crate::shared::body;
 use crate::shared::response::{ErrorBody, PaginatedResponse};
 use crate::shared::validation::{Path, Query};
 
@@ -79,18 +80,7 @@ pub async fn upload(
     headers: HeaderMap,
     body: Result<Bytes, BytesRejection>,
 ) -> Result<Response, AppError> {
-    // Over the route's `DefaultBodyLimit`, axum's own answer is a
-    // plain-text `413`: answer the wire standard's instead.
-    let bytes = match body {
-        Ok(bytes) => bytes,
-        Err(rejection) if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE => {
-            return Err(AppError::PayloadTooLarge(format!(
-                "the file is larger than {} bytes",
-                service.max_upload_bytes
-            )));
-        }
-        Err(rejection) => return Err(AppError::BadRequest(rejection.body_text())),
-    };
+    let bytes = body::limited(body, service.max_upload_bytes, "file")?;
     let filename = query.filename.or_else(|| {
         headers
             .get(FILENAME_HEADER)

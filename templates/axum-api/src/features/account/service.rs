@@ -64,9 +64,7 @@ impl AccountService {
     /// stored under a new random name. The previous photo is deleted.
     pub async fn set_avatar(&self, id: UserId, image: Bytes) -> Result<User, AppError> {
         if image.len() > AVATAR_MAX_BYTES {
-            return Err(AppError::PayloadTooLarge(format!(
-                "the image is larger than {AVATAR_MAX_BYTES} bytes"
-            )));
+            return Err(AppError::too_large("image", AVATAR_MAX_BYTES));
         }
         let jpeg = tokio::task::spawn_blocking(move || thumbnail::square_jpeg(&image, AVATAR_SIDE))
             .await

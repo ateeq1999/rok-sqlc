@@ -162,10 +162,7 @@ impl MediaService {
 
     /// The `413` for a body over [`MediaService::max_upload_bytes`].
     fn too_large(&self) -> AppError {
-        AppError::PayloadTooLarge(format!(
-            "the file is larger than {} bytes",
-            self.max_upload_bytes
-        ))
+        AppError::too_large("file", self.max_upload_bytes)
     }
 }
 
