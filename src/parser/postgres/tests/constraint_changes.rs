@@ -66,7 +66,7 @@ fn dropping_an_implicitly_named_foreign_key_drops_it() {
 }
 
 #[test]
-fn dropping_an_unknown_constraint_fails_the_table_unless_if_exists() {
+fn dropping_an_unknown_constraint_warns_and_keeps_the_table_unless_if_exists() {
     let parsed = parse_files(&[
         (
             "0001.sql",
@@ -76,15 +76,18 @@ fn dropping_an_unknown_constraint_fails_the_table_unless_if_exists() {
         (
             "0002.sql",
             "ALTER TABLE tags DROP CONSTRAINT IF EXISTS tags_missing;
-             ALTER TABLE notes DROP CONSTRAINT notes_body_check;",
+             ALTER TABLE notes DROP CONSTRAINT notes_no_overlap;
+             ALTER TABLE notes DROP CONSTRAINT notes_id_not_null;",
         ),
     ]);
-    assert_eq!(parsed.schema.tables.len(), 1);
-    assert_eq!(parsed.schema.tables[0].sql_name, "tags");
-    assert_eq!(parsed.failures.len(), 1);
+    assert!(parsed.failures.is_empty(), "{:?}", parsed.failures);
+    assert_eq!(parsed.schema.tables.len(), 2);
     assert_eq!(
-        parsed.failures[0].to_string(),
-        "0002.sql:2: table `notes`: DROP CONSTRAINT: constraint `notes_body_check` does not exist"
+        parsed.warnings,
+        [
+            "0002.sql:2: table `notes`: DROP CONSTRAINT: constraint `notes_no_overlap` is not one rok-sqlc tracks (such as an EXCLUDE or NOT NULL constraint); the statement changes nothing in the generated code",
+            "0002.sql:3: table `notes`: DROP CONSTRAINT: constraint `notes_id_not_null` is not one rok-sqlc tracks (such as an EXCLUDE or NOT NULL constraint); the statement changes nothing in the generated code",
+        ]
     );
 }
 

@@ -114,7 +114,7 @@ fn a_dropped_foreign_key_loses_its_relationship() -> Result<()> {
 }
 
 #[test]
-fn dropping_an_unknown_constraint_fails_its_table_at_its_line() -> Result<()> {
+fn dropping_an_unknown_constraint_warns_at_its_line_and_generates_the_table() -> Result<()> {
     let dir = TempDir::new()?;
     let migrations = dir.path().join("migrations");
     fs::create_dir_all(&migrations)?;
@@ -133,13 +133,14 @@ fn dropping_an_unknown_constraint_fails_its_table_at_its_line() -> Result<()> {
         out.to_str().unwrap(),
     ]);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success(), "{stderr}");
+    assert!(output.status.success(), "{stderr}");
     let path = shown(&migrations.join("0002_widen.sql"));
     assert!(
         stderr.contains(&format!(
-            "{path}:2: table `auth_tokens`: DROP CONSTRAINT: constraint `auth_tokens_check` does not exist"
+            "warning: {path}:2: table `auth_tokens`: DROP CONSTRAINT: constraint `auth_tokens_check` is not one rok-sqlc tracks"
         )),
         "{stderr}"
     );
+    assert!(out.join("auth_tokens").join("models.rs").is_file());
     Ok(())
 }

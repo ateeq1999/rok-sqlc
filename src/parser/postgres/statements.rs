@@ -58,6 +58,7 @@ pub fn parse_sources_with_modules(
     let dialect = PostgreSqlDialect {};
     let mut tables: Vec<Table> = Vec::new();
     let mut failures = Vec::new();
+    let mut warnings = Vec::new();
     let mut seen_modules: HashSet<String> = HashSet::new();
     let mut enums = EnumRegistry::default();
     let mut others = OtherRelations::default();
@@ -204,14 +205,22 @@ pub fn parse_sources_with_modules(
                     others.create_sequences(&name, added, &mut taken);
                     // A failing statement may have applied some clauses.
                     let before = tables[index].clone();
+                    let mut noted = Vec::new();
                     match apply_alter(
                         &mut tables[index],
                         &operations,
                         &enums,
-                        &taken,
-                        &constraints,
+                        (&taken, &constraints),
+                        &mut noted,
                     ) {
                         Ok(()) => {
+                            let at = match line {
+                                Some(line) => format!("{}:{line}: ", display_path(source.path)),
+                                None => format!("{}: ", display_path(source.path)),
+                            };
+                            warnings.extend(noted.into_iter().map(|warning| {
+                                format!("{at}table `{}`: {warning}", before.sql_name)
+                            }));
                             for operation in &operations {
                                 if let AlterTableOperation::AlterColumn {
                                     column_name,
@@ -393,6 +402,7 @@ pub fn parse_sources_with_modules(
         created,
         source_removed,
         unmatched_modules: unmatched_modules.into_iter().cloned().collect(),
+        warnings,
     })
 }
 

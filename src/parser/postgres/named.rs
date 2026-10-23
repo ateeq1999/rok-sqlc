@@ -67,13 +67,15 @@ pub(super) fn add_foreign_key(
 /// Applies `DROP CONSTRAINT`: a primary key leaves its columns as they are
 /// (still `NOT NULL`), a unique constraint takes its unique key with it,
 /// and a check no longer shapes its column, whose value list and ranges
-/// come from the checks that remain. An unknown name fails, unless `IF
-/// EXISTS`.
+/// come from the checks that remain. A name the model doesn't know (an
+/// `EXCLUDE` or `NOT NULL` constraint, say, which shape no generated code)
+/// changes nothing: unless `IF EXISTS`, it adds a warning to `warnings`.
 pub(super) fn drop_constraint(
     table: &mut Table,
     name: &str,
     if_exists: bool,
-) -> std::result::Result<(), String> {
+    warnings: &mut Vec<String>,
+) {
     if let Some(index) = position(&table.key_constraints, |key| key.name == name) {
         let key = table.key_constraints.remove(index);
         if key.primary {
@@ -95,11 +97,10 @@ pub(super) fn drop_constraint(
             reapply_checks(table, &dropped.columns);
         }
     } else if !if_exists {
-        return Err(format!(
-            "DROP CONSTRAINT: constraint `{name}` does not exist"
+        warnings.push(format!(
+            "DROP CONSTRAINT: constraint `{name}` is not one rok-sqlc tracks (such as an EXCLUDE or NOT NULL constraint); the statement changes nothing in the generated code"
         ));
     }
-    Ok(())
 }
 
 /// Applies `RENAME CONSTRAINT` to a constraint of any kind. An unknown name

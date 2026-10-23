@@ -49,13 +49,14 @@ pub(super) fn drop_table(
 }
 
 /// Applies an `ALTER TABLE`'s clauses to a known table, in order. An error
-/// names the clause that could not be applied.
+/// names the clause that could not be applied; a clause the model can't
+/// follow but that changes no generated code adds a warning to `warnings`.
 pub(super) fn apply_alter(
     table: &mut Table,
     operations: &[AlterTableOperation],
     enums: &EnumRegistry,
-    taken: &HashSet<String>,
-    constraint_names: &HashSet<String>,
+    (taken, constraint_names): (&HashSet<String>, &HashSet<String>),
+    warnings: &mut Vec<String>,
 ) -> std::result::Result<(), String> {
     for operation in operations {
         match operation {
@@ -92,7 +93,7 @@ pub(super) fn apply_alter(
             }
             AlterTableOperation::DropConstraint {
                 name, if_exists, ..
-            } => drop_constraint(table, &ident_name(name), *if_exists)?,
+            } => drop_constraint(table, &ident_name(name), *if_exists, warnings),
             AlterTableOperation::AlterColumn { column_name, op } => {
                 alter_column(table, &ident_name(column_name), op, enums)?;
             }

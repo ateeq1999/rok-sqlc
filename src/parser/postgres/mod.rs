@@ -41,6 +41,10 @@ pub struct ParsedSchema {
     source_removed: HashMap<(String, Option<String>), StatementLocation>,
     /// The `[modules]` keys that named no `CREATE TABLE` of the schema.
     pub unmatched_modules: Vec<String>,
+    /// What the schema does that the model can't follow but that changes
+    /// no generated code, such as dropping an `EXCLUDE` constraint, located
+    /// at its statement (`path:line: table ...`).
+    pub warnings: Vec<String>,
 }
 
 /// Where a statement is: its file, its line there, and its position among
