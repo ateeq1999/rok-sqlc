@@ -58,7 +58,9 @@ impl FromRequest for AuthUser {
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         let checked = credentials(req);
         let method = req.method().as_str().to_owned();
-        let path = req.path().to_owned();
+        // The decoded path the router matched, not the raw `req.path()`:
+        // `/api/v1/api%2Dkeys` routes to `/api/v1/api-keys`.
+        let path = req.match_info().as_str().to_owned();
         Box::pin(async move {
             match checked? {
                 Checked::Session(claims, pool) => {

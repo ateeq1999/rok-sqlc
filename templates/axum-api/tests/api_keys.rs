@@ -134,6 +134,43 @@ async fn no_key_reaches_auth_or_the_keys_themselves() -> TestResult {
 }
 
 #[tokio::test]
+async fn an_encoded_path_does_not_let_a_key_reach_auth_or_the_keys() -> TestResult {
+    let Some(db) = Database::fresh().await? else {
+        return Ok(());
+    };
+    let token = user(&db.pool).await?;
+    let created = create(&db.pool, &token, "everything", "write").await?;
+    let key = raw(&created);
+    let id = created["id"].as_str().unwrap_or_default();
+    let body = || Some(json!({"name": "another", "scope": "write"}));
+    let attempts = [
+        (Method::GET, "/api/v1/api%2Dkeys".to_owned(), None),
+        (Method::POST, "/api/v1/api%2Dkeys".to_owned(), body()),
+        (Method::POST, "/api/v1/%61pi-keys".to_owned(), body()),
+        (Method::DELETE, format!("/api/v1/api%2dkeys/{id}"), None),
+        (Method::GET, "/api/v1/%61uth/me".to_owned(), None),
+        (Method::GET, "/api/v1/au%74h/me".to_owned(), None),
+    ];
+    for (method, uri, body) in attempts {
+        let answer = call(&db.pool, Some(key), method.clone(), &uri, body).await?;
+        assert!(
+            matches!(answer.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND),
+            "{method} {uri}: {} {}",
+            answer.status,
+            answer.body
+        );
+    }
+    let listed = call(&db.pool, Some(&token), Method::GET, KEYS, None).await?;
+    assert_eq!(
+        listed.body.as_array().map(Vec::len),
+        Some(1),
+        "{}",
+        listed.body
+    );
+    db.drop().await
+}
+
+#[tokio::test]
 async fn an_expired_or_revoked_key_or_one_of_a_disabled_account_is_refused() -> TestResult {
     let Some(db) = Database::fresh().await? else {
         return Ok(());

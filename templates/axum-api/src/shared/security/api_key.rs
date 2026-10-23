@@ -113,7 +113,12 @@ pub fn presented<'a>(
 /// Whether a key with `scope` may call `method path`: no key reaches
 /// [`SESSION_ONLY`], and a `read` key only `GET`, `HEAD` and `OPTIONS`.
 /// Either refusal is a `403`.
+///
+/// `path` is compared [`normalised`]: decoded and resolved at least as far
+/// as any router goes, so `/api/v1/api%2Dkeys` or `/api/v1//auth/me` is
+/// refused like the plain path.
 pub fn check_reach(scope: ApiKeyScope, method: &str, path: &str) -> Result<(), AppError> {
+    let path = normalised(path);
     let session_only = SESSION_ONLY.iter().any(|root| {
         path.strip_prefix(root)
             .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
@@ -130,6 +135,61 @@ pub fn check_reach(scope: ApiKeyScope, method: &str, path: &str) -> Result<(), A
         ));
     }
     Ok(())
+}
+
+/// `path` percent-decoded until nothing decodes further, its empty, `.`
+/// and `..` segments resolved, in lower case: never less than what a
+/// router decodes, so a route [`SESSION_ONLY`] covers can't be reached by
+/// spelling it differently.
+fn normalised(path: &str) -> String {
+    let mut decoded = path.to_owned();
+    loop {
+        let next = percent_decoded(&decoded);
+        if next == decoded {
+            break;
+        }
+        decoded = next;
+    }
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in decoded.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            segment => segments.push(segment),
+        }
+    }
+    format!("/{}", segments.join("/")).to_ascii_lowercase()
+}
+
+/// `text` with each `%XX` replaced by its byte (invalid UTF-8 replaced).
+fn percent_decoded(text: &str) -> String {
+    fn hex(byte: u8) -> Option<u8> {
+        char::from(byte)
+            .to_digit(16)
+            .and_then(|digit| u8::try_from(digit).ok())
+    }
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        let escaped = match bytes.get(at..at + 3) {
+            Some([b'%', high, low]) => hex(*high).zip(hex(*low)),
+            _ => None,
+        };
+        match escaped {
+            Some((high, low)) => {
+                out.push((high << 4) | low);
+                at += 3;
+            }
+            None => {
+                out.push(bytes[at]);
+                at += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Who a valid key belongs to.
@@ -226,6 +286,24 @@ mod tests {
     }
 
     #[test]
+    fn an_encoded_or_unnormalised_path_still_cannot_reach_auth_or_api_keys() {
+        for path in [
+            "/api/v1/api%2Dkeys",
+            "/api/v1/api%2dkeys/0190",
+            "/api/v1/%61uth/me",
+            "/api/v1/%2561uth/me",
+            "/api/v1//auth/me",
+            "/api/v1/./auth/me",
+            "/api/v1/users/../auth/me",
+            "/api/v1/AUTH/me",
+            "/api%2Fv1%2Fauth/me",
+        ] {
+            let refused = check_reach(ApiKeyScope::Write, "GET", path);
+            assert!(matches!(refused, Err(AppError::Forbidden(_))), "{path}");
+        }
+    }
+
+    #[test]
     fn a_read_key_may_only_use_safe_methods() {
         for method in ["GET", "HEAD", "OPTIONS"] {
             assert!(check_reach(ApiKeyScope::Read, method, "/api/v1/users/me").is_ok());
@@ -249,6 +327,7 @@ mod tests {
             assert!(matches!(refused, Err(AppError::Forbidden(_))), "{path}");
         }
         assert!(check_reach(ApiKeyScope::Write, "GET", "/api/v1/authors").is_ok());
+        assert!(check_reach(ApiKeyScope::Write, "GET", "/api/v1/%61uthors").is_ok());
         assert!(check_reach(ApiKeyScope::Write, "GET", "/api/v1/api-keys-x").is_ok());
     }
 }
