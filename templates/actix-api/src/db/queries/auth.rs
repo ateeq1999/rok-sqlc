@@ -286,6 +286,24 @@ where
     Ok(result.rows_affected())
 }
 
+/// Runs the `RevokeAllApiKeys` query (`:exec`).
+pub async fn revoke_all_api_keys<'e, E>(executor: E, user_id: UserId) -> Result<(), sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query(
+        r#"
+        UPDATE api_keys
+        SET revoked_at = now()
+        WHERE user_id = $1 AND revoked_at IS NULL
+        "#,
+    )
+    .bind(user_id)
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
 /// Runs the `ChangePassword` query (`:execrows`).
 /// Returns the number of affected rows.
 pub async fn change_password<'e, E>(

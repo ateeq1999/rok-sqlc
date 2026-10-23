@@ -341,7 +341,9 @@ impl AuthService {
     /// Redeems a password reset link, or an invitation's (whose email is
     /// then verified too): the account's password becomes `new_password`,
     /// every older session is signed out, any lock is lifted, and the
-    /// token is spent.
+    /// token is spent. A reset recovers an account someone else may have
+    /// had, so the same transaction revokes every API key it has and
+    /// spends any pending two-factor sign-in.
     ///
     /// The link is checked first, without spending it: an unknown, expired
     /// or used token is a `400 invalid_token` that costs no breach check
@@ -366,6 +368,8 @@ impl AuthService {
         if queries::reset_password(&mut *tx, spent.user_id, Some(&hash), invited).await? == 0 {
             return Err(invalid_token());
         }
+        queries::revoke_all_api_keys(&mut *tx, spent.user_id).await?;
+        queries::revoke_tokens(&mut *tx, spent.user_id, AuthTokenPurpose::TwoFactorPending).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -373,7 +377,8 @@ impl AuthService {
     /// Replaces the password of the account `id` when `current_password`
     /// is right (otherwise a `400 wrong_password`), signs every session
     /// out, the caller's included, and mails a notice. A breached password
-    /// is a `400 breached_password`.
+    /// is a `400 breached_password`. The account's API keys keep working:
+    /// whoever changes the password knew the old one, unlike a reset's.
     pub async fn change_password(
         &self,
         id: UserId,

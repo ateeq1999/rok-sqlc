@@ -87,6 +87,13 @@ SET password_hash = $2,
     email_verified = email_verified OR $3
 WHERE id = $1 AND deleted_at IS NULL;
 
+-- name: RevokeAllApiKeys :exec
+-- Revokes every active API key of the account `$1`: a password reset
+-- recovers the account, so what an attacker may have made goes too.
+UPDATE api_keys
+SET revoked_at = now()
+WHERE user_id = $1 AND revoked_at IS NULL;
+
 -- name: ChangePassword :execrows
 -- The live account `$1` chose a new password: its hash, and every session
 -- (the current one included) signed out.
