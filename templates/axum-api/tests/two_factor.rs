@@ -372,3 +372,20 @@ async fn the_secret_is_encrypted_in_the_database() -> TestResult {
     );
     db.drop().await
 }
+
+#[tokio::test]
+async fn disabling_two_factor_signs_every_session_out() -> TestResult {
+    let Some(db) = Database::fresh().await? else {
+        return Ok(());
+    };
+    let (token, _, _) = enrolled(&db.pool).await?;
+    let me = "/api/v1/auth/me";
+    let answer = call(&db.pool, Some(&token), Method::GET, me, None).await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    let body = json!({"current_password": PASSWORD});
+    let answer = call(&db.pool, Some(&token), Method::POST, DISABLE, Some(body)).await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    let answer = call(&db.pool, Some(&token), Method::GET, me, None).await?;
+    assert_eq!(answer.status, StatusCode::UNAUTHORIZED, "{}", answer.body);
+    db.drop().await
+}

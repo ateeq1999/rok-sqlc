@@ -593,7 +593,9 @@ impl AuthService {
 
     /// Turns two-factor off for the account `id` when `current_password` is
     /// right (otherwise a `400 wrong_password`): its secret and recovery
-    /// codes are forgotten and, when it was on, a notice is mailed.
+    /// codes are forgotten, every session is signed out (the caller's
+    /// included, as a password change does) and, when it was on, a notice
+    /// is mailed. The contract asks only for the password, not a code.
     pub async fn disable_totp(&self, id: UserId, input: DisableTotpDto) -> Result<(), AppError> {
         let user = self.live_user(id).await?;
         if !password::verify(input.current_password, user.password_hash).await? {

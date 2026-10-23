@@ -485,7 +485,8 @@ where
     sqlx::query(
         r#"
         UPDATE users
-        SET totp_enabled = false, totp_secret = NULL, totp_last_step = NULL
+        SET totp_enabled = false, totp_secret = NULL, totp_last_step = NULL,
+            token_version = token_version + 1
         WHERE id = $1
         "#,
     )

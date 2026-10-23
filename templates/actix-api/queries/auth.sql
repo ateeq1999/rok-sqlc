@@ -155,9 +155,11 @@ SET totp_last_step = $2
 WHERE id = $1 AND (totp_last_step IS NULL OR totp_last_step < $2);
 
 -- name: DisableTotp :exec
--- Two-factor off for the account `$1`: its secret and last step forgotten.
+-- Two-factor off for the account `$1`: its secret and last step forgotten,
+-- and every session signed out, as a password change does.
 UPDATE users
-SET totp_enabled = false, totp_secret = NULL, totp_last_step = NULL
+SET totp_enabled = false, totp_secret = NULL, totp_last_step = NULL,
+    token_version = token_version + 1
 WHERE id = $1;
 
 -- name: DeleteRecoveryCodes :exec
