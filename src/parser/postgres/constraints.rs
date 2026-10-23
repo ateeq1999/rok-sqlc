@@ -9,6 +9,7 @@ use sqlparser::ast::{
 };
 
 use super::alter::column_index;
+use super::enums::any_array_as_in_list;
 use super::named::{DeclaredCheck, DeclaredForeignKey, add_check, add_foreign_key};
 use super::names::{
     default_constraint_name, find_table, ident_name, index_column_name, object_leaf_name,
@@ -80,12 +81,13 @@ pub(super) fn add_constraint(
         }
         // Like in `CREATE TABLE`, a value list on a text column restricts it,
         // a range check narrows its column's ranges, and any other check
-        // leaves the columns unchanged.
+        // leaves the columns unchanged. Here a value list may also be in
+        // `pg_dump`'s `col = ANY (ARRAY[…])` form; it is kept as `IN (…)`.
         TableConstraint::Check { name, expr, .. } => add_check(
             table,
             DeclaredCheck {
                 name: name.as_ref().map(ident_name),
-                expr: (**expr).clone(),
+                expr: any_array_as_in_list(expr).unwrap_or_else(|| (**expr).clone()),
             },
             constraint_names,
         ),

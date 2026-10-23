@@ -217,3 +217,44 @@ fn a_composite_foreign_key_is_kept_by_name_and_can_be_dropped() {
     );
     assert!(table.named_constraints.is_empty());
 }
+
+#[test]
+fn an_added_check_in_pg_dump_any_array_form_is_a_value_list() {
+    let parsed = parse(&format!(
+        "{AUTH_TOKENS}
+         ALTER TABLE auth_tokens DROP CONSTRAINT auth_tokens_purpose_check;
+         ALTER TABLE ONLY auth_tokens ADD CONSTRAINT auth_tokens_purpose_check CHECK ((purpose = ANY (ARRAY['email_verification'::text, 'password_reset'::text, 'two_factor_pending'::text])));"
+    ));
+    assert!(parsed.failures.is_empty(), "{:?}", parsed.failures);
+    assert_eq!(
+        enum_summary(&parsed.schema),
+        [(
+            "AuthTokenPurpose".to_owned(),
+            Some("auth_tokens.purpose"),
+            vec!["email_verification", "password_reset", "two_factor_pending"]
+        )]
+    );
+}
+
+#[test]
+fn an_added_any_array_check_on_a_varchar_column_is_a_value_list() {
+    let table = one_table(
+        "CREATE TABLE notes (id BIGSERIAL PRIMARY KEY, kind VARCHAR(10) NOT NULL);
+         ALTER TABLE notes ADD CONSTRAINT notes_kind_check CHECK (((kind)::text = ANY ((ARRAY['x'::character varying, 'y'::character varying])::text[])));",
+    );
+    assert_eq!(
+        table.columns[1].value_list.as_deref(),
+        Some(&["x".to_owned(), "y".to_owned()][..])
+    );
+}
+
+#[test]
+fn an_any_array_check_in_create_table_stays_plain_text() {
+    let table = one_table(
+        "CREATE TABLE notes (
+             id BIGSERIAL PRIMARY KEY,
+             kind TEXT NOT NULL CHECK (kind = ANY (ARRAY['x'::text, 'y'::text]))
+         );",
+    );
+    assert_eq!(table.columns[1].value_list, None);
+}

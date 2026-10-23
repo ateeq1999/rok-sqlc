@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 
 use sqlparser::ast::{
-    AlterType, AlterTypeAddValue, AlterTypeAddValuePosition, AlterTypeOperation, Expr, ObjectName,
-    Value,
+    AlterType, AlterTypeAddValue, AlterTypeAddValuePosition, AlterTypeOperation, BinaryOperator,
+    Expr, ObjectName, Value, ValueWithSpan,
 };
 
 use super::alter::drop_column;
@@ -415,6 +415,51 @@ pub(super) fn drop_columns_of_type(table: &mut Table, rust_path: &str) {
         // The column exists, so dropping it cannot fail.
         let _ = drop_column(table, &name, true);
     }
+}
+
+/// `expr` written as the `col IN ('a', 'b', …)` [`value_list_check`]
+/// reads, when it is the form `pg_dump` writes a value list in:
+/// `col = ANY (ARRAY['a'::text, 'b'::text])`, with casts on the column, the
+/// array or its values (`(col)::text = ANY ((ARRAY['a'::character
+/// varying])::text[])` on a `varchar`). Any other shape is `None`.
+///
+/// `ALTER TABLE … ADD CONSTRAINT … CHECK` reads this form; `CREATE TABLE`
+/// doesn't, so the code generated from existing schemas doesn't change.
+pub(super) fn any_array_as_in_list(expr: &Expr) -> Option<Expr> {
+    fn peeled(expr: &Expr) -> &Expr {
+        match expr {
+            Expr::Nested(inner) | Expr::Cast { expr: inner, .. } => peeled(inner),
+            other => other,
+        }
+    }
+    let Expr::AnyOp {
+        left,
+        compare_op: BinaryOperator::Eq,
+        right,
+        ..
+    } = peeled(expr)
+    else {
+        return None;
+    };
+    let (Expr::Identifier(column), Expr::Array(array)) = (peeled(left), peeled(right)) else {
+        return None;
+    };
+    let list = array
+        .elem
+        .iter()
+        .map(|item| match peeled(item) {
+            value @ Expr::Value(ValueWithSpan {
+                value: Value::SingleQuotedString(_),
+                ..
+            }) => Some(value.clone()),
+            _ => None,
+        })
+        .collect::<Option<Vec<Expr>>>()?;
+    Some(Expr::InList {
+        expr: Box::new(Expr::Identifier(column.clone())),
+        list,
+        negated: false,
+    })
 }
 
 /// The column and values of a value-list check, `col IN ('a', 'b', …)`
