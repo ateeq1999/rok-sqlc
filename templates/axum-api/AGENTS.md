@@ -123,8 +123,9 @@ hand-written and follow the rules above. Keep to how they work:
   flow's transaction, commit with `outbox.commit(tx)`, and redeem it with
   `consume_token`. Never store or log a raw token.
 - **Secrets at rest.** Two-factor secrets are stored sealed with
-  `TotpCipher` (`shared/security/totp.rs`, `TOTP_ENCRYPTION_KEY`), and
-  recovery codes as hashes, like tokens.
+  `TotpCipher` (`shared/security/totp.rs`, `TOTP_ENCRYPTION_KEY`, bound to
+  the account's id), and recovery codes as HMACs under a key derived from
+  it. Compare secrets with `subtle`, never `==`.
 - **Answers.** A body of the wrong shape is `422` (the DTO's rules); a flow
   refusing a well-formed request is `400` with `AppError::InvalidToken`,
   `WrongPassword` or `BreachedPassword`. Don't tell a caller whether an
@@ -133,12 +134,15 @@ hand-written and follow the rules above. Keep to how they work:
   (`queries/api_keys.sql`); `shared/auth.rs` checks a presented one
   with `shared/security/api_key.rs` (`queries/session.sql`), and
   `AuthUser::credential` says whether the caller sent a key. A route
-  only a session may use goes under `api_key::SESSION_ONLY`.
+  only a session may use goes under `api_key::SESSION_ONLY`. A key acts
+  with its owner's role; a password reset revokes them all.
 - **Sessions.** A change that must sign a user out bumps
-  `users.token_version`; disabling sets `is_active = false`. `AuthUser`
+  `users.token_version` (a reset, a password change, turning two-factor
+  off); disabling sets `is_active = false`. `AuthUser`
   checks both on every request.
-- **Routes.** New `/auth` routes go in `auth::routes`'s scope, so the rate
-  limit covers them, and in `ApiDoc`'s `paths(...)`.
+- **Routes.** New `/auth` routes go in `auth::routes`'s scope (or, like
+  `two_factor::routes`, behind the same `RateLimit`), so the rate limit
+  covers them, and in `ApiDoc`'s `paths(...)`.
 - **Tests.** Drive each flow over HTTP in `tests/`, with `mailed` and
   `mailed_token` from `tests/support/mod.rs`.
 
@@ -148,8 +152,10 @@ hand-written and follow the rules above. Keep to how they work:
 the `Storage` port in `shared/storage/` (`AppState.storage`): put, get and
 delete by a key the feature generates (`media/<uuid>`), never one a caller
 sends. A file's type is detected from its bytes, never taken from the
-request. Tests store in memory; swap in your own with
-`AppState::with_storage`.
+request. `AppState::new` opens `STORAGE_URL`; tests configure `memory://`,
+or swap in their own store with `AppState::with_storage`. Take an upload's
+body through `shared/body.rs`, which reads it only after `AuthUser` and
+answers the wire standard's `413`.
 
 Profile photos (`features/account/`, `PUT`/`DELETE /users/me/avatar`)
 use the same port under `avatars/<random>.jpg`. `shared/thumbnail.rs`

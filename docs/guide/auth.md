@@ -1,11 +1,15 @@
 # Accounts and sign-in (the templates)
 
-`rok-sqlc init --template actix` (or `--template axum`) makes an API whose users sign up, verify
-their email, sign in, reset or change their password, change their email,
-and are invited by an admin. These flows are hand-written features in the
-template, not generated code: `src/features/auth/` and
-`src/features/account/` are yours, like every `service.rs`. The decisions
-behind them are in ADR 0018 (`docs/adr/0018-auth-as-template-features.md`).
+`rok-sqlc init --template actix` (or `--template axum`) makes an API whose
+users sign up, verify their email, sign in (with a second factor if they
+turn it on), reset or change their password, change their email, make API
+keys for their scripts, and are invited by an admin. These flows are
+hand-written features in the template, not generated code:
+`src/features/auth/`, `two_factor/`, `api_keys/` and `account/` are
+yours, like every `service.rs`. The decisions behind them are in ADR 0018
+(`docs/adr/0018-auth-as-template-features.md`) and ADR 0020 (two-factor,
+API keys, uploads; `docs/adr/0020-two-factor-api-keys-and-files.md`).
+Uploads and profile photos have [their own page](files.md).
 A plain `rok-sqlc init` has none of this, only the `AuthUser` and
 `AdminUser` checks of a token something else issues.
 
@@ -18,6 +22,8 @@ axum template does the same in axum's terms.
 
 - [Where the code is](#where-the-code-is)
 - [The flows](#the-flows)
+- [Two-factor sign-in](#two-factor-sign-in)
+- [API keys](#api-keys)
 - [Sessions](#sessions)
 - [Settings](#settings)
 - [Sending real mail](#sending-real-mail)
@@ -29,15 +35,19 @@ axum template does the same in axum's terms.
 | Path | What it holds |
 |---|---|
 | `src/features/auth/` | sign-up, sign-in, email verification, the password flows, email change, invitations |
-| `src/features/account/` | `GET /auth/me`, `GET` and `PATCH /users/me` |
+| `src/features/two_factor/` | `/auth/2fa/setup`, `enable`, `disable` and `verify` |
+| `src/features/api_keys/` | `GET` and `POST /api-keys`, `DELETE /api-keys/{id}` |
+| `src/features/account/` | `GET /auth/me`, `GET` and `PATCH /users/me`, the profile photo |
 | `src/shared/auth.rs` | the `AuthUser` and `AdminUser` extractors (`FromRequest` under actix-web, `FromRequestParts` under axum) |
-| `src/shared/security/` | argon2id passwords, single-use tokens, the JWT, the breach check |
+| `src/shared/security/` | argon2id passwords, single-use tokens and their lifecycle (`auth_token.rs`), the JWT, the breach check, TOTP and its sealed secret (`totp.rs`), API keys (`api_key.rs`) |
 | `src/shared/mail/` | the `Mailer` port, its SMTP and log transports, the messages, the outbox and its sender |
 | `src/shared/rate_limit/` | the per-IP limit on `/auth`: `limiter.rs` counts, `mod.rs` is the framework's middleware |
 | `queries/auth.sql` | the `auth` feature's SQL (`db::queries::auth`) |
+| `queries/two_factor.sql`, `queries/api_keys.sql` | the `two_factor` and `api_keys` features' SQL |
 | `queries/account.sql` | the `account` feature's SQL |
 | `queries/session.sql`, `queries/mail.sql` | the session check and the outbox, for `shared/` |
 | `migrations/0002_auth.sql` | `users.token_version`, `auth_tokens`, `outbound_mail` |
+| `migrations/0003_two_factor.sql`, `0004_api_keys.sql` | `users.totp_last_step`, `totp_recovery_codes`, the `two_factor_pending` purpose; `api_keys`' indexes |
 
 `check-arch` applies in full: `auth` writes through its own query module,
 reads `users` through the data layer, and records audit entries through a
@@ -53,7 +63,11 @@ A body of the wrong shape (an email that isn't one, a password outside 8 to
 | Endpoint | Caller | Answers |
 |---|---|---|
 | `POST /auth/register` | anyone | `201` the user, `400 breached_password`, `409` |
-| `POST /auth/login` | anyone | `200` a token, `401`, `403` |
+| `POST /auth/login` | anyone | `200` a token, or `{requires_totp, pending_token}`; `401`, `403` |
+| `POST /auth/2fa/setup` | user | `200` the secret, its URI and QR code; `400` |
+| `POST /auth/2fa/enable` | user | `200` ten recovery codes; `400`, `422` |
+| `POST /auth/2fa/disable` | user | `200`, `400 wrong_password` |
+| `POST /auth/2fa/verify` | anyone | `200` a token, `400 invalid_token`, `401`, `403` |
 | `GET /auth/me` | user | `200` the user |
 | `POST /auth/email/verify` | anyone | `200`, `400 invalid_token` |
 | `POST /auth/email/verification/resend` | user | `202` |
@@ -64,6 +78,8 @@ A body of the wrong shape (an email that isn't one, a password outside 8 to
 | `POST /auth/email/change/confirm` | anyone | `200`, `400 invalid_token` |
 | `POST /auth/invitations` | admin | `201` the user, `409` |
 | `GET /users/me`, `PATCH /users/me` | user | `200` the user |
+| `GET /api-keys`, `POST /api-keys` | user (session only) | `200` the active keys; `201` a new key once, `409`, `422` |
+| `DELETE /api-keys/{id}` | user (session only) | `204`, `404` |
 
 **Signing up.** `register` takes `{"email", "password"}`, creates a `user`
 with an unverified email, and mails a verification link valid 24 hours. It
@@ -78,19 +94,23 @@ whose link expired asks for a new one with `resend`.
 account is a `401` with one message for all. Five wrong passwords in a row
 lock the account for 15 minutes. With the right password, a disabled
 account, or an unverified email while `REQUIRE_VERIFIED_EMAIL=true`, is a
-`403`.
+`403`. An account with two-factor on answers a pending token instead
+([two-factor sign-in](#two-factor-sign-in)).
 
 **A forgotten password.** `forgot` (`{"email"}`) always answers `202`, and
 mails a link valid one hour (`{APP_URL}/reset-password?token=…`) when a live
 account has that email. `reset` (`{"token", "new_password"}`) sets the
-password, lifts any lock, and signs every older session out. It checks the
+password, lifts any lock, and signs every older session out. It also
+revokes every API key of the account and spends any pending two-factor
+sign-in: a reset recovers an account someone else may have had. It checks the
 link before anything else, so a bad link is a `400 invalid_token` that
 costs no hash; a breached password is then a `400 breached_password`, and
 the link still works.
 
 **Changing a password.** `change` (`{"current_password", "new_password"}`)
 needs the current one (`400 wrong_password`), signs every session out, the
-caller's included, and mails a notice.
+caller's included, and mails a notice. API keys keep working: whoever
+changes the password knew the old one; revoke a key you no longer trust.
 
 **Changing an email.** `email/change` (`{"current_password", "new_email"}`)
 needs the current password, then always answers `202`. The old address
@@ -116,6 +136,82 @@ session could otherwise lock the owner out. The `/auth` rate limit bounds
 guessing there, as it bounds what `register`'s `409` and `forgot`'s timing
 can tell about which emails exist.
 
+## Two-factor sign-in
+
+A signed-in user turns on a second factor from an authenticator app
+(TOTP, RFC 6238: 6 digits, 30-second steps, one step of drift either way).
+
+1. **`POST /auth/2fa/setup`** answers `{"secret", "qr_code_data_uri",
+   "provisioning_uri"}`: a new secret in base32 (to type in), its
+   `otpauth://` URI and that URI as an SVG QR code (a `data:` URI for an
+   `<img src>`). Nothing is enforced yet; a new setup replaces an
+   unconfirmed one. With two-factor already on it is a `400`.
+2. **`POST /auth/2fa/enable`** (`{"code"}`) checks a code from the app
+   against that secret and turns two-factor on. It answers
+   `{"recovery_codes"}`, ten single-use `XXXXX-XXXXX` codes, shown this
+   once, and mails a notice. A wrong code, or no setup, is a `400`.
+3. From then on, **`POST /auth/login`** with the right password answers
+   `{"requires_totp": true, "pending_token"}` instead of a session. The
+   pending token lasts 5 minutes and is single-use.
+4. **`POST /auth/2fa/verify`** (`{"pending_token", "code"}`) trades it,
+   with a code from the app or an unused recovery code, for the session
+   login would have answered. A bad, expired or used pending token is a
+   `400 invalid_token`; a wrong code is a `401` and counts toward the
+   lockout like a wrong password (5 in a row lock the account for 15
+   minutes), and the pending token stays usable until it expires. A code's
+   time step is spent when it is accepted, so the same code is never
+   accepted twice, even by two requests at once.
+5. **`POST /auth/2fa/disable`** (`{"current_password"}`) turns it off,
+   forgets the secret and the recovery codes, mails a notice, and signs
+   every session out, the caller's included (`400 wrong_password` for a
+   wrong password). The contract asks only for the password; signing the
+   sessions out is what stops a stolen session from keeping the account
+   once two-factor is off.
+
+**At rest.** The secret is stored in `users.totp_secret` sealed with
+AES-256-GCM under `TOTP_ENCRYPTION_KEY`, with the account's id as
+associated data, so a sealed secret copied onto another row doesn't open.
+The recovery codes are stored as HMAC-SHA256 under a key derived from
+`TOTP_ENCRYPTION_KEY`, never as themselves, so the table alone can't be
+checked against guesses. `src/shared/security/totp.rs` holds all of it,
+with no business meaning; the flows are `src/features/two_factor/`.
+
+**Changing the key.** There is no rotation: a new `TOTP_ENCRYPTION_KEY`
+can't open the secrets or match the recovery codes stored under the old
+one, so every user with two-factor on would have to set it up again. Keep
+the key with your other secrets, and back it up.
+
+## API keys
+
+A user makes keys for scripts and integrations: `POST /api-keys` with
+`{"name", "scope"?, "expires_in_days"?}` answers `201` with the key,
+`rok_<8 characters>_<32 characters>`, in `key`. It is shown this once;
+only its first 12 characters (`key_prefix`, to recognise it) and its
+SHA-256 are stored. `GET /api-keys` lists the caller's active keys
+(neither revoked nor expired, newest first, with `last_used_at`), and
+`DELETE /api-keys/{id}` revokes one (`204`; another user's is a `404`).
+
+- **Sending one.** `Authorization: Bearer rok_…` (a bearer token starting
+  `rok_` is a key, anything else a session JWT) or `X-API-Key: rok_…`.
+  `Authorization` wins when both are sent.
+- **What it reaches.** Every route `AuthUser` guards, acting as its owner,
+  with the owner's role, an admin's included. `AuthUser::credential` says
+  `Session` or `ApiKey(scope)`, for a handler that wants to tell. No key
+  reaches `/api/v1/auth/*` or `/api/v1/api-keys` (`403 forbidden`): signing
+  in, the account flows and managing keys need a session. The path is
+  compared percent-decoded and normalised, so `/api/v1/api%2Dkeys` is
+  refused like `/api/v1/api-keys`.
+- **Scope.** `read` (the default) may only `GET`, `HEAD` and `OPTIONS`;
+  any other method is a `403`. `write` may do what its owner may.
+- **Lifetime.** `expires_in_days` is 1 to 365, or absent for a key that
+  doesn't expire. An expired, revoked or unknown key, or a key whose owner
+  is disabled or deleted, is a `401`. `last_used_at` is written at most
+  once a minute.
+- **Limits.** At most 25 active keys per user: the 26th is a `409
+  conflict` until one is revoked. A name is 1 to 100 characters (`422`).
+- **Recovery.** A password reset revokes every key of the account; a
+  password change keeps them.
+
 ## Sessions
 
 A session is an HS256 JWT signed with `JWT_SECRET`, carrying `sub` (the
@@ -124,8 +220,10 @@ no refresh token: a client signs in again when it expires (`JWT_TTL`).
 
 `AuthUser` checks the account on every request, with one query from
 `queries/session.sql`: a deleted or disabled account, or a token whose `tv`
-isn't the account's current `token_version`, is a `401`. A reset or a
-password change bumps `token_version`, which signs every older token out.
+isn't the account's current `token_version`, is a `401`. A reset, a
+password change or turning two-factor off bumps `token_version`, which
+signs every older token out. An API key is checked the same way, against
+its own row and its owner's (see [API keys](#api-keys)).
 To disable an account, set `is_active = false`; its tokens stop working on
 the next request. `AdminUser` reads the role from the database too, so a
 promotion or demotion applies at once. So `AuthUser` needs the pool as app
@@ -140,7 +238,7 @@ data, `web::Data<PgPool>`, which `app::configure` registers (under axum,
 |---|---|---|
 | `JWT_SECRET` | required | the HS256 key, at least 32 bytes (`openssl rand -base64 48`) |
 | `JWT_TTL` | `3600` | seconds a session token lasts |
-| `TOTP_ENCRYPTION_KEY` | required | the AES-256 key two-factor secrets are stored under: 32 bytes in base64 (`openssl rand -base64 32`) |
+| `TOTP_ENCRYPTION_KEY` | required | the AES-256 key two-factor secrets are sealed under, and the recovery codes' HMAC key is derived from: 32 bytes in base64 (`openssl rand -base64 32`) |
 | `REQUIRE_VERIFIED_EMAIL` | `true` | sign-in answers `403` until the email is verified |
 | `APP_URL` | `http://localhost:8080` | the base of mailed links: your front end's URL |
 | `MAIL_TRANSPORT` | `log` | `log` (each mail is logged) or `smtp` |
@@ -149,6 +247,9 @@ data, `web::Data<PgPool>`, which `app::configure` registers (under axum,
 | `BREACH_CHECK` | `false` | refuse passwords Have I Been Pwned knows |
 | `TRUST_PROXY` | `false` | take the client IP from `X-Forwarded-For` |
 | `AUTH_RATE_LIMIT` | `20` | requests a minute per IP on `/auth`; `0` turns it off |
+
+The upload settings (`STORAGE_URL`, `MEDIA_MAX_UPLOAD_BYTES`,
+`MEDIA_ALLOWED_TYPES`) are on [Files and storage](files.md#settings).
 
 The defaults suit development: mail is logged (`RUST_LOG=debug` shows
 each body, links included), the breach check is off, and email

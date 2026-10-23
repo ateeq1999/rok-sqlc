@@ -36,7 +36,8 @@ You need PostgreSQL and Rust 1.94 or newer.
 ## Accounts
 
 The account flows are hand-written features, yours to change:
-`src/features/auth/` and `src/features/account/`. rok-sqlc's guide
+`src/features/auth/`, `src/features/two_factor/` and
+`src/features/account/`. rok-sqlc's guide
 documents each one, the settings, sending real mail and adding a flow
 ([Accounts and sign-in](https://github.com/ateeq1999/rok-sqlc/blob/main/docs/guide/auth.md)).
 
@@ -57,15 +58,18 @@ documents each one, the settings, sending real mail and adding a flow
   `POST /api/v1/auth/2fa/verify` (`{"pending_token", "code"}`, within 5
   minutes) trades it, with an app code or a recovery code, for the session.
   A code is accepted once; wrong codes count toward the lock. `POST
-  /api/v1/auth/2fa/disable` (`{"current_password"}`) turns it off. Both
-  changes are mailed. The secret is stored encrypted (AES-256-GCM under
-  `TOTP_ENCRYPTION_KEY`), the recovery codes as SHA-256.
+  /api/v1/auth/2fa/disable` (`{"current_password"}`) turns it off and
+  signs every session out. Both changes are mailed. The secret is stored
+  encrypted (AES-256-GCM under `TOTP_ENCRYPTION_KEY`, bound to the
+  account), the recovery codes as HMAC-SHA256 under a key derived from it.
 - **Passwords.** `POST /api/v1/auth/password/forgot` (`{"email"}`, always
   `202`) mails a link valid an hour, and `POST /api/v1/auth/password/reset`
   (`{"token", "new_password"}`) sets the new password and lifts any lock. A
   signed-in user changes theirs with `POST /api/v1/auth/password/change`
   (`{"current_password", "new_password"}`) and gets a notice by mail. Both
-  sign every older session out. `BREACH_CHECK=true` refuses passwords Have
+  sign every older session out. A reset also revokes every API key and any
+  pending two-factor sign-in (it recovers an account someone else may have
+  had); a change keeps the keys. `BREACH_CHECK=true` refuses passwords Have
   I Been Pwned knows.
 - **Email change.** `POST /api/v1/auth/email/change`
   (`{"current_password", "new_email"}`, `202`) mails a notice to the old
@@ -90,8 +94,9 @@ documents each one, the settings, sending real mail and adding a flow
   active keys and `DELETE /api/v1/api-keys/{id}` revokes one. A key works
   wherever a session does, as `Authorization: Bearer rok_…` or
   `X-API-Key`, except under `/auth` and `/api-keys` (`403`); a `read`
-  key only for `GET`, `HEAD` and `OPTIONS`. At most 25 active keys
-  (`409 conflict` past it); `expires_in_days` is 1 to 365.
+  key only for `GET`, `HEAD` and `OPTIONS`. A key acts with its owner's
+  role, an admin's included. At most 25 active keys (`409 conflict` past
+  it); `expires_in_days` is 1 to 365.
 
 Every `/auth` route is limited to `AUTH_RATE_LIMIT` requests a minute per
 IP (`429` past it). A flow refusing a well-formed request answers `400`
@@ -123,7 +128,8 @@ in place of the 2 MiB `router` sets. The bytes go through the
 content type kept), over `object_store`, chosen by `STORAGE_URL`:
 `file://./storage` (the default, a `storage/` directory where the server
 runs), `s3://<bucket>` (the credentials, region and `AWS_ENDPOINT` come
-from the `AWS_*` variables) or `memory://`. The tests store in memory.
+from the `AWS_*` variables) or `memory://`, opened by `AppState::new`
+(an unopenable store fails startup). The tests configure `memory://`.
 
 ## The server
 
@@ -148,7 +154,8 @@ change applies at once.
 
 - `src/shared/security/` holds argon2id password hashing, single-use
   tokens (only their SHA-256 is stored), the JWT, the breach check and
-  two-factor's TOTP codes, secret encryption and recovery codes.
+  two-factor's TOTP codes, secret encryption and recovery codes, and the
+  single-use token lifecycle (`auth_token.rs`).
 - `src/shared/mail/` sends mail through an outbox: a flow writes its
   message as an `outbound_mail` row on its own transaction, and the sender
   delivers it (SMTP, or the log), retrying with backoff; after five

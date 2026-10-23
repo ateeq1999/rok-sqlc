@@ -40,7 +40,10 @@ How the code is organized:
 - [Customizing the generated API](customizing.md): service overrides,
   state, ports, and hand-written features.
 - [Accounts and sign-in](auth.md): the templates' sign-up,
-  sign-in, password and email flows, sessions, mail, and adding a flow.
+  sign-in, password and email flows, two-factor sign-in, API keys,
+  sessions, mail, and adding a flow.
+- [Files and storage](files.md): the templates' uploads, profile photos,
+  the storage port, S3 and the limits.
 
 What the API answers:
 

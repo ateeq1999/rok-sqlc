@@ -7,8 +7,83 @@ the *generated* API count as breaking (see ADR 0012).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-23
+
+Milestone 6, in both templates at once: two-factor sign-in, API keys,
+uploads behind a storage port, and profile photos, the eleven contract
+endpoints the templates left unimplemented (ADR 0020). The generator
+follows `ALTER TABLE … DROP CONSTRAINT` and `ADD CONSTRAINT … CHECK`, which
+the template's own migration uses to widen an enum.
+
+### Breaking changes
+
+- **The templates need `TOTP_ENCRYPTION_KEY`:** 32 bytes in standard
+  base64 (`openssl rand -base64 32`). Two-factor secrets are sealed under it
+  and the recovery codes' HMAC key is derived from it; without it the
+  server stops at startup (``environment variable `TOTP_ENCRYPTION_KEY` is
+  not set``). Changing it invalidates every stored secret and recovery code.
+- **The templates' `AuthUser` accepts API keys** (`Authorization: Bearer
+  rok_…` or `X-API-Key`) wherever it accepts a session, and has a new
+  field, `credential: Credential` (`Session` or `ApiKey(scope)`); code
+  that builds an `AuthUser` or matches it exhaustively changes. A key acts
+  with its owner's role, an admin's included.
+- **New template migrations:** `0003_two_factor.sql`
+  (`users.totp_last_step`, `totp_recovery_codes`, the `two_factor_pending`
+  token purpose), `0004_api_keys.sql` (`api_keys`' indexes) and
+  `0005_avatars.sql` (`users.avatar_url`, a generated column). Apply them in
+  order; the checked-in `src/db/` and the `users` feature regenerate with
+  them (`User`, `UserResponse` gain `avatar_url`; `AuthTokenPurpose` gains
+  `TwoFactorPending`).
+- **New template dependencies:** `aes-gcm`, `totp-rs`, `qrcode`,
+  `object_store` (`aws`), `infer`, `bytes`, `image` (jpeg, png, webp),
+  `hmac`, `subtle` and `zeroize`.
+- **A new wire answer, `415 unsupported_media_type`**, for an upload whose
+  detected type is unknown or not allowed; `AppError::UnsupportedMediaType`
+  in both templates' `error.rs`, and `AppError::too_large(what, limit)` for
+  the `413`s.
+- **`AppState::new` opens `STORAGE_URL`** and returns
+  `Result<AppState, object_store::Error>`; tests configure `memory://` (the
+  templates' `tests/support::config` does) or swap a store in with
+  `AppState::with_storage`.
+- **The templates' two-factor routes are their own feature,
+  `features/two_factor/`** (`TwoFactorService`, `queries/two_factor.sql`);
+  `AuthService` loses its `totp` field. `issue_token`, `consume_token` and
+  the token TTLs moved to `shared/security/auth_token.rs` (`policy` replaces
+  `ttl_of` and `link_mail`), and `MAX_FAILED_LOGINS`/`LOCK_MINUTES` to
+  `shared/security/password.rs`; `auth::service` re-exports all of them.
+- **A password reset revokes the account's API keys and pending two-factor
+  sign-ins**, and turning two-factor off signs every session out. A
+  password change keeps the keys.
+
 ### Added
 
+- **Two-factor sign-in** (`/api/v1/auth/2fa/setup`, `enable`, `disable`,
+  `verify`): TOTP (RFC 6238, one step of drift) with the secret's QR code;
+  a code is never accepted twice; ten single-use recovery codes, shown once;
+  sign-in answers `{requires_totp, pending_token}` (5 minutes) for an
+  account with two-factor on; wrong codes count toward the lockout. The
+  secret is AES-256-GCM-sealed with the account's id as associated data;
+  recovery codes are HMAC-SHA256 under a key derived from
+  `TOTP_ENCRYPTION_KEY`; codes compare in constant time.
+- **API keys** (`GET`/`POST /api/v1/api-keys`, `DELETE
+  /api/v1/api-keys/{id}`): `rok_<8>_<32>`, stored as a prefix and a
+  SHA-256, shown once; `read` (safe methods only) or `write` scope; optional
+  expiry (1 to 365 days); at most 25 active per user (`409`). No key
+  reaches `/api/v1/auth/*` or `/api/v1/api-keys` (`403`), whatever the
+  path's encoding.
+- **Uploads** (`/api/v1/media`): a raw body of at most
+  `MEDIA_MAX_UPLOAD_BYTES` (10 MiB, `413`), its type detected from its
+  bytes and checked against `MEDIA_ALLOWED_TYPES` (`415`), owner-scoped,
+  paginated, served with `nosniff`, a sandbox CSP and `attachment` for
+  anything but images. Under actix-web the body is read only after
+  `AuthUser` succeeds.
+- **Profile photos** (`PUT`/`DELETE /api/v1/users/me/avatar`, public `GET
+  /api/v1/avatars/{file}`): JPEG, PNG or WebP of at most 2 MiB, decoded
+  under bomb limits (8192×8192, 128 MiB), cropped to 256×256 and
+  re-encoded as JPEG (no EXIF); `avatar_url` in every user response.
+- **The `Storage` port** (`shared/storage/`) over `object_store`:
+  `STORAGE_URL` is `file://…` (default `file://./storage`), `s3://bucket`
+  (S3 or compatible, from the `AWS_*` variables) or `memory://`.
 - **`ALTER TABLE … DROP CONSTRAINT [IF EXISTS]`** is followed. A dropped
   unique constraint takes its lookup with it, a foreign key its
   relationship, a primary key the key, and a check what it said about its
@@ -16,9 +91,19 @@ the *generated* API count as breaking (see ADR 0012).
   CONSTRAINT … CHECK`) adds the enum's new variants. Check and foreign key
   constraints now have names, declared or the ones PostgreSQL gives unnamed
   ones (`<table>_<col>_check`, `<table>_check`, `<table>_<cols>_fkey`), and
-  `RENAME CONSTRAINT` renames them. Dropping a name the table doesn't have
-  fails the table, unless `IF EXISTS`. A schema without `DROP CONSTRAINT`
-  generates as before.
+  `RENAME CONSTRAINT` renames them. An added check may be in `pg_dump`'s
+  `col = ANY (ARRAY[…])` form (`CREATE TABLE` still reads `IN (…)` only, so
+  existing output doesn't change). Dropping a name the model doesn't track
+  (an `EXCLUDE`, PostgreSQL 18's `*_not_null`) warns, at its `path:line`,
+  and changes nothing; `IF EXISTS` stays silent. `RENAME CONSTRAINT` fails
+  the table for an unknown old name or a taken new one. A schema without
+  `DROP CONSTRAINT` generates as before.
+- A partial unique index's `deleted_at IS NULL` condition is read in any
+  case and spacing.
+- ADR 0020; the guide's [Files and storage](docs/guide/files.md) page;
+  two-factor sign-in and API keys in [Accounts](docs/guide/auth.md); `413`,
+  `415` and the API-key `403`s in the wire standard; troubleshooting for
+  `TOTP_ENCRYPTION_KEY`, `STORAGE_URL` and the constraint warning.
 
 ## [0.7.0] - 2026-10-21
 
@@ -892,7 +977,8 @@ that break code written against earlier development snapshots.
   paths under the current directory relative to it (also when they come
   from `rok-sqlc.toml`).
 
-[Unreleased]: https://github.com/ateeq1999/rok-sqlc/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/ateeq1999/rok-sqlc/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/ateeq1999/rok-sqlc/compare/v0.4.0...v0.5.0

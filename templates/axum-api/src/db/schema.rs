@@ -5,9 +5,8 @@
 /// Verbatim snapshot of the input schema; never executed.
 pub const SCHEMA_SQL: &str = r#"-- The schema of the target API (api-starter-axum's OpenAPI document), as
 -- far as generation covers it. `users` and `audit_log` have API features;
--- `media` and `api_keys` are here because the hand-written features of a
--- later release use them, and `rok-sqlc.toml` excludes them from the API
--- for now.
+-- `media` and `api_keys` belong to the hand-written `media` and `api_keys`
+-- features, so `rok-sqlc.toml` excludes them from the generated API.
 
 CREATE TYPE role AS ENUM ('user', 'admin');
 CREATE TYPE api_key_scope AS ENUM ('read', 'write');

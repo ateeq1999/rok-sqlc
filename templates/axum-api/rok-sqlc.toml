@@ -37,9 +37,9 @@ audit_log = "audit_log_entry"
 output = "src/features"
 prefix = "/api/v1"
 framework = "axum"
-# `media` is the hand-written uploads feature, and `api_keys` a hand-written
-# feature of a later release; `auth_tokens`, `totp_recovery_codes` and
-# `outbound_mail` belong to the account flows and the mail outbox.
+# `media` and `api_keys` are hand-written features (uploads, API keys);
+# `auth_tokens`, `totp_recovery_codes` and `outbound_mail` belong to the
+# account flows, two-factor sign-in and the mail outbox.
 exclude = ["media", "api_keys", "auth_tokens", "outbound_mail", "totp_recovery_codes"]
 
 [api.access]
