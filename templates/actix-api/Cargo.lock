@@ -14,6 +14,7 @@ dependencies = [
  "bytes",
  "chrono",
  "governor",
+ "hmac 0.13.0",
  "image",
  "infer",
  "jsonwebtoken",
@@ -27,6 +28,7 @@ dependencies = [
  "sha1 0.11.0",
  "sha2 0.11.1",
  "sqlx",
+ "subtle",
  "thiserror",
  "tokio",
  "totp-rs",
@@ -36,6 +38,7 @@ dependencies = [
  "utoipa-swagger-ui",
  "uuid",
  "validator",
+ "zeroize",
 ]
 
 [[package]]

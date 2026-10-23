@@ -541,7 +541,7 @@ impl AuthService {
     pub async fn setup_totp(&self, id: UserId) -> Result<TotpSetupResponse, AppError> {
         let user = self.live_user(id).await?;
         let enrollment = totp::enroll(&user.email)?;
-        let sealed = self.totp.seal(&enrollment.secret)?;
+        let sealed = self.totp.seal(user.id.into(), &enrollment.secret)?;
         if queries::store_totp_secret(&self.pool, user.id, Some(&sealed)).await? == 0 {
             return Err(totp_already_on());
         }
@@ -569,9 +569,14 @@ impl AuthService {
             .totp_secret
             .ok_or_else(|| AppError::BadRequest("no two-factor setup is in progress".to_owned()))?;
         let step = (self.totp)
-            .check(&sealed, input.code.trim(), user.totp_last_step)?
+            .check(
+                user.id.into(),
+                &sealed,
+                input.code.trim(),
+                user.totp_last_step,
+            )?
             .ok_or_else(|| AppError::BadRequest("the code is wrong or expired".to_owned()))?;
-        let codes = totp::recovery_codes();
+        let codes = self.totp.recovery_codes();
         let mut tx = self.pool.begin().await?;
         if queries::enable_totp(&mut *tx, user.id, step, &sealed).await? == 0 {
             return Err(AppError::BadRequest(
@@ -663,10 +668,13 @@ impl AuthService {
             return Ok(false);
         };
         if !totp::is_code(code) {
-            let hash = totp::recovery_hash(code);
+            let hash = self.totp.recovery_hash(code);
             return Ok(queries::use_recovery_code(&mut *conn, user.id, &hash).await? == 1);
         }
-        match self.totp.check(sealed, code, user.totp_last_step)? {
+        match self
+            .totp
+            .check(user.id.into(), sealed, code, user.totp_last_step)?
+        {
             Some(step) => Ok(queries::accept_totp_step(&mut *conn, user.id, step).await? == 1),
             None => Ok(false),
         }

@@ -4,7 +4,9 @@
 //! authenticator secret and its enrollment (the provisioning URI and its QR
 //! code), the codes (TOTP, RFC 6238: SHA-1, 6 digits, 30-second steps, one
 //! step of drift either way), the secret's encryption at rest (AES-256-GCM
-//! under `TOTP_ENCRYPTION_KEY`), and the recovery codes.
+//! under `TOTP_ENCRYPTION_KEY`, bound to its account's id), and the
+//! recovery codes (stored as an HMAC-SHA256 under a key derived from
+//! `TOTP_ENCRYPTION_KEY`).
 //!
 //! A code is matched to its time step, so the caller can store the last
 //! step it accepted and refuse that step (and older ones) next time: a code
@@ -12,15 +14,19 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use hmac::{Hmac, Mac};
 use qrcode::QrCode;
 use qrcode::render::svg;
+use sha2::Sha256;
+use subtle::ConstantTimeEq;
 use totp_rs::{Algorithm, TOTP};
+use uuid::Uuid;
+use zeroize::Zeroizing;
 
-use super::token;
 use crate::error::AppError;
 
 /// The digits of a code.
@@ -54,63 +60,132 @@ const RECOVERY_ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 /// The characters on each side of a recovery code's dash.
 const RECOVERY_HALF: usize = 5;
 
-/// Encrypts and decrypts stored secrets with `TOTP_ENCRYPTION_KEY`. It has
-/// no `Debug`, so the key can't end up in a log.
+/// What the recovery-code key is derived with: HMAC-SHA256 of this label
+/// under `TOTP_ENCRYPTION_KEY`, so the AES key is never used for anything
+/// else.
+const RECOVERY_KEY_LABEL: &[u8] = b"rok totp recovery-code hmac key v1";
+
+/// Encrypts and decrypts stored secrets with `TOTP_ENCRYPTION_KEY`, and
+/// hashes recovery codes under a key derived from it. It has no `Debug`,
+/// so neither key can end up in a log.
 #[derive(Clone)]
-pub struct TotpCipher(Aes256Gcm);
+pub struct TotpCipher {
+    aes: Aes256Gcm,
+    /// The recovery codes' HMAC key, zeroed when dropped.
+    recovery_key: Zeroizing<[u8; KEY_BYTES]>,
+}
 
 impl TotpCipher {
     /// The cipher under `key`.
     #[must_use]
     pub fn new(key: &[u8; KEY_BYTES]) -> Self {
-        TotpCipher(Aes256Gcm::new(key.into()))
+        let mut recovery_key = Zeroizing::new([0; KEY_BYTES]);
+        recovery_key.copy_from_slice(&hmac_sha256(key, RECOVERY_KEY_LABEL));
+        TotpCipher {
+            aes: Aes256Gcm::new(key.into()),
+            recovery_key,
+        }
     }
 
-    /// `secret`, encrypted under a fresh random nonce: base64 of the nonce
-    /// followed by the ciphertext (with its tag), as `users.totp_secret`
-    /// keeps it.
-    pub fn seal(&self, secret: &[u8]) -> Result<String, AppError> {
+    /// `secret`, the account `owner`'s, encrypted under a fresh random
+    /// nonce with `owner` as associated data (so it opens for that account
+    /// only): base64 of the nonce followed by the ciphertext (with its
+    /// tag), as `users.totp_secret` keeps it.
+    pub fn seal(&self, owner: Uuid, secret: &[u8]) -> Result<String, AppError> {
         let nonce: [u8; NONCE_BYTES] = rand::random();
         let mut sealed = nonce.to_vec();
+        let payload = Payload {
+            msg: secret,
+            aad: owner.as_bytes(),
+        };
         sealed.extend(
-            self.0
-                .encrypt(Nonce::from_slice(&nonce), secret)
+            self.aes
+                .encrypt(Nonce::from_slice(&nonce), payload)
                 .map_err(|_| AppError::Internal("encrypting a TOTP secret failed".into()))?,
         );
         Ok(STANDARD.encode(sealed))
     }
 
-    /// The secret [`TotpCipher::seal`] encrypted as `sealed`. A value that
-    /// isn't one, or was sealed under another key, is an internal error.
-    pub fn open(&self, sealed: &str) -> Result<Vec<u8>, AppError> {
+    /// The secret [`TotpCipher::seal`] encrypted as `sealed` for `owner`. A
+    /// value that isn't one, or was sealed under another key or for another
+    /// account, is an internal error.
+    pub fn open(&self, owner: Uuid, sealed: &str) -> Result<Zeroizing<Vec<u8>>, AppError> {
         let unreadable = || AppError::Internal("a stored TOTP secret can't be decrypted".into());
         let bytes = STANDARD.decode(sealed).map_err(|_| unreadable())?;
         if bytes.len() <= NONCE_BYTES {
             return Err(unreadable());
         }
         let (nonce, ciphertext) = bytes.split_at(NONCE_BYTES);
-        self.0
-            .decrypt(Nonce::from_slice(nonce), ciphertext)
+        let payload = Payload {
+            msg: ciphertext,
+            aad: owner.as_bytes(),
+        };
+        self.aes
+            .decrypt(Nonce::from_slice(nonce), payload)
+            .map(Zeroizing::new)
             .map_err(|_| unreadable())
     }
 
-    /// The step `code` is the code of now (see [`matching_step`]) for the
-    /// secret sealed as `sealed`, after `last`; `None`: it is no such code.
+    /// The step `code` is the code of now (see [`matching_step`]) for
+    /// `owner`'s secret sealed as `sealed`, after `last`; `None`: it is no
+    /// such code.
     pub fn check(
         &self,
+        owner: Uuid,
         sealed: &str,
         code: &str,
         last: Option<i64>,
     ) -> Result<Option<i64>, AppError> {
-        let secret = self.open(sealed)?;
+        let secret = self.open(owner, sealed)?;
         Ok(matching_step(&secret, code, current_step(), last))
     }
+
+    /// [`RECOVERY_CODES`] new recovery codes, each `XXXXX-XXXXX` from a
+    /// 32-character alphabet (50 random bits), with the hash to store.
+    #[must_use]
+    pub fn recovery_codes(&self) -> Vec<RecoveryCode> {
+        (0..RECOVERY_CODES)
+            .map(|_| {
+                let bytes: [u8; 2 * RECOVERY_HALF] = rand::random();
+                let mut raw: String = bytes
+                    .iter()
+                    .map(|byte| char::from(RECOVERY_ALPHABET[usize::from(*byte) % 32]))
+                    .collect();
+                raw.insert(RECOVERY_HALF, '-');
+                let hash = self.recovery_hash(&raw);
+                RecoveryCode { raw, hash }
+            })
+            .collect()
+    }
+
+    /// What a presented recovery code is looked up by: the HMAC-SHA256
+    /// (lowercase hex) of the code, trimmed and uppercased first (so
+    /// `abcde-fghjk` finds `ABCDE-FGHJK`), under the recovery-code key. A
+    /// stolen table can't be checked against guesses without
+    /// `TOTP_ENCRYPTION_KEY`.
+    #[must_use]
+    pub fn recovery_hash(&self, code: &str) -> String {
+        let mac = hmac_sha256(
+            &self.recovery_key[..],
+            code.trim().to_uppercase().as_bytes(),
+        );
+        mac.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+}
+
+/// HMAC-SHA256 of `message` under `key`.
+fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+    let mut mac = <Hmac<Sha256> as hmac::KeyInit>::new_from_slice(key)
+        .unwrap_or_else(|_| unreachable!("HMAC takes a key of any length"));
+    mac.update(message);
+    mac.finalize().into_bytes().into()
 }
 
 /// A new secret and what an authenticator app needs to enroll it.
 pub struct Enrollment {
-    /// The secret's bytes: seal them with [`TotpCipher::seal`] to store.
-    pub secret: Vec<u8>,
+    /// The secret's bytes, zeroed when dropped: seal them with
+    /// [`TotpCipher::seal`] to store.
+    pub secret: Zeroizing<Vec<u8>>,
     /// The secret in base32, for typing in by hand.
     pub base32: String,
     /// The `otpauth://totp/…` URI the QR code carries.
@@ -123,7 +198,7 @@ pub struct Enrollment {
 /// A new random secret for `account` (the email the app shows), with its
 /// provisioning URI and QR code.
 pub fn enroll(account: &str) -> Result<Enrollment, AppError> {
-    let secret: [u8; SECRET_BYTES] = rand::random();
+    let secret = Zeroizing::new(rand::random::<[u8; SECRET_BYTES]>().to_vec());
     let totp = authenticator(secret.to_vec(), account);
     let provisioning_uri = totp.get_url();
     let qr = QrCode::new(provisioning_uri.as_bytes())
@@ -133,7 +208,7 @@ pub fn enroll(account: &str) -> Result<Enrollment, AppError> {
         .build();
     Ok(Enrollment {
         base32: totp.get_secret_base32(),
-        secret: secret.to_vec(),
+        secret,
         provisioning_uri,
         qr_code_data_uri: format!("data:image/svg+xml;base64,{}", STANDARD.encode(qr)),
     })
@@ -161,7 +236,7 @@ pub fn matching_step(secret: &[u8], code: &str, now: i64, last: Option<i64>) -> 
         .filter(|step| *step >= 0 && last.is_none_or(|last| *step > last))
         .find(|step| {
             let time = u64::try_from(*step).unwrap_or(0) * STEP_SECS;
-            constant_time_eq(totp.generate(time).as_bytes(), code.as_bytes())
+            bool::from(totp.generate(time).as_bytes().ct_eq(code.as_bytes()))
         })
 }
 
@@ -176,34 +251,9 @@ pub fn is_code(code: &str) -> bool {
 pub struct RecoveryCode {
     /// `XXXXX-XXXXX`, shown to the user once; never stored.
     pub raw: String,
-    /// What `totp_recovery_codes.code_hash` keeps: [`recovery_hash`] of
-    /// `raw`.
+    /// What `totp_recovery_codes.code_hash` keeps:
+    /// [`TotpCipher::recovery_hash`] of `raw`.
     pub hash: String,
-}
-
-/// [`RECOVERY_CODES`] new recovery codes, each `XXXXX-XXXXX` from a
-/// 32-character alphabet (50 random bits).
-#[must_use]
-pub fn recovery_codes() -> Vec<RecoveryCode> {
-    (0..RECOVERY_CODES)
-        .map(|_| {
-            let bytes: [u8; 2 * RECOVERY_HALF] = rand::random();
-            let mut raw: String = bytes
-                .iter()
-                .map(|byte| char::from(RECOVERY_ALPHABET[usize::from(*byte) % 32]))
-                .collect();
-            raw.insert(RECOVERY_HALF, '-');
-            let hash = recovery_hash(&raw);
-            RecoveryCode { raw, hash }
-        })
-        .collect()
-}
-
-/// The SHA-256 (lowercase hex) a presented recovery code is looked up by:
-/// trimmed and uppercased first, so `abcde-fghjk` finds `ABCDE-FGHJK`.
-#[must_use]
-pub fn recovery_hash(code: &str) -> String {
-    token::hash(&code.trim().to_uppercase())
 }
 
 /// The authenticator of `secret` for `account`, under [`ISSUER`].
@@ -217,12 +267,6 @@ fn authenticator(secret: Vec<u8>, account: &str) -> TOTP {
         Some(ISSUER.to_owned()),
         account.to_owned(),
     )
-}
-
-/// Whether `a` and `b` are equal, in a time that doesn't depend on where
-/// they differ.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0, |diff, (x, y)| diff | (x ^ y)) == 0
 }
 
 #[cfg(test)]
@@ -284,28 +328,37 @@ mod tests {
     }
 
     #[test]
-    fn a_sealed_secret_opens_only_under_its_key() -> Result<(), AppError> {
+    fn a_sealed_secret_opens_only_under_its_key_for_its_account() -> Result<(), AppError> {
         let cipher = TotpCipher::new(&[7; KEY_BYTES]);
-        let sealed = cipher.seal(RFC_SECRET)?;
+        let ada = Uuid::now_v7();
+        let sealed = cipher.seal(ada, RFC_SECRET)?;
         assert!(!sealed.contains("12345678901234567890"));
         assert_eq!(
             STANDARD.decode(&sealed).map(|b| b.len()).ok(),
             Some(12 + 20 + 16)
         );
-        assert_ne!(cipher.seal(RFC_SECRET)?, sealed, "a fresh nonce each time");
-        assert_eq!(cipher.open(&sealed)?, RFC_SECRET);
-        assert!(TotpCipher::new(&[8; KEY_BYTES]).open(&sealed).is_err());
-        assert!(cipher.open("not base64!").is_err());
-        assert!(cipher.open("c2hvcnQ=").is_err());
+        assert_ne!(
+            cipher.seal(ada, RFC_SECRET)?,
+            sealed,
+            "a fresh nonce each time"
+        );
+        assert_eq!(cipher.open(ada, &sealed)?.as_slice(), RFC_SECRET);
+        assert!(TotpCipher::new(&[8; KEY_BYTES]).open(ada, &sealed).is_err());
+        assert!(
+            cipher.open(Uuid::now_v7(), &sealed).is_err(),
+            "copied to another account, it doesn't open"
+        );
+        assert!(cipher.open(ada, "not base64!").is_err());
+        assert!(cipher.open(ada, "c2hvcnQ=").is_err());
 
         let enrollment = enroll("ada@example.com")?;
-        let sealed = cipher.seal(&enrollment.secret)?;
+        let sealed = cipher.seal(ada, &enrollment.secret)?;
         let now = current_step();
-        let code = authenticator(enrollment.secret, "")
+        let code = authenticator(enrollment.secret.to_vec(), "")
             .generate(u64::try_from(now).unwrap_or(0) * STEP_SECS);
-        let step = cipher.check(&sealed, &code, None)?;
+        let step = cipher.check(ada, &sealed, &code, None)?;
         assert_eq!(step, Some(now));
-        assert_eq!(cipher.check(&sealed, &code, step)?, None);
+        assert_eq!(cipher.check(ada, &sealed, &code, step)?, None);
         Ok(())
     }
 
@@ -316,7 +369,7 @@ mod tests {
         assert_eq!(enrollment.base32.len(), 32);
         assert_eq!(
             Secret::Encoded(enrollment.base32.clone()).to_bytes().ok(),
-            Some(enrollment.secret.clone())
+            Some(enrollment.secret.to_vec())
         );
         assert_eq!(
             enrollment.provisioning_uri,
@@ -337,8 +390,9 @@ mod tests {
     }
 
     #[test]
-    fn recovery_codes_are_ten_distinct_shown_once_codes_stored_as_hashes() {
-        let codes = recovery_codes();
+    fn recovery_codes_are_ten_distinct_shown_once_codes_stored_as_keyed_hashes() {
+        let cipher = TotpCipher::new(&[7; KEY_BYTES]);
+        let codes = cipher.recovery_codes();
         assert_eq!(codes.len(), 10);
         for code in &codes {
             assert_eq!(code.raw.len(), 11, "{}", code.raw);
@@ -350,13 +404,30 @@ mod tests {
                 "{}",
                 code.raw
             );
-            assert_eq!(code.hash, token::hash(&code.raw));
+            assert_eq!(code.hash.len(), 64);
+            assert_ne!(code.hash, super::super::token::hash(&code.raw));
+            assert_ne!(
+                code.hash,
+                TotpCipher::new(&[8; KEY_BYTES]).recovery_hash(&code.raw),
+                "another key, another hash"
+            );
             assert_eq!(
-                recovery_hash(&format!(" {} ", code.raw.to_lowercase())),
+                cipher.recovery_hash(&format!(" {} ", code.raw.to_lowercase())),
                 code.hash
             );
         }
         let distinct: std::collections::BTreeSet<_> = codes.iter().map(|code| &code.raw).collect();
         assert_eq!(distinct.len(), 10);
+    }
+
+    #[test]
+    fn hmac_sha256_matches_rfc_4231() {
+        // RFC 4231, test case 2.
+        let mac = hmac_sha256(b"Jefe", b"what do ya want for nothing?");
+        let hex: String = mac.iter().map(|byte| format!("{byte:02x}")).collect();
+        assert_eq!(
+            hex,
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
     }
 }

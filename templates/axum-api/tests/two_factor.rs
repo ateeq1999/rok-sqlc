@@ -370,6 +370,11 @@ async fn the_secret_is_encrypted_in_the_database() -> TestResult {
             .iter()
             .all(|(hash,)| !codes.contains(hash) && hash.len() == 64)
     );
+    // Keyed: not the plain SHA-256 of any code.
+    for code in &codes {
+        let plain = axum_api::shared::security::token::hash(code);
+        assert!(hashes.iter().all(|(hash,)| *hash != plain), "{code}");
+    }
     db.drop().await
 }
 
