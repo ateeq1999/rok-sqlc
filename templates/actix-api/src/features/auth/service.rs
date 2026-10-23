@@ -6,14 +6,14 @@
 //! feature's query module, `db::queries::auth`, or through a port; mail is
 //! enqueued on the flow's own transaction and committed through the outbox.
 //!
-//! [`issue_token`] and [`consume_token`] are the single-use token lifecycle
-//! every mailed link shares (verification, reset, email change,
-//! invitation), and a pending two-factor sign-in's token too.
+//! The single-use tokens of mailed links and pending two-factor sign-ins
+//! live in `shared::security::auth_token`; [`issue_token`],
+//! [`consume_token`] and the TTL constants are re-exported here.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{TimeDelta, Utc};
+use chrono::Utc;
 use sqlx::{PgConnection, PgPool};
 
 use super::dto::{
@@ -21,20 +21,22 @@ use super::dto::{
     ForgotPasswordDto, InviteUserDto, LoginResponse, ResetPasswordDto, TokenResponse,
     TotpEnabledResponse, TotpSetupResponse, VerifyTotpDto,
 };
-use crate::db::auth_tokens::models::AuthTokenId;
-use crate::db::queries::auth::{
-    self as queries, ConsumeTokenRow, InsertTokenParams, InviteUserParams,
-};
+use crate::db::queries::auth::{self as queries, InviteUserParams};
 use crate::db::totp_recovery_codes::models::TotpRecoveryCodeId;
 use crate::db::types::{AuthTokenPurpose, Role};
 use crate::db::users::models::{User, UserId};
 use crate::db::users::read as users;
 use crate::error::AppError;
-use crate::shared::mail::{Mail, Outbox, Templates};
+use crate::shared::mail::{Outbox, Templates};
+use crate::shared::security::auth_token::{self, invalid_token};
+pub use crate::shared::security::auth_token::{
+    EMAIL_CHANGE_TTL_HOURS, INVITATION_TTL_DAYS, PASSWORD_RESET_TTL_HOURS,
+    TWO_FACTOR_PENDING_TTL_MINUTES, VERIFICATION_TTL_HOURS, consume_token, issue_token,
+};
 use crate::shared::security::breach::BreachCheck;
 use crate::shared::security::jwt::JwtKeys;
 use crate::shared::security::password;
-use crate::shared::security::token::{self, SecretToken};
+use crate::shared::security::token;
 use crate::shared::security::totp::{self, TotpCipher};
 
 /// Wrong passwords in a row after which an account is locked.
@@ -43,27 +45,9 @@ pub const MAX_FAILED_LOGINS: i32 = 5;
 /// How long a lock lasts, in minutes.
 pub const LOCK_MINUTES: i32 = 15;
 
-/// How long an email verification link stays valid, in hours.
-pub const VERIFICATION_TTL_HOURS: i64 = 24;
-
-/// How long a password reset link stays valid, in hours.
-pub const PASSWORD_RESET_TTL_HOURS: i64 = 1;
-
-/// How long an email change link stays valid, in hours.
-pub const EMAIL_CHANGE_TTL_HOURS: i64 = 1;
-
-/// How long an invitation link stays valid, in days.
-pub const INVITATION_TTL_DAYS: i64 = 7;
-
-/// How long a pending two-factor sign-in waits for its code, in minutes.
-pub const TWO_FACTOR_PENDING_TTL_MINUTES: i64 = 5;
-
 /// The `401` of every failed sign-in: it doesn't say which part was wrong,
 /// nor whether the account exists.
 const BAD_CREDENTIALS: &str = "invalid email or password, or the account is temporarily locked";
-
-/// The `400` of a link that can't be used.
-const INVALID_TOKEN: &str = "the link is invalid, expired or already used";
 
 /// The `auth` service, built by `app.rs`.
 #[derive(Clone)]
@@ -147,7 +131,14 @@ impl AuthService {
         if account.totp_enabled {
             let purpose = AuthTokenPurpose::TwoFactorPending;
             let mut tx = self.pool.begin().await?;
-            let pending = issue_token(&mut tx, account.id, purpose, ttl_of(purpose), None).await?;
+            let pending = issue_token(
+                &mut tx,
+                account.id,
+                purpose,
+                auth_token::policy(purpose).0,
+                None,
+            )
+            .await?;
             tx.commit().await?;
             return Ok(LoginResponse::TotpRequired {
                 requires_totp: true,
@@ -223,44 +214,14 @@ impl AuthService {
         purpose: AuthTokenPurpose,
         new_email: Option<String>,
     ) -> Result<(), AppError> {
-        let render = link_mail(purpose).ok_or_else(|| {
+        let (ttl, render) = auth_token::policy(purpose);
+        let render = render.ok_or_else(|| {
             AppError::Internal(format!("a `{}` token is never mailed", purpose.as_str()).into())
         })?;
-        let link = issue_token(&mut *conn, user, purpose, ttl_of(purpose), new_email).await?;
+        let link = issue_token(&mut *conn, user, purpose, ttl, new_email).await?;
         let mail = render(&self.templates, to, &link.raw);
         self.outbox.enqueue(conn, &mail).await
     }
-}
-
-/// Renders the message carrying a link: `(templates, to, raw token)`.
-type RenderLink = fn(&Templates, &str, &str) -> Mail;
-
-/// How long a `purpose` token lasts.
-fn ttl_of(purpose: AuthTokenPurpose) -> TimeDelta {
-    match purpose {
-        AuthTokenPurpose::EmailVerification => TimeDelta::hours(VERIFICATION_TTL_HOURS),
-        AuthTokenPurpose::PasswordReset => TimeDelta::hours(PASSWORD_RESET_TTL_HOURS),
-        AuthTokenPurpose::EmailChange => TimeDelta::hours(EMAIL_CHANGE_TTL_HOURS),
-        AuthTokenPurpose::Invitation => TimeDelta::days(INVITATION_TTL_DAYS),
-        AuthTokenPurpose::TwoFactorPending => TimeDelta::minutes(TWO_FACTOR_PENDING_TTL_MINUTES),
-    }
-}
-
-/// The message that carries a `purpose` link: none for a pending
-/// two-factor sign-in, whose token sign-in answers instead.
-fn link_mail(purpose: AuthTokenPurpose) -> Option<RenderLink> {
-    match purpose {
-        AuthTokenPurpose::EmailVerification => Some(Templates::verification),
-        AuthTokenPurpose::PasswordReset => Some(Templates::password_reset),
-        AuthTokenPurpose::EmailChange => Some(Templates::email_change),
-        AuthTokenPurpose::Invitation => Some(Templates::invitation),
-        AuthTokenPurpose::TwoFactorPending => None,
-    }
-}
-
-/// The `400 invalid_token` of a link that can't be used.
-fn invalid_token() -> AppError {
-    AppError::InvalidToken(INVALID_TOKEN.to_owned())
 }
 
 /// The `409` of an email a live account already uses.
@@ -275,46 +236,6 @@ fn conflict_as<E: Into<AppError>>(replacement: fn() -> AppError) -> impl FnOnce(
         AppError::Conflict(_) => replacement(),
         other => other,
     }
-}
-
-/// Issues a single-use token for `user` and `purpose`, valid for `ttl`, on
-/// `conn` (the flow's transaction): the unused tokens it replaces are
-/// spent, and only its hash is stored. Mail the returned `raw` in a link.
-pub async fn issue_token(
-    conn: &mut PgConnection,
-    user: UserId,
-    purpose: AuthTokenPurpose,
-    ttl: TimeDelta,
-    new_email: Option<String>,
-) -> Result<SecretToken, AppError> {
-    let secret = SecretToken::generate();
-    queries::revoke_tokens(&mut *conn, user, purpose).await?;
-    queries::insert_token(
-        &mut *conn,
-        InsertTokenParams {
-            id: AuthTokenId::generate(),
-            user_id: user,
-            purpose,
-            token_hash: secret.hash.clone(),
-            new_email,
-            expires_at: Utc::now() + ttl,
-        },
-    )
-    .await?;
-    Ok(secret)
-}
-
-/// Spends the token `raw` on `conn`, if it is unused, unexpired and was
-/// issued for `purpose`, and answers whom it was for (and an email
-/// change's new address). Anything else is a `400 invalid_token`.
-pub async fn consume_token(
-    conn: &mut PgConnection,
-    raw: &str,
-    purpose: AuthTokenPurpose,
-) -> Result<ConsumeTokenRow, AppError> {
-    queries::consume_token(conn, &token::hash(raw), purpose)
-        .await?
-        .ok_or_else(invalid_token)
 }
 
 /// The password flows: forgot, reset and change.

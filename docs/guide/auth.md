@@ -249,15 +249,18 @@ values go in as they are:
 ```
 
 **The lifetime.** Add a `MAGIC_LINK_TTL_MINUTES` beside the others in
-`src/features/auth/service.rs`, and the arms the compiler then asks for in
-`ttl_of` (each purpose's lifetime) and `link_mail` (the message that
-carries it; `None` for a token that is never mailed):
+`src/shared/security/auth_token.rs`, and the arm the compiler then asks
+for in `policy`: each purpose's lifetime and the message that carries it
+(`None` for a token that is never mailed):
 
-<!-- source: templates/actix-api/src/features/auth/service.rs -->
+<!-- source: templates/actix-api/src/shared/security/auth_token.rs -->
 ```rust
-fn ttl_of(purpose: AuthTokenPurpose) -> TimeDelta {
+pub fn policy(purpose: AuthTokenPurpose) -> (TimeDelta, Option<RenderLink>) {
     match purpose {
-        AuthTokenPurpose::EmailVerification => TimeDelta::hours(VERIFICATION_TTL_HOURS),
+        AuthTokenPurpose::EmailVerification => (
+            TimeDelta::hours(VERIFICATION_TTL_HOURS),
+            Some(Templates::verification),
+        ),
 ```
 
 **The service methods.** One mails the link on a transaction:

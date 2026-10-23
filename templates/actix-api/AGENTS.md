@@ -116,11 +116,11 @@ they work:
   feature (`queries/session.sql`, `queries/mail.sql`). Run `rok-sqlc g`
   after editing one.
 - **Mailed links.** A token purpose (the `auth_tokens.purpose` check), its
-  arms in `ttl_of` (lifetime) and `link_mail` (message) in
-  `auth/service.rs`, and a
-  `Templates` method in `shared/mail/templates.rs`. Issue and mail it with
-  `mail_link` on the flow's transaction, commit with `outbox.commit(tx)`,
-  and redeem it with `consume_token`. Never store or log a raw token.
+  arm in `policy` (lifetime and message) in
+  `shared/security/auth_token.rs`, and a `Templates` method in
+  `shared/mail/templates.rs`. Issue and mail it with `mail_link` on the
+  flow's transaction, commit with `outbox.commit(tx)`, and redeem it with
+  `consume_token`. Never store or log a raw token.
 - **Secrets at rest.** Two-factor secrets are stored sealed with
   `TotpCipher` (`shared/security/totp.rs`, `TOTP_ENCRYPTION_KEY`), and
   recovery codes as hashes, like tokens.
