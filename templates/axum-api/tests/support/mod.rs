@@ -220,7 +220,8 @@ pub async fn user(pool: &PgPool) -> Result<String, Box<dyn std::error::Error>> {
 }
 
 /// The settings the test application runs with: [`SECRET`] for 1h tokens,
-/// links under [`APP_URL`] and the defaults, with `overrides` (such as
+/// links under [`APP_URL`], uploads in memory (`memory://`) and the
+/// defaults, with `overrides` (such as
 /// `("REQUIRE_VERIFIED_EMAIL", "false")`) set on top.
 pub fn config(overrides: &[(&str, &str)]) -> Result<Config, Box<dyn std::error::Error>> {
     let mut vars: HashMap<&str, &str> = HashMap::from([
@@ -229,6 +230,7 @@ pub fn config(overrides: &[(&str, &str)]) -> Result<Config, Box<dyn std::error::
         ("TOTP_ENCRYPTION_KEY", TOTP_KEY),
         ("JWT_TTL", "3600"),
         ("APP_URL", APP_URL),
+        ("STORAGE_URL", "memory://"),
     ]);
     vars.extend(overrides.iter().copied());
     Ok(Config::from_vars(|name| {
@@ -247,7 +249,7 @@ pub fn state_with(
     pool: &PgPool,
     overrides: &[(&str, &str)],
 ) -> Result<AppState, Box<dyn std::error::Error>> {
-    Ok(AppState::new(pool.clone(), &config(overrides)?))
+    Ok(AppState::new(pool.clone(), &config(overrides)?)?)
 }
 
 /// Delivers every due mail in `pool`'s outbox, as the sender would, and

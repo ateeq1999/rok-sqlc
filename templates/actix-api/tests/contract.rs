@@ -446,9 +446,10 @@ async fn served_document() -> Result<Value, Box<dyn std::error::Error>> {
         "DATABASE_URL" => Some("postgres://localhost/unused".to_owned()),
         "JWT_SECRET" => Some("unused, but at least 32 bytes long".to_owned()),
         "TOTP_ENCRYPTION_KEY" => Some(TOTP_KEY.to_owned()),
+        "STORAGE_URL" => Some("memory://".to_owned()),
         _ => None,
     })?;
-    let state = AppState::new(pool, &config);
+    let state = AppState::new(pool, &config)?;
     let app = test::init_service(App::new().configure(|cfg| configure(cfg, &state))).await;
     let request = test::TestRequest::get().uri("/api-docs/openapi.json");
     let response = test::call_service(&app, request.to_request()).await;

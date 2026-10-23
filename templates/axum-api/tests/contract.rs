@@ -448,9 +448,10 @@ async fn served_document() -> Result<Value, Box<dyn std::error::Error>> {
         "DATABASE_URL" => Some("postgres://localhost/unused".to_owned()),
         "JWT_SECRET" => Some("unused, but at least 32 bytes long".to_owned()),
         "TOTP_ENCRYPTION_KEY" => Some(TOTP_KEY.to_owned()),
+        "STORAGE_URL" => Some("memory://".to_owned()),
         _ => None,
     })?;
-    let state = AppState::new(pool, &config);
+    let state = AppState::new(pool, &config)?;
     let request = Request::get("/api-docs/openapi.json").body(Body::empty())?;
     let response = router(state).oneshot(request).await?;
     assert!(response.status().is_success(), "{}", response.status());

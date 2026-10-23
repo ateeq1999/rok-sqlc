@@ -62,8 +62,8 @@ pub struct ObjectStorage {
 }
 
 impl ObjectStorage {
-    /// A store in memory, empty, and lost when dropped: `AppState::new`'s,
-    /// and the tests'.
+    /// A store in memory, empty, and lost when dropped: `memory://`, what
+    /// the tests configure.
     #[must_use]
     pub fn memory() -> Self {
         ObjectStorage {

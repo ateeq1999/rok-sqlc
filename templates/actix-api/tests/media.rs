@@ -290,3 +290,24 @@ async fn a_pdf_is_sent_as_an_attachment() -> TestResult {
     );
     db.drop().await
 }
+
+#[actix_web::test]
+async fn the_state_stores_uploads_where_storage_url_says() -> TestResult {
+    let dir = format!("target/test-storage-{}", uuid::Uuid::now_v7().simple());
+    let url = format!("file://./{dir}");
+    let pool = sqlx::PgPool::connect_lazy("postgres://localhost/unused")?;
+    let config = support::config(&[("STORAGE_URL", &url)])?;
+    let state = actix_api::app::AppState::new(pool, &config)?;
+    state
+        .storage
+        .put(
+            "probe/one.txt",
+            bytes::Bytes::from_static(b"stored"),
+            "text/plain",
+        )
+        .await?;
+    let stored = std::fs::read(std::path::Path::new(&dir).join("probe/one.txt"));
+    std::fs::remove_dir_all(&dir)?;
+    assert_eq!(stored?, b"stored");
+    Ok(())
+}

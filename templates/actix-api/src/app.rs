@@ -29,7 +29,7 @@ use crate::shared::rate_limit::RateLimit;
 use crate::shared::security::breach::{self, BreachCheck};
 use crate::shared::security::jwt::JwtKeys;
 use crate::shared::security::totp::TotpCipher;
-use crate::shared::storage::{self, ObjectStorage, Storage};
+use crate::shared::storage::{self, Storage};
 
 /// What every worker shares, built once: by [`run`], or by a test.
 #[derive(Clone)]
@@ -53,8 +53,9 @@ pub struct AppState {
     /// Where `auth` records what admins do: the `audit_log` feature, or a
     /// test's own.
     pub audit: Arc<dyn AuditTrail>,
-    /// Where uploaded bytes are stored: in memory from [`AppState::new`];
-    /// [`run`] opens `STORAGE_URL` with [`AppState::with_storage`].
+    /// Where uploaded bytes are stored: the store `STORAGE_URL` names,
+    /// opened by [`AppState::new`]; a test may swap in its own with
+    /// [`AppState::with_storage`].
     pub storage: Arc<dyn Storage>,
     /// `MEDIA_MAX_UPLOAD_BYTES`.
     pub media_max_upload_bytes: usize,
@@ -65,10 +66,12 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// The state `config` describes, over `pool`.
-    #[must_use]
-    pub fn new(pool: PgPool, config: &Config) -> Self {
-        AppState {
+    /// The state `config` describes, over `pool`, storing uploads where
+    /// `STORAGE_URL` says (a test configures `memory://`). A store that
+    /// can't be opened, such as a `file://` directory that can't be
+    /// created, is an error.
+    pub fn new(pool: PgPool, config: &Config) -> Result<Self, object_store::Error> {
+        Ok(AppState {
             pool: pool.clone(),
             keys: web::Data::new(JwtKeys::new(&config.jwt_secret, config.jwt_ttl)),
             outbox: web::Data::new(Outbox::new()),
@@ -77,11 +80,11 @@ impl AppState {
             rate_limit: RateLimit::per_minute(config.auth_rate_limit, config.trust_proxy),
             require_verified_email: config.require_verified_email,
             audit: Arc::new(AuditLog(AuditLogEntryService::new(pool))),
-            storage: Arc::new(ObjectStorage::memory()),
+            storage: storage::open(&config.storage_url)?,
             media_max_upload_bytes: config.media_max_upload_bytes,
             media_allowed_types: config.media_allowed_types.clone(),
             totp: Arc::new(TotpCipher::new(&config.totp_encryption_key)),
-        }
+        })
     }
 
     /// This state, storing uploads in `storage`.
@@ -99,8 +102,7 @@ pub async fn run(config: Config) -> std::io::Result<()> {
         .await
         .map_err(std::io::Error::other)?;
     let mailer = transport::from_config(&config).map_err(std::io::Error::other)?;
-    let storage = storage::open(&config.storage_url).map_err(std::io::Error::other)?;
-    let state = AppState::new(pool, &config).with_storage(storage);
+    let state = AppState::new(pool, &config).map_err(std::io::Error::other)?;
     let sender = Sender::new(state.pool.clone(), mailer, &state.outbox);
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let sending = actix_web::rt::spawn(sender.run(async {
