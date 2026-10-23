@@ -3,12 +3,14 @@
 //! The `account` handlers: each parses the request, calls one
 //! [`AccountService`] method, and answers.
 
+use actix_web::http::header;
 use actix_web::{HttpResponse, web};
 
-use super::dto::{UpdateProfileDto, UserResponse};
+use super::dto::{AVATAR_CACHE_CONTROL, AVATAR_MAX_BYTES, UpdateProfileDto, UserResponse};
 use super::service::AccountService;
 use crate::error::AppError;
 use crate::shared::auth::AuthUser;
+use crate::shared::body;
 use crate::shared::response::ErrorBody;
 use crate::shared::validation::ValidatedJson;
 
@@ -77,4 +79,79 @@ pub async fn update_me(
         .update_profile(caller.id.into(), body.into_inner())
         .await?;
     Ok(HttpResponse::Ok().json(UserResponse::from(user)))
+}
+
+/// `PUT /api/v1/users/me/avatar`: makes the raw body (a JPEG, PNG or WebP
+/// image) the signed-in user's profile photo, `200`.
+#[utoipa::path(
+    put,
+    path = "/api/v1/users/me/avatar",
+    tag = "avatars",
+    operation_id = "upload",
+    request_body(
+        content_type = "application/octet-stream",
+        description = "The raw image bytes (JPEG, PNG or WebP), 2 MiB at most"
+    ),
+    responses(
+        (status = 200, description = "Updated profile, with the new avatar_url", body = UserResponse),
+        (status = 401, description = "No valid bearer token", body = ErrorBody),
+        (status = 413, description = "Larger than 2 MiB", body = ErrorBody),
+        (status = 422, description = "Not a decodable JPEG, PNG or WebP image, or too large to process", body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+)]
+pub async fn upload_avatar(
+    service: web::Data<AccountService>,
+    caller: AuthUser,
+    body: web::Payload,
+) -> Result<HttpResponse, AppError> {
+    let image = body::read(body, AVATAR_MAX_BYTES, "image").await?;
+    let user = service.set_avatar(caller.id.into(), image).await?;
+    Ok(HttpResponse::Ok().json(UserResponse::from(user)))
+}
+
+/// `DELETE /api/v1/users/me/avatar`: removes the signed-in user's profile
+/// photo, `200`.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/users/me/avatar",
+    tag = "avatars",
+    operation_id = "remove",
+    responses(
+        (status = 200, description = "Updated profile, avatar_url now null", body = UserResponse),
+        (status = 401, description = "No valid bearer token", body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+)]
+pub async fn remove_avatar(
+    service: web::Data<AccountService>,
+    caller: AuthUser,
+) -> Result<HttpResponse, AppError> {
+    let user = service.remove_avatar(caller.id.into()).await?;
+    Ok(HttpResponse::Ok().json(UserResponse::from(user)))
+}
+
+/// `GET /api/v1/avatars/{file}`: a profile photo, public and cacheable for
+/// good, `200`.
+#[utoipa::path(
+    get,
+    path = "/api/v1/avatars/{file}",
+    tag = "avatars",
+    operation_id = "serve",
+    params(("file" = String, Path, description = "Generated avatar file name")),
+    responses(
+        (status = 200, description = "The JPEG image", content_type = "image/jpeg"),
+        (status = 404, description = "No such file", body = ErrorBody),
+    ),
+)]
+pub async fn avatar(
+    service: web::Data<AccountService>,
+    file: web::Path<String>,
+) -> Result<HttpResponse, AppError> {
+    let jpeg = service.avatar(&file.into_inner()).await?;
+    Ok(HttpResponse::Ok()
+        .insert_header((header::CONTENT_TYPE, "image/jpeg"))
+        .insert_header((header::CACHE_CONTROL, AVATAR_CACHE_CONTROL))
+        .insert_header((header::X_CONTENT_TYPE_OPTIONS, "nosniff"))
+        .body(jpeg))
 }

@@ -21,8 +21,9 @@ You need PostgreSQL and Rust 1.94 or newer.
 1. Create a database and apply `migrations/` to it, for example with
    `sqlx migrate run` ([sqlx-cli](https://crates.io/crates/sqlx-cli)) or
    `psql` on each file of `migrations/` in order.
-2. Set `DATABASE_URL` and `JWT_SECRET`, at least 32 bytes (`openssl rand
-   -base64 48`). `.env.example` lists every setting; `src/config.rs` reads
+2. Set `DATABASE_URL`, `JWT_SECRET`, at least 32 bytes (`openssl rand
+   -base64 48`), and `TOTP_ENCRYPTION_KEY`, 32 bytes in base64 (`openssl
+   rand -base64 32`). `.env.example` lists every setting; `src/config.rs` reads
    them from the environment.
 3. `cargo run`. The API is under `/api/v1`, health at `/health/live` and
    `/health/ready`, the OpenAPI document at `/api-docs/openapi.json` and
@@ -31,7 +32,8 @@ You need PostgreSQL and Rust 1.94 or newer.
 ## Accounts
 
 The account flows are hand-written features, yours to change:
-`src/features/auth/` and `src/features/account/`. rok-sqlc's guide
+`src/features/auth/`, `src/features/two_factor/` and
+`src/features/account/`. rok-sqlc's guide
 documents each one, the settings, sending real mail and adding a flow
 ([Accounts and sign-in](https://github.com/ateeq1999/rok-sqlc/blob/main/docs/guide/auth.md)).
 
@@ -44,12 +46,26 @@ documents each one, the settings, sending real mail and adding a flow
 - **Sign-in.** `POST /api/v1/auth/login` answers a session token. Five
   wrong passwords in a row lock an account for 15 minutes, and an
   unverified email is a `403` while `REQUIRE_VERIFIED_EMAIL=true`.
+- **Two-factor sign-in.** `POST /api/v1/auth/2fa/setup` answers a new
+  authenticator secret (base32, its `otpauth://` URI and a QR code), and
+  `POST /api/v1/auth/2fa/enable` (`{"code"}`) turns two-factor on with a
+  code from the app, answering ten single-use recovery codes once. Then the
+  right password answers `{"requires_totp": true, "pending_token"}`, and
+  `POST /api/v1/auth/2fa/verify` (`{"pending_token", "code"}`, within 5
+  minutes) trades it, with an app code or a recovery code, for the session.
+  A code is accepted once; wrong codes count toward the lock. `POST
+  /api/v1/auth/2fa/disable` (`{"current_password"}`) turns it off and
+  signs every session out. Both changes are mailed. The secret is stored
+  encrypted (AES-256-GCM under `TOTP_ENCRYPTION_KEY`, bound to the
+  account), the recovery codes as HMAC-SHA256 under a key derived from it.
 - **Passwords.** `POST /api/v1/auth/password/forgot` (`{"email"}`, always
   `202`) mails a link valid an hour, and `POST /api/v1/auth/password/reset`
   (`{"token", "new_password"}`) sets the new password and lifts any lock. A
   signed-in user changes theirs with `POST /api/v1/auth/password/change`
   (`{"current_password", "new_password"}`) and gets a notice by mail. Both
-  sign every older session out. `BREACH_CHECK=true` refuses passwords Have
+  sign every older session out. A reset also revokes every API key and any
+  pending two-factor sign-in (it recovers an account someone else may have
+  had); a change keeps the keys. `BREACH_CHECK=true` refuses passwords Have
   I Been Pwned knows.
 - **Email change.** `POST /api/v1/auth/email/change`
   (`{"current_password", "new_email"}`, `202`) mails a notice to the old
@@ -61,11 +77,56 @@ documents each one, the settings, sending real mail and adding a flow
   password with it through `POST /api/v1/auth/password/reset`.
 - **The account.** `GET /api/v1/auth/me` and `GET`/`PATCH
   /api/v1/users/me` are the signed-in user's own.
+- **Profile photo.** `PUT /api/v1/users/me/avatar` takes a raw JPEG, PNG
+  or WebP image of at most 2 MiB (`413` past it; anything undecodable, or
+  over 8192×8192 pixels, is a `422`), stores a 256×256 JPEG of its centre
+  (re-encoded, so no EXIF survives) and deletes the previous one;
+  `DELETE /api/v1/users/me/avatar` removes it. Every user response
+  answers `avatar_url`, `/api/v1/avatars/<file>` or `null`, which anyone
+  may fetch, cacheable for good (a new photo gets a new name).
+- **API keys.** `src/features/api_keys/`: `POST /api/v1/api-keys`
+  (`{"name", "scope"?, "expires_in_days"?}`) answers a `rok_…` key once
+  (only its prefix and SHA-256 are stored); `GET` lists the caller's
+  active keys and `DELETE /api/v1/api-keys/{id}` revokes one. A key works
+  wherever a session does, as `Authorization: Bearer rok_…` or
+  `X-API-Key`, except under `/auth` and `/api-keys` (`403`); a `read`
+  key only for `GET`, `HEAD` and `OPTIONS`. A key acts with its owner's
+  role, an admin's included. At most 25 active keys (`409 conflict` past
+  it); `expires_in_days` is 1 to 365.
 
 Every `/auth` route is limited to `AUTH_RATE_LIMIT` requests a minute per
 IP (`429` past it). A flow refusing a well-formed request answers `400`
 with `invalid_token`, `wrong_password` or `breached_password`; a body of the
 wrong shape answers `422`.
+
+## Uploads
+
+`/api/v1/media` holds each signed-in user's files (the hand-written
+`media` feature):
+
+- `POST /api/v1/media` takes the raw file as its body (its `Content-Type`
+  is ignored), at most `MEDIA_MAX_UPLOAD_BYTES` (10 MiB; `413` past it).
+  The type is detected from the bytes and must be one of
+  `MEDIA_ALLOWED_TYPES` (JPEG, PNG, WebP, GIF and PDF; else `415`).
+  `?filename=` or the `X-Filename` header names the file (255 characters
+  at most). It answers `201` with the file's metadata and its `url`,
+  `/api/v1/media/{id}/content`.
+- `GET /api/v1/media` lists the caller's files, newest first
+  (`?page=&per_page=`); `GET` and `DELETE /api/v1/media/{id}` read or
+  delete one.
+- `GET /api/v1/media/{id}/content` answers the bytes with the detected
+  `Content-Type`, `X-Content-Type-Options: nosniff`, and
+  `Content-Disposition: attachment` for anything but an image.
+
+Another user's file is a `404`. The body is read only once the caller is
+authenticated (`src/shared/body.rs`), up to the limit. The bytes go
+through the
+`Storage` port in `src/shared/storage/` (put, get and delete by key, the
+content type kept), over `object_store`, chosen by `STORAGE_URL`:
+`file://./storage` (the default, a `storage/` directory where the server
+runs), `s3://<bucket>` (the credentials, region and `AWS_ENDPOINT` come
+from the `AWS_*` variables) or `memory://`, opened by `AppState::new`
+(an unopenable store fails startup). The tests configure `memory://`.
 
 Every other route but health needs `Authorization: Bearer <token>`: an
 HS256 JWT signed with `JWT_SECRET`, with `sub` (the user's id), `role`
@@ -75,7 +136,9 @@ HS256 JWT signed with `JWT_SECRET`, with `sub` (the user's id), `role`
 before the account's `token_version` was bumped, is a `401`, and the role
 is read from the database, so a role change applies at once.
 `src/shared/security/` holds argon2id password hashing, single-use tokens
-(only their SHA-256 is stored), the JWT and the breach check.
+(only their SHA-256 is stored), the JWT, the breach check and
+two-factor's TOTP codes, secret encryption and recovery codes, and the
+single-use token lifecycle (`auth_token.rs`).
 `src/shared/mail/` sends mail through an outbox: a flow writes its message
 as an `outbound_mail` row on its own transaction, and a sender task started
 by `app.rs` delivers it (SMTP, or the log), retrying with backoff; after
@@ -89,13 +152,20 @@ The template's `Cargo.toml` has them. Starting from a package of your own
 ```toml
 [dependencies]
 actix-web = "4"
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
 argon2 = "0.6"
 async-trait = "0.1"
 base64 = "0.22"
+bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 governor = { version = "0.10", default-features = false, features = ["std"] }
+hmac = "0.13"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+infer = { version = "0.22", default-features = false }
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 lettre = { version = "0.11", default-features = false, features = ["builder", "hostname", "smtp-transport", "tokio1-rustls-tls"] }
+object_store = { version = "0.13", features = ["aws"] }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 rand = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
@@ -103,14 +173,17 @@ serde_json = "1"
 sha1 = "0.11"
 sha2 = "0.11"
 sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "derive", "uuid", "chrono", "json"] }
+subtle = "2"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+totp-rs = { version = "5", features = ["otpauth"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 utoipa = { version = "5", features = ["chrono", "uuid"] }
 utoipa-swagger-ui = { version = "9", features = ["actix-web", "vendored"] }
 uuid = { version = "1", features = ["v7", "serde"] }
 validator = { version = "0.21", features = ["derive"] }
+zeroize = "1"
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -150,9 +223,10 @@ test needs no database. The lints in `Cargo.toml` deny `unwrap`, `expect`,
 - **Yours** (first line `Scaffolded once`, or no header): `rok-sqlc.toml`,
   `migrations/`, `queries/`, `src/{lib,main,app,config,error,openapi}.rs`,
   `src/shared/{mod,auth}.rs`, `src/shared/rate_limit/`,
-  `src/shared/security/`, `src/shared/mail/`, `src/features/mod.rs`, the hand-written
-  `src/features/{auth,account}/`, each feature's `service.rs` (business
-  rules go there), `tests/`, and this README.
+  `src/shared/security/`, `src/shared/mail/`, `src/shared/storage/`,
+  `src/shared/thumbnail.rs`,
+  `src/features/mod.rs`, the hand-written `src/features/{auth,account,media}/`,
+  each feature's `service.rs` (business rules go there), `tests/`, and this README.
 
 `queries/` holds hand-written SQL, one file per feature: `rok-sqlc g` turns
 `queries/auth.sql` into `src/db/queries/auth.rs`, one function per query.
@@ -168,8 +242,9 @@ Change the schema with a new migration, adjust `rok-sqlc.toml`, run
 
 - `role` is a PostgreSQL enum, so the schema `Role` is `user` or `admin`.
 - `has_password` is a generated column (`password_hash IS NOT NULL`).
-- `password_hash`, `totp_secret`, `avatar_key`, `failed_logins`,
-  `locked_until`, `token_version`, `updated_at` and `deleted_at` are hidden
+- `password_hash`, `totp_secret`, `totp_last_step`, `avatar_key`,
+  `failed_logins`, `locked_until`, `token_version`, `updated_at` and
+  `deleted_at` are hidden
   (`[api.hidden]`): no response carries them.
 - The columns the server sets are managed (`[conventions]
   managed_columns`), so no request body takes them; a trigger keeps
@@ -183,9 +258,11 @@ Change the schema with a new migration, adjust `rok-sqlc.toml`, run
   (`AuditLogEntryResponse`), served at `/audit-log`, read-only.
 - `[api.search]` and `[api.sort]` give the users list its `q` and
   `UserSort` (`created_at`, `email`).
-- `media` and `api_keys` are in the schema for the features to come, and
-  `auth_tokens` (single-use mailed tokens) and `outbound_mail` (the mail
-  outbox) for the account flows; none has a generated API (`[api]
+- `api_keys` is in the schema for a feature to come, `media` serves the
+  hand-written `media` feature, and
+  `auth_tokens` (single-use tokens), `totp_recovery_codes` (two-factor's
+  recovery codes) and `outbound_mail` (the mail outbox) for the account
+  flows; none has a generated API (`[api]
   exclude`).
 - `token_version` is bumped to sign an account out everywhere: a token
   carrying an older one is rejected.
@@ -199,11 +276,9 @@ parameters every generated API has.
 Later rok-sqlc releases port the rest of the axum starter as hand-written
 features on top of this one, for this template and the axum one:
 
-- two-factor sign-in (TOTP and recovery codes, and login's
-  `requires_totp`/`pending_token`, which `LoginResponse` already carries);
 - `api-keys` (create returning the key once, revoke, an unpaginated list),
   with an `ApiKey` extractor;
-- uploads: avatars (`avatar_url`) and `media`, behind a storage port;
+- avatars (`avatar_url`), stored through the `Storage` port;
 - `POST /users` with a password, and the business rules of `update` and
   `remove` (not yourself, not the last admin), with their audit-log
   entries.

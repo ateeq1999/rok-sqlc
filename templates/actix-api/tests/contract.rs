@@ -33,6 +33,9 @@ use serde_json::Value;
 /// The target document.
 const TARGET: &str = include_str!("spec/openapi.json");
 
+/// An unused `TOTP_ENCRYPTION_KEY`: base64 of 32 bytes.
+const TOTP_KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
 /// The target operations the application covers.
 const COVERED: &[(&str, &str)] = &[
     ("get", "/api/v1/users"),
@@ -55,38 +58,25 @@ const COVERED: &[(&str, &str)] = &[
     ("post", "/api/v1/auth/email/change"),
     ("post", "/api/v1/auth/email/change/confirm"),
     ("post", "/api/v1/auth/invitations"),
+    ("post", "/api/v1/auth/2fa/setup"),
+    ("post", "/api/v1/auth/2fa/enable"),
+    ("post", "/api/v1/auth/2fa/disable"),
+    ("post", "/api/v1/auth/2fa/verify"),
+    ("get", "/api/v1/api-keys"),
+    ("post", "/api/v1/api-keys"),
+    ("delete", "/api/v1/api-keys/{id}"),
+    ("get", "/api/v1/media"),
+    ("post", "/api/v1/media"),
+    ("get", "/api/v1/media/{id}"),
+    ("delete", "/api/v1/media/{id}"),
+    ("get", "/api/v1/media/{id}/content"),
+    ("put", "/api/v1/users/me/avatar"),
+    ("delete", "/api/v1/users/me/avatar"),
+    ("get", "/api/v1/avatars/{file}"),
 ];
 
 /// The differences the application still has, and why.
 const KNOWN: &[(&str, &str)] = &[
-    (
-        "GET /api/v1/users: response 200: properties.items.items.properties: target has `avatar_url`, served has not",
-        "`avatar_url` comes with uploads (a later release)",
-    ),
-    (
-        "GET /api/v1/users/{id}: response 200: properties: target has `avatar_url`, served has not",
-        "`avatar_url` comes with uploads (a later release)",
-    ),
-    (
-        "PATCH /api/v1/users/{id}: response 200: properties: target has `avatar_url`, served has not",
-        "`avatar_url` comes with uploads (a later release)",
-    ),
-    (
-        "POST /api/v1/auth/register: response 201: properties: target has `avatar_url`, served has not",
-        "`avatar_url` comes with uploads (a later release)",
-    ),
-    (
-        "GET /api/v1/auth/me: response 200: properties: target has `avatar_url`, served has not",
-        "`avatar_url` comes with uploads (a later release)",
-    ),
-    (
-        "GET /api/v1/users/me: response 200: properties: target has `avatar_url`, served has not",
-        "`avatar_url` comes with uploads (a later release)",
-    ),
-    (
-        "PATCH /api/v1/users/me: response 200: properties: target has `avatar_url`, served has not",
-        "`avatar_url` comes with uploads (a later release)",
-    ),
     (
         "DELETE /api/v1/users/{id}: parameter `permanent` (query): served has it, target has not",
         "every generated soft-delete `DELETE` takes `?permanent=true` (ADR 0016)",
@@ -98,10 +88,6 @@ const KNOWN: &[(&str, &str)] = &[
     (
         "GET /api/v1/audit-log: parameter `order` (query): served has it, target has not",
         "every generated list takes `order` (ADR 0016)",
-    ),
-    (
-        "POST /api/v1/auth/invitations: response 201: properties: target has `avatar_url`, served has not",
-        "`avatar_url` comes with uploads (a later release)",
     ),
 ];
 
@@ -459,9 +445,11 @@ async fn served_document() -> Result<Value, Box<dyn std::error::Error>> {
     let config = Config::from_vars(|name| match name {
         "DATABASE_URL" => Some("postgres://localhost/unused".to_owned()),
         "JWT_SECRET" => Some("unused, but at least 32 bytes long".to_owned()),
+        "TOTP_ENCRYPTION_KEY" => Some(TOTP_KEY.to_owned()),
+        "STORAGE_URL" => Some("memory://".to_owned()),
         _ => None,
     })?;
-    let state = AppState::new(pool, &config);
+    let state = AppState::new(pool, &config)?;
     let app = test::init_service(App::new().configure(|cfg| configure(cfg, &state))).await;
     let request = test::TestRequest::get().uri("/api-docs/openapi.json");
     let response = test::call_service(&app, request.to_request()).await;
@@ -532,6 +520,8 @@ async fn a_mismatch_breaks_the_contract_with_a_readable_list()
             "GET /api/v1/users/me: response 200: properties.email.type: target \"string\", served \"integer\"",
             "PATCH /api/v1/users/me: response 200: properties.email.type: target \"string\", served \"integer\"",
             "POST /api/v1/auth/invitations: response 201: properties.email.type: target \"string\", served \"integer\"",
+            "PUT /api/v1/users/me/avatar: response 200: properties.email.type: target \"string\", served \"integer\"",
+            "DELETE /api/v1/users/me/avatar: response 200: properties.email.type: target \"string\", served \"integer\"",
         ]
     );
     Ok(())

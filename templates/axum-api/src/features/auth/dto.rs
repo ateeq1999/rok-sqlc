@@ -48,8 +48,7 @@ pub struct TokenResponse {
 /// shape) or, for a two-factor-enabled account, a marker plus the
 /// short-lived token `POST /auth/2fa/verify` needs. Untagged, so each
 /// variant serializes as its own plain object: a client tells them apart by
-/// `access_token` vs `requires_totp`. This release only ever answers a
-/// session; two-factor sign-in comes later.
+/// `access_token` vs `requires_totp`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 #[serde(untagged)]
 pub enum LoginResponse {
@@ -104,6 +103,9 @@ pub struct UserResponse {
     pub totp_enabled: bool,
     /// When the account was created.
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// The profile photo's public, cacheable URL,
+    /// `/api/v1/avatars/<file>`, or `null` without one.
+    pub avatar_url: Option<String>,
 }
 
 impl From<User> for UserResponse {
@@ -118,6 +120,7 @@ impl From<User> for UserResponse {
             email_verified: row.email_verified,
             totp_enabled: row.totp_enabled,
             created_at: row.created_at,
+            avatar_url: row.avatar_url,
         }
     }
 }

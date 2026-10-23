@@ -54,6 +54,10 @@ pub enum AppError {
     /// `413 payload_too_large`: a body over the limit.
     #[error("{0}")]
     PayloadTooLarge(String),
+    /// `415 unsupported_media_type`: an upload whose type, detected from its
+    /// bytes, is unknown or not allowed.
+    #[error("{0}")]
+    UnsupportedMediaType(String),
     /// `422 validation_failed`: broken rules, with validator's `details`
     /// when there are any; also a check violation.
     #[error("{message}")]
@@ -83,6 +87,13 @@ pub enum AppError {
 }
 
 impl AppError {
+    /// The `413 payload_too_large` of a `what` (such as `file`) over
+    /// `limit` bytes.
+    #[must_use]
+    pub fn too_large(what: &str, limit: usize) -> Self {
+        AppError::PayloadTooLarge(format!("the {what} is larger than {limit} bytes"))
+    }
+
     /// The wire standard's `snake_case` code.
     #[must_use]
     pub fn code(&self) -> &'static str {
@@ -97,6 +108,7 @@ impl AppError {
             AppError::RequestTimeout(_) => "request_timeout",
             AppError::Conflict(_) => "conflict",
             AppError::PayloadTooLarge(_) => "payload_too_large",
+            AppError::UnsupportedMediaType(_) => "unsupported_media_type",
             AppError::Validation { .. } => "validation_failed",
             AppError::PreconditionRequired(_) => "precondition_required",
             AppError::VersionConflict(_) => "version_conflict",
@@ -119,6 +131,7 @@ impl AppError {
             AppError::RequestTimeout(_) => StatusCode::REQUEST_TIMEOUT,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
+            AppError::UnsupportedMediaType(_) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             AppError::Validation { .. } => StatusCode::UNPROCESSABLE_ENTITY,
             AppError::PreconditionRequired(_) => StatusCode::PRECONDITION_REQUIRED,
             AppError::VersionConflict(_) => StatusCode::PRECONDITION_FAILED,

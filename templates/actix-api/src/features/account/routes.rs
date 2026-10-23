@@ -1,6 +1,7 @@
 // Scaffolded once by rok-sqlc; this file is yours. It is never regenerated. See docs/guide/architecture.md.
 
-//! The `account` routes: `/api/v1/auth/me` and `/api/v1/users/me`.
+//! The `account` routes: `/api/v1/auth/me`, `/api/v1/users/me`, its
+//! `/avatar`, and the public `/api/v1/avatars/{file}`.
 
 use actix_web::web;
 
@@ -11,7 +12,9 @@ use crate::shared::rate_limit::RateLimit;
 /// `auth` scope and the generated `users` feature, so neither
 /// `/api/v1/auth` nor `/api/v1/users/{id}` captures them;
 /// `/api/v1/auth/me` counts against the `/auth` rate `limit` like the rest
-/// of `/auth`.
+/// of `/auth`. `PUT /api/v1/users/me/avatar` reads a raw body of at most
+/// 2 MiB, read after the caller is authenticated (see
+/// [`crate::shared::body`]).
 pub fn routes(cfg: &mut web::ServiceConfig, limit: &RateLimit) {
     cfg.service(
         web::resource("/api/v1/auth/me")
@@ -22,5 +25,11 @@ pub fn routes(cfg: &mut web::ServiceConfig, limit: &RateLimit) {
         web::resource("/api/v1/users/me")
             .route(web::get().to(handlers::get_me))
             .route(web::patch().to(handlers::update_me)),
-    );
+    )
+    .service(
+        web::resource("/api/v1/users/me/avatar")
+            .route(web::put().to(handlers::upload_avatar))
+            .route(web::delete().to(handlers::remove_avatar)),
+    )
+    .service(web::resource("/api/v1/avatars/{file}").route(web::get().to(handlers::avatar)));
 }

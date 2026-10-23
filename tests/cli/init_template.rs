@@ -122,7 +122,7 @@ fn init_template_prints_numbered_next_steps_without_the_dependencies_it_copied()
         steps,
         [
             "  1. run `rok-sqlc g` to generate src/db/, src/shared/ and src/features/ from migrations/",
-            "  2. set DATABASE_URL and JWT_SECRET (see .env.example) and apply migrations/",
+            "  2. set DATABASE_URL, JWT_SECRET and TOTP_ENCRYPTION_KEY (see .env.example) and apply migrations/",
             "  3. `cargo test`, then `cargo run`",
         ],
         "{stdout}"

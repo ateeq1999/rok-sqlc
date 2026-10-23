@@ -70,6 +70,9 @@ pub enum AuthTokenPurpose {
     /// `invitation`
     #[serde(rename = "invitation")]
     Invitation,
+    /// `two_factor_pending`
+    #[serde(rename = "two_factor_pending")]
+    TwoFactorPending,
 }
 
 impl AuthTokenPurpose {
@@ -84,6 +87,7 @@ impl AuthTokenPurpose {
             Self::PasswordReset => "password_reset",
             Self::EmailChange => "email_change",
             Self::Invitation => "invitation",
+            Self::TwoFactorPending => "two_factor_pending",
         }
     }
 }
@@ -97,6 +101,7 @@ impl std::str::FromStr for AuthTokenPurpose {
             "password_reset" => Ok(Self::PasswordReset),
             "email_change" => Ok(Self::EmailChange),
             "invitation" => Ok(Self::Invitation),
+            "two_factor_pending" => Ok(Self::TwoFactorPending),
             other => Err(format!("`{other}` is not a value of `{}`", Self::COLUMN)),
         }
     }

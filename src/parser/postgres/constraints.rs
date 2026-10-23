@@ -1,5 +1,5 @@
-//! Primary key, unique, foreign key, value-list check, and range check
-//! constraints, and unique indexes.
+//! Primary key, unique, foreign key, and check constraints added by
+//! `ALTER TABLE`, and unique indexes.
 
 use std::collections::HashSet;
 
@@ -9,8 +9,8 @@ use sqlparser::ast::{
 };
 
 use super::alter::column_index;
-use super::checks::{apply_range_check, range_check};
-use super::enums::{restrict_to_values, value_list_check};
+use super::enums::any_array_as_in_list;
+use super::named::{DeclaredCheck, DeclaredForeignKey, add_check, add_foreign_key};
 use super::names::{
     default_constraint_name, find_table, ident_name, index_column_name, object_leaf_name,
     object_schema_name,
@@ -19,14 +19,15 @@ use super::table::rust_type;
 use crate::schema::{ForeignKey, KeyConstraint, Table, UniqueKey};
 
 /// Adds a primary key, unique, or foreign key constraint, or a value-list
-/// or range check. Like in `CREATE TABLE`, any other check leaves the model
-/// unchanged.
+/// or range check. Like in `CREATE TABLE`, any other check leaves the
+/// columns unchanged; every check is recorded by name.
 /// Other constraint kinds fail, so a constraint that might change the model
 /// is never dropped silently.
 pub(super) fn add_constraint(
     table: &mut Table,
     constraint: &TableConstraint,
     taken: &HashSet<String>,
+    constraint_names: &HashSet<String>,
 ) -> std::result::Result<(), String> {
     let clause = |reason: String| format!("ADD CONSTRAINT: {reason}");
     let known_columns = |table: &Table, keys: &[String]| match keys
@@ -74,25 +75,22 @@ pub(super) fn add_constraint(
         TableConstraint::ForeignKey { columns, .. } => {
             let keys: Vec<String> = columns.iter().map(ident_name).collect();
             known_columns(table, &keys)?;
-            table
-                .foreign_keys
-                .extend(constraint_foreign_key(constraint));
+            if let Some(declared) = constraint_foreign_key(constraint) {
+                add_foreign_key(table, declared, constraint_names);
+            }
         }
         // Like in `CREATE TABLE`, a value list on a text column restricts it,
         // a range check narrows its column's ranges, and any other check
-        // leaves the model unchanged.
-        TableConstraint::Check { expr, .. } => {
-            if let Some((name, labels)) = value_list_check(expr)
-                && let Some(index) = column_index(table, &name)
-            {
-                restrict_to_values(&mut table.columns[index], labels);
-            }
-            if let Some(check) = range_check(expr)
-                && let Some(index) = column_index(table, &check.column)
-            {
-                apply_range_check(&mut table.columns[index], check);
-            }
-        }
+        // leaves the columns unchanged. Here a value list may also be in
+        // `pg_dump`'s `col = ANY (ARRAY[…])` form; it is kept as `IN (…)`.
+        TableConstraint::Check { name, expr, .. } => add_check(
+            table,
+            DeclaredCheck {
+                name: name.as_ref().map(ident_name),
+                expr: any_array_as_in_list(expr).unwrap_or_else(|| (**expr).clone()),
+            },
+            constraint_names,
+        ),
         other => return Err(format!("unsupported ALTER TABLE clause `ADD {other}`")),
     }
     Ok(())
@@ -197,7 +195,11 @@ pub(super) fn add_key_constraint(
         };
         default_constraint_name(&table.sql_name, &columns, primary, taken)
     });
-    table.key_constraints.push(KeyConstraint { name, columns });
+    table.key_constraints.push(KeyConstraint {
+        name,
+        columns,
+        primary,
+    });
 }
 
 /// The plain column names of a `PRIMARY KEY` or `UNIQUE` column list.
@@ -217,21 +219,30 @@ pub(super) fn key_columns(
     Ok(names)
 }
 
-/// A single-column `FOREIGN KEY` table constraint; composite keys are not
-/// recorded.
-pub(super) fn constraint_foreign_key(constraint: &TableConstraint) -> Option<ForeignKey> {
-    match constraint {
-        TableConstraint::ForeignKey {
-            columns,
-            foreign_table,
-            referred_columns,
-            ..
-        } if columns.len() == 1 && referred_columns.len() == 1 => Some(ForeignKey {
-            column: ident_name(&columns[0]),
-            referenced_schema: object_schema_name(foreign_table),
-            referenced_table: object_leaf_name(foreign_table),
-            referenced_column: ident_name(&referred_columns[0]),
-        }),
-        _ => None,
-    }
+/// A `FOREIGN KEY` table constraint as declared. The model records a
+/// single-column key; any other (a composite key, or one with no referenced
+/// column) it keeps by name only.
+pub(super) fn constraint_foreign_key(constraint: &TableConstraint) -> Option<DeclaredForeignKey> {
+    let TableConstraint::ForeignKey {
+        name,
+        columns,
+        foreign_table,
+        referred_columns,
+        ..
+    } = constraint
+    else {
+        return None;
+    };
+    let key = (columns.len() == 1 && referred_columns.len() == 1).then(|| ForeignKey {
+        name: String::new(),
+        column: ident_name(&columns[0]),
+        referenced_schema: object_schema_name(foreign_table),
+        referenced_table: object_leaf_name(foreign_table),
+        referenced_column: ident_name(&referred_columns[0]),
+    });
+    Some(DeclaredForeignKey {
+        name: name.as_ref().map(ident_name),
+        columns: columns.iter().map(ident_name).collect(),
+        key,
+    })
 }

@@ -6,6 +6,7 @@ mod alter;
 mod checks;
 mod constraints;
 mod enums;
+mod named;
 mod names;
 mod recover;
 mod statements;
@@ -40,6 +41,10 @@ pub struct ParsedSchema {
     source_removed: HashMap<(String, Option<String>), StatementLocation>,
     /// The `[modules]` keys that named no `CREATE TABLE` of the schema.
     pub unmatched_modules: Vec<String>,
+    /// What the schema does that the model can't follow but that changes
+    /// no generated code, such as dropping an `EXCLUDE` constraint, located
+    /// at its statement (`path:line: table ...`).
+    pub warnings: Vec<String>,
 }
 
 /// Where a statement is: its file, its line there, and its position among
@@ -138,7 +143,8 @@ pub fn parse_schema(sql: &str) -> Result<ParsedSchema> {
 ///
 /// Later statements change earlier tables: `ALTER TABLE` adds, drops, and
 /// renames columns and adds primary key, unique, foreign key, value-list
-/// check, and range check constraints, and `CREATE UNIQUE INDEX` on plain columns records a unique
+/// check, and range check constraints, drops and renames constraints by
+/// name, and `CREATE UNIQUE INDEX` on plain columns records a unique
 /// key. Any other `ALTER TABLE` clause on a known table fails that table.
 /// `CREATE TRIGGER` and `DROP TRIGGER` keep track of each table's row-level
 /// `BEFORE INSERT` triggers, by name; the trigger functions are not read.

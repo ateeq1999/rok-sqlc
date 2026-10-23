@@ -107,30 +107,62 @@ units, time is UTC, and ids are UUIDs.
 ## Accounts
 
 `features/auth/` (sign-up, sign-in, email verification, the password
-flows, email change, invitations) and `features/account/` (`/auth/me`,
-`/users/me`) are hand-written and follow the rules above. Keep to how
-they work:
+flows, email change, invitations), `features/two_factor/`
+(`/auth/2fa/*`) and `features/account/` (`/auth/me`, `/users/me`) are
+hand-written and follow the rules above. Keep to how they work:
 
-- **SQL.** `auth`'s goes in `queries/auth.sql`, `account`'s in
-  `queries/account.sql`; SQL `shared/` runs goes in a file named after no
-  feature (`queries/session.sql`, `queries/mail.sql`). Run `rok-sqlc g`
-  after editing one.
-- **Mailed links.** A token purpose (the `auth_tokens.purpose` check), an
-  arm in `link_kind` (lifetime and message) in `auth/service.rs`, and a
-  `Templates` method in `shared/mail/templates.rs`. Issue and mail it with
-  `mail_link` on the flow's transaction, commit with `outbox.commit(tx)`,
-  and redeem it with `consume_token`. Never store or log a raw token.
+- **SQL.** `auth`'s goes in `queries/auth.sql`, `two_factor`'s in
+  `queries/two_factor.sql`, `account`'s in `queries/account.sql`; SQL
+  `shared/` runs goes in a file named after no feature
+  (`queries/session.sql`, `queries/mail.sql`). Run `rok-sqlc g` after
+  editing one.
+- **Mailed links.** A token purpose (the `auth_tokens.purpose` check), its
+  arm in `policy` (lifetime and message) in
+  `shared/security/auth_token.rs`, and a `Templates` method in
+  `shared/mail/templates.rs`. Issue and mail it with `mail_link` on the
+  flow's transaction, commit with `outbox.commit(tx)`, and redeem it with
+  `consume_token`. Never store or log a raw token.
+- **Secrets at rest.** Two-factor secrets are stored sealed with
+  `TotpCipher` (`shared/security/totp.rs`, `TOTP_ENCRYPTION_KEY`, bound to
+  the account's id), and recovery codes as HMACs under a key derived from
+  it. Compare secrets with `subtle`, never `==`.
 - **Answers.** A body of the wrong shape is `422` (the DTO's rules); a flow
   refusing a well-formed request is `400` with `AppError::InvalidToken`,
   `WrongPassword` or `BreachedPassword`. Don't tell a caller whether an
   email has an account where the flow answers `202`.
+- **API keys.** `features/api_keys/` makes, lists and revokes keys
+  (`queries/api_keys.sql`); `shared/auth.rs` checks a presented one
+  with `shared/security/api_key.rs` (`queries/session.sql`), and
+  `AuthUser::credential` says whether the caller sent a key. A route
+  only a session may use goes under `api_key::SESSION_ONLY`. A key acts
+  with its owner's role; a password reset revokes them all.
 - **Sessions.** A change that must sign a user out bumps
-  `users.token_version`; disabling sets `is_active = false`. `AuthUser`
+  `users.token_version` (a reset, a password change, turning two-factor
+  off); disabling sets `is_active = false`. `AuthUser`
   checks both on every request.
-- **Routes.** New `/auth` routes go in `auth::routes`'s scope, so the rate
-  limit covers them, and in `ApiDoc`'s `paths(...)`.
+- **Routes.** New `/auth` routes go in `auth::routes`'s scope (or, like
+  `two_factor::routes`, behind the same `RateLimit`), so the rate limit
+  covers them, and in `ApiDoc`'s `paths(...)`.
 - **Tests.** Drive each flow over HTTP in `tests/`, with `mailed` and
   `mailed_token` from `tests/support/mod.rs`.
+
+## Uploads
+
+`features/media/` (`/api/v1/media`) is hand-written too. Bytes go through
+the `Storage` port in `shared/storage/` (`AppState.storage`): put, get and
+delete by a key the feature generates (`media/<uuid>`), never one a caller
+sends. A file's type is detected from its bytes, never taken from the
+request. `AppState::new` opens `STORAGE_URL`; tests configure `memory://`,
+or swap in their own store with `AppState::with_storage`. Take an upload's
+body through `shared/body.rs`, which reads it only after `AuthUser` and
+answers the wire standard's `413`.
+
+Profile photos (`features/account/`, `PUT`/`DELETE /users/me/avatar`)
+use the same port under `avatars/<random>.jpg`. `shared/thumbnail.rs`
+decodes (JPEG, PNG, WebP, under size limits), crops and re-encodes them
+on a blocking thread. `users.avatar_url` is a generated column
+(`migrations/0005_avatars.sql`), so every user response, the generated
+`users` feature's included, answers it.
 
 ## Checks
 

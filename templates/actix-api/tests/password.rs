@@ -452,3 +452,78 @@ async fn a_change_refuses_a_weak_or_breached_password() -> TestResult {
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
     db.drop().await
 }
+
+/// A write API key for the caller of `session`: the raw key, checked to
+/// work on `GET /users/me`.
+async fn api_key(pool: &PgPool, session: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let body = Some(json!({"name": "ci", "scope": "write"}));
+    let answer = call(pool, Some(session), Method::POST, "/api/v1/api-keys", body).await?;
+    assert_eq!(answer.status, StatusCode::CREATED, "{}", answer.body);
+    let key = answer.body["key"].as_str().unwrap_or_default().to_owned();
+    let answer = call(pool, Some(&key), Method::GET, USERS_ME, None).await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    Ok(key)
+}
+
+const USERS_ME: &str = "/api/v1/users/me";
+
+#[actix_web::test]
+async fn a_reset_revokes_api_keys_and_pending_two_factor_sign_ins() -> TestResult {
+    let Some(db) = Database::fresh().await? else {
+        return Ok(());
+    };
+    let (id, session) = support::account(&db.pool, Role::User).await?;
+    let key = api_key(&db.pool, &session).await?;
+    let mut conn = db.pool.acquire().await?;
+    let pending = issue_token(
+        &mut conn,
+        id.into(),
+        AuthTokenPurpose::TwoFactorPending,
+        TimeDelta::minutes(5),
+        None,
+    )
+    .await?;
+    let link = issue_token(
+        &mut conn,
+        id.into(),
+        AuthTokenPurpose::PasswordReset,
+        TimeDelta::hours(1),
+        None,
+    )
+    .await?;
+    drop(conn);
+
+    let body = reset(&link.raw, NEW_PASSWORD);
+    let answer = call(&db.pool, None, Method::POST, RESET, body).await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+
+    let answer = call(&db.pool, Some(&key), Method::GET, USERS_ME, None).await?;
+    assert_eq!(answer.status, StatusCode::UNAUTHORIZED, "{}", answer.body);
+    let body = Some(json!({"pending_token": pending.raw, "code": "123456"}));
+    let answer = call(
+        &db.pool,
+        None,
+        Method::POST,
+        "/api/v1/auth/2fa/verify",
+        body,
+    )
+    .await?;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.body);
+    assert_eq!(answer.code(), "invalid_token");
+    db.drop().await
+}
+
+#[actix_web::test]
+async fn a_change_keeps_api_keys() -> TestResult {
+    let Some(db) = Database::fresh().await? else {
+        return Ok(());
+    };
+    let session = register_verified(&db.pool, "ada@example.com", PASSWORD).await?;
+    let key = api_key(&db.pool, &session).await?;
+    let body = change(PASSWORD, NEW_PASSWORD);
+    let answer = call(&db.pool, Some(&session), Method::POST, CHANGE, body).await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    let answer = call(&db.pool, Some(&key), Method::GET, USERS_ME, None).await?;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    db.drop().await
+}

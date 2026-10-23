@@ -4,9 +4,12 @@ use std::collections::HashSet;
 
 use sqlparser::ast::{AlterColumnOperation, AlterTableOperation, ColumnDef, ObjectName};
 
-use super::checks::apply_range_check;
 use super::constraints::{add_constraint, add_key_constraint};
-use super::enums::{EnumRegistry, restrict_to_values};
+use super::enums::EnumRegistry;
+use super::named::{
+    add_check, add_foreign_key, drop_column_constraints, drop_constraint,
+    rename_column_in_constraints, rename_constraint,
+};
 use super::names::{
     find_table, ident_name, normalize_schema, object_leaf_name, object_schema_name,
 };
@@ -46,12 +49,14 @@ pub(super) fn drop_table(
 }
 
 /// Applies an `ALTER TABLE`'s clauses to a known table, in order. An error
-/// names the clause that could not be applied.
+/// names the clause that could not be applied; a clause the model can't
+/// follow but that changes no generated code adds a warning to `warnings`.
 pub(super) fn apply_alter(
     table: &mut Table,
     operations: &[AlterTableOperation],
     enums: &EnumRegistry,
-    taken: &HashSet<String>,
+    (taken, constraint_names): (&HashSet<String>, &HashSet<String>),
+    warnings: &mut Vec<String>,
 ) -> std::result::Result<(), String> {
     for operation in operations {
         match operation {
@@ -59,7 +64,13 @@ pub(super) fn apply_alter(
                 if_not_exists,
                 column_def,
                 ..
-            } => add_column(table, column_def, *if_not_exists, enums, taken)?,
+            } => add_column(
+                table,
+                column_def,
+                *if_not_exists,
+                enums,
+                (taken, constraint_names),
+            )?,
             AlterTableOperation::DropColumn {
                 column_names,
                 if_exists,
@@ -78,22 +89,21 @@ pub(super) fn apply_alter(
                 &ident_name(new_column_name),
             )?,
             AlterTableOperation::AddConstraint { constraint, .. } => {
-                add_constraint(table, constraint, taken)?;
+                add_constraint(table, constraint, taken, constraint_names)?;
             }
+            AlterTableOperation::DropConstraint {
+                name, if_exists, ..
+            } => drop_constraint(table, &ident_name(name), *if_exists, warnings),
             AlterTableOperation::AlterColumn { column_name, op } => {
                 alter_column(table, &ident_name(column_name), op, enums)?;
             }
             AlterTableOperation::RenameConstraint { old_name, new_name } => {
-                // Only primary key and unique constraint names are tracked;
-                // renaming another constraint changes nothing here.
-                let old_name = ident_name(old_name);
-                if let Some(constraint) = table
-                    .key_constraints
-                    .iter_mut()
-                    .find(|constraint| constraint.name == old_name)
-                {
-                    constraint.name = ident_name(new_name);
-                }
+                rename_constraint(
+                    table,
+                    &ident_name(old_name),
+                    &ident_name(new_name),
+                    warnings,
+                )?;
             }
             // Clauses that leave the columns and keys as they are. Triggers
             // are followed by `CREATE` and `DROP TRIGGER` only.
@@ -219,7 +229,7 @@ fn add_column(
     column_def: &ColumnDef,
     if_not_exists: bool,
     enums: &EnumRegistry,
-    taken: &HashSet<String>,
+    (taken, constraint_names): (&HashSet<String>, &HashSet<String>),
 ) -> std::result::Result<(), String> {
     let name = ident_name(&column_def.name);
     if column_index(table, &name).is_some() {
@@ -250,19 +260,14 @@ fn add_column(
         table.unique_keys.push(UniqueKey::new(vec![name.clone()]));
         add_key_constraint(table, constraint.clone(), vec![name.clone()], false, taken);
     }
-    table.foreign_keys.extend(built.foreign_key);
     table
         .columns
         .push(built.raw.into_column(built.primary_key.is_some()));
-    for (column, labels) in built.value_lists {
-        if let Some(index) = column_index(table, &column) {
-            restrict_to_values(&mut table.columns[index], labels);
-        }
+    for check in built.checks {
+        add_check(table, check, constraint_names);
     }
-    for check in built.range_checks {
-        if let Some(index) = column_index(table, &check.column) {
-            apply_range_check(&mut table.columns[index], check);
-        }
+    if let Some(foreign_key) = built.foreign_key {
+        add_foreign_key(table, foreign_key, constraint_names);
     }
     Ok(())
 }
@@ -282,10 +287,7 @@ pub(super) fn drop_column(
     };
     table.columns.remove(index);
     if table.primary_key.iter().any(|key| key == name) {
-        table.primary_key.clear();
-        for column in &mut table.columns {
-            column.is_primary_key = false;
-        }
+        clear_primary_key(table);
     }
     table
         .unique_keys
@@ -294,7 +296,17 @@ pub(super) fn drop_column(
         .key_constraints
         .retain(|key| !key.columns.iter().any(|column| column == name));
     table.foreign_keys.retain(|key| key.column != name);
+    drop_column_constraints(table, name);
     Ok(())
+}
+
+/// Leaves `table` without a primary key; its columns stay as they are
+/// (still `NOT NULL`).
+pub(super) fn clear_primary_key(table: &mut Table) {
+    table.primary_key.clear();
+    for column in &mut table.columns {
+        column.is_primary_key = false;
+    }
 }
 
 fn rename_column(table: &mut Table, old: &str, new: &str) -> std::result::Result<(), String> {
@@ -334,5 +346,6 @@ fn rename_column(table: &mut Table, old: &str, new: &str) -> std::result::Result
     for key in &mut table.foreign_keys {
         rename(&mut key.column);
     }
+    rename_column_in_constraints(table, old, new);
     Ok(())
 }

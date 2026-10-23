@@ -58,8 +58,8 @@ pub async fn login(
     service: web::Data<AuthService>,
     body: ValidatedJson<CredentialsDto>,
 ) -> Result<HttpResponse, AppError> {
-    let session = service.login(body.into_inner()).await?;
-    Ok(HttpResponse::Ok().json(LoginResponse::Session(session)))
+    let answer: LoginResponse = service.login(body.into_inner()).await?;
+    Ok(HttpResponse::Ok().json(answer))
 }
 
 /// `POST /api/v1/auth/email/verify`: verifies the email a link was mailed

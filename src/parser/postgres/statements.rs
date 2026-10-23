@@ -20,8 +20,8 @@ use super::enums::{
     EnumRegistry, drop_columns_of_type, resolve_value_lists, retype_columns, uses_type,
 };
 use super::names::{
-    OtherRelations, find_table, ident_name, object_leaf_name, object_schema_name, relation_names,
-    rename_relation,
+    OtherRelations, constraint_names, find_table, ident_name, object_leaf_name, object_schema_name,
+    relation_names, rename_relation,
 };
 use super::recover::{
     AlterRewrite, Recovered, recover_statement, rewrite_alter_table, split_statements,
@@ -58,6 +58,7 @@ pub fn parse_sources_with_modules(
     let dialect = PostgreSqlDialect {};
     let mut tables: Vec<Table> = Vec::new();
     let mut failures = Vec::new();
+    let mut warnings = Vec::new();
     let mut seen_modules: HashSet<String> = HashSet::new();
     let mut enums = EnumRegistry::default();
     let mut others = OtherRelations::default();
@@ -156,7 +157,8 @@ pub fn parse_sources_with_modules(
                     // PostgreSQL makes a serial column's sequence before the
                     // table's constraints, so their names avoid it.
                     others.create_sequences(&create.name, &create.columns, &mut taken);
-                    match build_table(&create, &enums, &taken).map(&mut rename) {
+                    let constraints = constraint_names(&tables, schema.as_deref());
+                    match build_table(&create, &enums, &taken, &constraints).map(&mut rename) {
                         Ok(table) if GENERATED_MODULES.contains(&table.module_name.as_str()) => {
                             table_failure(
                                 &table.sql_name,
@@ -193,8 +195,9 @@ pub fn parse_sources_with_modules(
                     let Some(index) = find_table(&tables, &name) else {
                         continue;
                     };
-                    let mut taken =
-                        relation_names(&tables, &others, tables[index].schema.as_deref());
+                    let schema = tables[index].schema.clone();
+                    let mut taken = relation_names(&tables, &others, schema.as_deref());
+                    let constraints = constraint_names(&tables, schema.as_deref());
                     let added = operations.iter().filter_map(|operation| match operation {
                         AlterTableOperation::AddColumn { column_def, .. } => Some(column_def),
                         _ => None,
@@ -202,8 +205,22 @@ pub fn parse_sources_with_modules(
                     others.create_sequences(&name, added, &mut taken);
                     // A failing statement may have applied some clauses.
                     let before = tables[index].clone();
-                    match apply_alter(&mut tables[index], &operations, &enums, &taken) {
+                    let mut noted = Vec::new();
+                    match apply_alter(
+                        &mut tables[index],
+                        &operations,
+                        &enums,
+                        (&taken, &constraints),
+                        &mut noted,
+                    ) {
                         Ok(()) => {
+                            let at = match line {
+                                Some(line) => format!("{}:{line}: ", display_path(source.path)),
+                                None => format!("{}: ", display_path(source.path)),
+                            };
+                            warnings.extend(noted.into_iter().map(|warning| {
+                                format!("{at}table `{}`: {warning}", before.sql_name)
+                            }));
                             for operation in &operations {
                                 if let AlterTableOperation::AlterColumn {
                                     column_name,
@@ -385,6 +402,7 @@ pub fn parse_sources_with_modules(
         created,
         source_removed,
         unmatched_modules: unmatched_modules.into_iter().cloned().collect(),
+        warnings,
     })
 }
 

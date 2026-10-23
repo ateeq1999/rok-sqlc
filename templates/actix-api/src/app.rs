@@ -16,9 +16,12 @@ use crate::db::audit_log_entry::models::NewAuditLogEntry;
 use crate::db::pool::init_pool;
 use crate::error::AppError;
 use crate::features::account::{self, AccountService};
+use crate::features::api_keys::{self, ApiKeyService};
 use crate::features::audit_log_entry::AuditLogEntryService;
 use crate::features::auth::service::{AuditEntry, AuditTrail};
 use crate::features::auth::{self, AuthService};
+use crate::features::media::{self, MediaService};
+use crate::features::two_factor::{self, TwoFactorService};
 use crate::features::{configure_all, register_services};
 use crate::openapi::document;
 use crate::shared::health;
@@ -26,6 +29,8 @@ use crate::shared::mail::{Outbox, Sender, Templates, transport};
 use crate::shared::rate_limit::RateLimit;
 use crate::shared::security::breach::{self, BreachCheck};
 use crate::shared::security::jwt::JwtKeys;
+use crate::shared::security::totp::TotpCipher;
+use crate::shared::storage::{self, Storage};
 
 /// What every worker shares, built once: by [`run`], or by a test.
 #[derive(Clone)]
@@ -49,13 +54,25 @@ pub struct AppState {
     /// Where `auth` records what admins do: the `audit_log` feature, or a
     /// test's own.
     pub audit: Arc<dyn AuditTrail>,
+    /// Where uploaded bytes are stored: the store `STORAGE_URL` names,
+    /// opened by [`AppState::new`]; a test may swap in its own with
+    /// [`AppState::with_storage`].
+    pub storage: Arc<dyn Storage>,
+    /// `MEDIA_MAX_UPLOAD_BYTES`.
+    pub media_max_upload_bytes: usize,
+    /// `MEDIA_ALLOWED_TYPES`.
+    pub media_allowed_types: Vec<String>,
+    /// Encrypts two-factor secrets at rest (`TOTP_ENCRYPTION_KEY`).
+    pub totp: Arc<TotpCipher>,
 }
 
 impl AppState {
-    /// The state `config` describes, over `pool`.
-    #[must_use]
-    pub fn new(pool: PgPool, config: &Config) -> Self {
-        AppState {
+    /// The state `config` describes, over `pool`, storing uploads where
+    /// `STORAGE_URL` says (a test configures `memory://`). A store that
+    /// can't be opened, such as a `file://` directory that can't be
+    /// created, is an error.
+    pub fn new(pool: PgPool, config: &Config) -> Result<Self, object_store::Error> {
+        Ok(AppState {
             pool: pool.clone(),
             keys: web::Data::new(JwtKeys::new(&config.jwt_secret, config.jwt_ttl)),
             outbox: web::Data::new(Outbox::new()),
@@ -64,7 +81,18 @@ impl AppState {
             rate_limit: RateLimit::per_minute(config.auth_rate_limit, config.trust_proxy),
             require_verified_email: config.require_verified_email,
             audit: Arc::new(AuditLog(AuditLogEntryService::new(pool))),
-        }
+            storage: storage::open(&config.storage_url)?,
+            media_max_upload_bytes: config.media_max_upload_bytes,
+            media_allowed_types: config.media_allowed_types.clone(),
+            totp: Arc::new(TotpCipher::new(&config.totp_encryption_key)),
+        })
+    }
+
+    /// This state, storing uploads in `storage`.
+    #[must_use]
+    pub fn with_storage(mut self, storage: Arc<dyn Storage>) -> Self {
+        self.storage = storage;
+        self
     }
 }
 
@@ -75,7 +103,7 @@ pub async fn run(config: Config) -> std::io::Result<()> {
         .await
         .map_err(std::io::Error::other)?;
     let mailer = transport::from_config(&config).map_err(std::io::Error::other)?;
-    let state = AppState::new(pool, &config);
+    let state = AppState::new(pool, &config).map_err(std::io::Error::other)?;
     let sender = Sender::new(state.pool.clone(), mailer, &state.outbox);
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let sending = actix_web::rt::spawn(sender.run(async {
@@ -99,30 +127,51 @@ pub async fn run(config: Config) -> std::io::Result<()> {
 /// outbox and templates as app data, every feature's service,
 /// `/health/live` and `/health/ready`, the `OpenAPI` document at
 /// `/api-docs/openapi.json` with Swagger UI at `/docs/`, and every feature's
-/// routes: the hand-written `account` and `auth` first, so that
-/// `/users/me` is not taken for `/users/{id}`. Tests build the same application with
-/// `actix_web::test::init_service(App::new().configure(...))`.
+/// routes: the hand-written `account`, `two_factor` and `auth` first, so
+/// that `/users/me` is not taken for `/users/{id}` and the `/auth` scope
+/// doesn't swallow `/auth/me` or `/auth/2fa`. Tests build the same
+/// application with `actix_web::test::init_service(App::new().configure(...))`.
 pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
     cfg.app_data(web::Data::new(state.pool.clone()))
         .app_data(state.keys.clone())
         .app_data(state.outbox.clone())
         .app_data(state.templates.clone());
     register_services(cfg, &state.pool);
-    cfg.app_data(web::Data::new(AccountService::new(state.pool.clone())))
-        .app_data(web::Data::new(AuthService {
-            pool: state.pool.clone(),
-            keys: state.keys.clone().into_inner(),
-            outbox: state.outbox.clone().into_inner(),
-            templates: state.templates.clone().into_inner(),
-            breach: state.breach.clone(),
-            require_verified_email: state.require_verified_email,
-            audit: state.audit.clone(),
-        }));
+    cfg.app_data(web::Data::new(AccountService::new(
+        state.pool.clone(),
+        state.storage.clone(),
+    )))
+    .app_data(web::Data::new(AuthService {
+        pool: state.pool.clone(),
+        keys: state.keys.clone().into_inner(),
+        outbox: state.outbox.clone().into_inner(),
+        templates: state.templates.clone().into_inner(),
+        breach: state.breach.clone(),
+        require_verified_email: state.require_verified_email,
+        audit: state.audit.clone(),
+    }))
+    .app_data(web::Data::new(TwoFactorService {
+        pool: state.pool.clone(),
+        keys: state.keys.clone().into_inner(),
+        outbox: state.outbox.clone().into_inner(),
+        templates: state.templates.clone().into_inner(),
+        totp: state.totp.clone(),
+    }));
+    cfg.app_data(web::Data::new(MediaService {
+        pool: state.pool.clone(),
+        storage: state.storage.clone(),
+        max_upload_bytes: state.media_max_upload_bytes,
+        allowed_types: state.media_allowed_types.clone(),
+    }));
     health::routes(cfg);
     cfg.service(web::redirect("/docs", "/docs/").see_other())
         .service(SwaggerUi::new("/docs/{_:.*}").url("/api-docs/openapi.json", document()));
+    cfg.app_data(web::Data::new(ApiKeyService::new(state.pool.clone())));
     account::routes(cfg, &state.rate_limit);
+    api_keys::routes(cfg);
+    two_factor::routes(cfg, &state.rate_limit);
     auth::routes(cfg, &state.rate_limit);
+    media::routes(cfg);
     configure_all(cfg);
 }
 

@@ -2,6 +2,7 @@
 
 //! Functions for the annotated queries in the query file.
 
+use super::super::api_keys::models::ApiKeyId;
 use super::super::types;
 use super::super::users::models::UserId;
 
@@ -34,4 +35,64 @@ where
     .bind(id)
     .fetch_optional(executor)
     .await
+}
+
+/// A row returned by `api_key_session`.
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+pub struct ApiKeySessionRow {
+    /// The `id` column.
+    pub id: ApiKeyId,
+    /// The `user_id` column.
+    pub user_id: UserId,
+    /// The `scope` column.
+    pub scope: types::ApiKeyScope,
+    /// The `expires_at` column.
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// The `last_used_at` column.
+    pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// The `revoked_at` column.
+    pub revoked_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// The `is_active` column.
+    pub is_active: bool,
+    /// The `role` column.
+    pub role: types::Role,
+}
+
+/// Runs the `ApiKeySession` query (`:maybe_one`).
+pub async fn api_key_session<'e, E>(
+    executor: E,
+    key_hash: &str,
+) -> Result<Option<ApiKeySessionRow>, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query_as::<_, ApiKeySessionRow>(
+        r#"
+        SELECT k.id, k.user_id, k.scope, k.expires_at, k.last_used_at, k.revoked_at, u.is_active, u.role
+        FROM api_keys k
+        JOIN users u ON u.id = k.user_id
+        WHERE k.key_hash = $1 AND u.deleted_at IS NULL
+        "#,
+    )
+    .bind(key_hash)
+    .fetch_optional(executor)
+    .await
+}
+
+/// Runs the `TouchApiKey` query (`:exec`).
+pub async fn touch_api_key<'e, E>(executor: E, id: ApiKeyId) -> Result<(), sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query(
+        r#"
+        UPDATE api_keys
+        SET last_used_at = now()
+        WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute')
+        "#,
+    )
+    .bind(id)
+    .execute(executor)
+    .await?;
+    Ok(())
 }

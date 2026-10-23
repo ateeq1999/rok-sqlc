@@ -5,6 +5,7 @@ use super::super::audit_log_entry::filter::AuditLogEntryFilter;
 use super::super::auth_tokens::filter::AuthTokenFilter;
 use super::super::media::filter::MediaFilter;
 use super::super::search::{Equality, Ordered, Text, correlate, open_exists, push_null_check};
+use super::super::totp_recovery_codes::filter::TotpRecoveryCodeFilter;
 use super::super::types;
 use super::models::UserId;
 
@@ -76,6 +77,14 @@ pub struct UserFilter {
     pub deleted_at_is_null: Option<bool>,
     /// Conditions on the `token_version` column.
     pub token_version: Vec<Ordered<i32>>,
+    /// Conditions on the `totp_last_step` column.
+    pub totp_last_step: Vec<Ordered<i64>>,
+    /// Whether the `totp_last_step` column is `NULL`.
+    pub totp_last_step_is_null: Option<bool>,
+    /// Conditions on the `avatar_url` column.
+    pub avatar_url: Vec<Text>,
+    /// Whether the `avatar_url` column is `NULL`.
+    pub avatar_url_is_null: Option<bool>,
     /// Matches rows with at least one of their `audit_log_entry_by_actor_user` (`audit_log` rows) matching this filter.
     pub audit_log_entry_by_actor_user: Option<Box<AuditLogEntryFilter>>,
     /// Matches rows with at least one of their `audit_log_entry_by_target_user` (`audit_log` rows) matching this filter.
@@ -86,6 +95,8 @@ pub struct UserFilter {
     pub api_keys: Option<Box<ApiKeyFilter>>,
     /// Matches rows with at least one of their `auth_tokens` (`auth_tokens` rows) matching this filter.
     pub auth_tokens: Option<Box<AuthTokenFilter>>,
+    /// Matches rows with at least one of their `totp_recovery_codes` (`totp_recovery_codes` rows) matching this filter.
+    pub totp_recovery_codes: Option<Box<TotpRecoveryCodeFilter>>,
 }
 
 impl UserFilter {
@@ -178,6 +189,14 @@ impl UserFilter {
         for condition in self.token_version {
             condition.push("token_version", query);
         }
+        for condition in self.totp_last_step {
+            condition.push("totp_last_step", query);
+        }
+        push_null_check("totp_last_step", self.totp_last_step_is_null, query);
+        for condition in self.avatar_url {
+            condition.push("avatar_url", query);
+        }
+        push_null_check("avatar_url", self.avatar_url_is_null, query);
         if let Some(filter) = self.audit_log_entry_by_actor_user {
             let alias = open_exists("audit_log", depth, query)?;
             correlate(&alias, "actor_user_id", outer, "id", query);
@@ -204,6 +223,12 @@ impl UserFilter {
         }
         if let Some(filter) = self.auth_tokens {
             let alias = open_exists("auth_tokens", depth, query)?;
+            correlate(&alias, "user_id", outer, "id", query);
+            filter.push_conditions(&alias, depth + 1, query)?;
+            query.push(")");
+        }
+        if let Some(filter) = self.totp_recovery_codes {
+            let alias = open_exists("totp_recovery_codes", depth, query)?;
             correlate(&alias, "user_id", outer, "id", query);
             filter.push_conditions(&alias, depth + 1, query)?;
             query.push(")");
@@ -250,6 +275,10 @@ pub enum UserSortKey {
     DeletedAt,
     /// Sorts by the `token_version` column.
     TokenVersion,
+    /// Sorts by the `totp_last_step` column.
+    TotpLastStep,
+    /// Sorts by the `avatar_url` column.
+    AvatarUrl,
 }
 
 impl UserSortKey {
@@ -274,6 +303,8 @@ impl UserSortKey {
             Self::UpdatedAt => "updated_at",
             Self::DeletedAt => "deleted_at",
             Self::TokenVersion => "token_version",
+            Self::TotpLastStep => "totp_last_step",
+            Self::AvatarUrl => "avatar_url",
         }
     }
 }

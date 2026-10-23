@@ -25,6 +25,8 @@ pub struct FindLoginRow {
     pub failed_logins: i32,
     /// The `locked_until` column.
     pub locked_until: Option<chrono::DateTime<chrono::Utc>>,
+    /// The `totp_enabled` column.
+    pub totp_enabled: bool,
 }
 
 /// Runs the `FindLogin` query (`:maybe_one`).
@@ -37,7 +39,8 @@ where
 {
     sqlx::query_as::<_, FindLoginRow>(
         r#"
-        SELECT id, password_hash, role, is_active, email_verified, token_version, failed_logins, locked_until
+        SELECT id, password_hash, role, is_active, email_verified, token_version, failed_logins, locked_until,
+            totp_enabled
         FROM users
         WHERE lower(email) = lower($1) AND deleted_at IS NULL
         "#,
@@ -280,6 +283,24 @@ where
     .execute(executor)
     .await?;
     Ok(result.rows_affected())
+}
+
+/// Runs the `RevokeAllApiKeys` query (`:exec`).
+pub async fn revoke_all_api_keys<'e, E>(executor: E, user_id: UserId) -> Result<(), sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query(
+        r#"
+        UPDATE api_keys
+        SET revoked_at = now()
+        WHERE user_id = $1 AND revoked_at IS NULL
+        "#,
+    )
+    .bind(user_id)
+    .execute(executor)
+    .await?;
+    Ok(())
 }
 
 /// Runs the `ChangePassword` query (`:execrows`).

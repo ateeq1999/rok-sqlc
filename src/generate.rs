@@ -47,6 +47,7 @@ fn run(config: &Config, report: &mut Report) -> anyhow::Result<()> {
         &config.modules,
     )
     .context("failed to parse SQL schema")?;
+    report.warnings.append(&mut parsed.warnings);
     if let Some(key) = parsed.unmatched_modules.first() {
         bail!(
             "{} in the configuration names no table of the schema",

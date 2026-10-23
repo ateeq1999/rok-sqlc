@@ -11,6 +11,13 @@
 //! `401`. The role comes from the database, not the token, so a promotion
 //! or demotion applies on the next request; a caller who is not an admin is
 //! a `403` for `AdminUser`. Both answer through [`AppError`].
+//!
+//! An API key stands in for the JWT: `Authorization: Bearer rok_…` (a key
+//! is told apart by its prefix) or `X-API-Key`. It is checked by
+//! [`api_key::authenticate`]: unknown, revoked or expired keys, and keys of
+//! a deleted or disabled account, are a `401`; a `read` key on a method
+//! that isn't safe, and any key on `/api/v1/auth` or `/api/v1/api-keys`, a
+//! `403`. [`AuthUser::credential`] says which one the caller sent.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -24,6 +31,8 @@ use uuid::Uuid;
 use crate::db::queries::session::{SessionStateRow, session_state};
 pub use crate::db::types::Role;
 use crate::error::AppError;
+pub use crate::shared::security::api_key::Credential;
+use crate::shared::security::api_key::{self, Presented};
 pub use crate::shared::security::jwt::{Claims, JwtKeys};
 
 /// A signed-in caller with a live, active account. Take it in a handler to
@@ -34,6 +43,8 @@ pub struct AuthUser {
     pub id: Uuid,
     /// The account's role, from the database.
     pub role: Role,
+    /// How the caller proved who they are: a session or an API key.
+    pub credential: Credential,
 }
 
 /// A signed-in caller whose account has the `admin` role.
@@ -46,10 +57,25 @@ impl FromRequest for AuthUser {
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         let checked = credentials(req);
+        let method = req.method().as_str().to_owned();
+        // The decoded path the router matched, not the raw `req.path()`:
+        // `/api/v1/api%2Dkeys` routes to `/api/v1/api-keys`.
+        let path = req.match_info().as_str().to_owned();
         Box::pin(async move {
-            let (claims, pool) = checked?;
-            let state = session_state(pool.get_ref(), claims.sub.into()).await?;
-            admit(&claims, state)
+            match checked? {
+                Checked::Session(claims, pool) => {
+                    let state = session_state(pool.get_ref(), claims.sub.into()).await?;
+                    admit(&claims, state)
+                }
+                Checked::ApiKey(key, pool) => {
+                    let owner = api_key::authenticate(&pool, &key, &method, &path).await?;
+                    Ok(AuthUser {
+                        id: owner.id,
+                        role: owner.role,
+                        credential: Credential::ApiKey(owner.scope),
+                    })
+                }
+            }
         })
     }
 }
@@ -70,22 +96,33 @@ impl FromRequest for AdminUser {
     }
 }
 
-/// The verified claims of `req`'s bearer token, and the pool to check the
-/// account with.
-fn credentials(req: &HttpRequest) -> Result<(Claims, web::Data<PgPool>), AppError> {
+/// What `req` presents, with the pool to check the account with: the
+/// verified claims of a bearer token, or an API key, still to be checked.
+enum Checked {
+    Session(Claims, web::Data<PgPool>),
+    ApiKey(String, web::Data<PgPool>),
+}
+
+/// The credential `req` presents (see [`Checked`]).
+fn credentials(req: &HttpRequest) -> Result<Checked, AppError> {
     let keys = req
         .app_data::<web::Data<JwtKeys>>()
         .ok_or_else(|| AppError::Internal("`JwtKeys` is not registered as app data".into()))?;
     let pool = req
         .app_data::<web::Data<PgPool>>()
         .ok_or_else(|| AppError::Internal("`PgPool` is not registered as app data".into()))?;
-    let token = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .ok_or_else(|| AppError::Unauthorized("a bearer token is required".to_owned()))?;
-    Ok((keys.decode(token)?, pool.clone()))
+    let value = |name| {
+        req.headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+    };
+    match api_key::presented(
+        value(header::AUTHORIZATION.as_str()),
+        value(api_key::HEADER),
+    )? {
+        Presented::Session(token) => Ok(Checked::Session(keys.decode(token)?, pool.clone())),
+        Presented::ApiKey(key) => Ok(Checked::ApiKey(key.to_owned(), pool.clone())),
+    }
 }
 
 /// The caller of a valid token, given its account's `state` (`None` for no
@@ -99,6 +136,7 @@ fn admit(claims: &Claims, state: Option<SessionStateRow>) -> Result<AuthUser, Ap
     Ok(AuthUser {
         id: claims.sub,
         role: state.role,
+        credential: Credential::Session,
     })
 }
 
@@ -131,7 +169,8 @@ mod tests {
             user,
             AuthUser {
                 id: claims.sub,
-                role: Role::Admin
+                role: Role::Admin,
+                credential: Credential::Session,
             }
         );
         Ok(())

@@ -116,6 +116,7 @@ async fn an_admin_gets_a_user_without_its_hidden_columns() -> TestResult {
     assert_eq!(
         fields,
         [
+            "avatar_url",
             "created_at",
             "display_name",
             "email",

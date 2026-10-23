@@ -18,6 +18,13 @@ pub const MIN_LENGTH: u64 = 8;
 /// work a hash does.
 pub const MAX_LENGTH: u64 = 128;
 
+/// Wrong passwords (or two-factor codes) in a row after which an account
+/// is locked.
+pub const MAX_FAILED_LOGINS: i32 = 5;
+
+/// How long a lock lasts, in minutes.
+pub const LOCK_MINUTES: i32 = 15;
+
 /// An argon2id hash (of a random password nobody knows) with the
 /// parameters [`hash`] uses. [`verify`] checks a sign-in for an unknown
 /// email against it, so the answer takes as long as for a known one and

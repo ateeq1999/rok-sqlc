@@ -10,6 +10,7 @@
 //! | `BIND_ADDR` | `0.0.0.0:8080` | where the server listens |
 //! | `JWT_SECRET` | required | the HS256 key tokens are signed with, at least 32 bytes |
 //! | `JWT_TTL` | 3600 | seconds an issued token lasts |
+//! | `TOTP_ENCRYPTION_KEY` | required | the AES-256 key two-factor secrets are stored under: 32 bytes, base64 |
 //! | `REQUIRE_VERIFIED_EMAIL` | `true` | sign-in needs a verified email |
 //! | `APP_URL` | `http://localhost:8080` | the base of the links mails carry |
 //! | `MAIL_TRANSPORT` | `log` | `log` (mails are logged) or `smtp` |
@@ -18,6 +19,9 @@
 //! | `BREACH_CHECK` | `false` | reject passwords Have I Been Pwned knows |
 //! | `TRUST_PROXY` | `false` | take the client IP from `X-Forwarded-For` |
 //! | `AUTH_RATE_LIMIT` | 20 | requests per minute per IP on `/auth` (`0`: off) |
+//! | `STORAGE_URL` | `file://./storage` | where uploads are stored: `file://<dir>`, `s3://<bucket>` (`AWS_*` settings) or `memory://` |
+//! | `MEDIA_MAX_UPLOAD_BYTES` | 10485760 (10 MiB) | the largest `POST /media` body |
+//! | `MEDIA_ALLOWED_TYPES` | `image/jpeg,image/png,image/webp,image/gif,application/pdf` | the detected types an upload may have |
 //! | `DB_MAX_CONNECTIONS` | 20 | pool size |
 //! | `DB_MIN_CONNECTIONS` | 5 | idle connections kept open |
 //! | `DB_ACQUIRE_TIMEOUT_SECS` | 3 | wait for a connection |
@@ -31,7 +35,12 @@ use std::env;
 use std::str::FromStr;
 use std::time::Duration;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
+
 use crate::db::pool::PoolSettings;
+use crate::shared::security::totp::KEY_BYTES as TOTP_KEY_BYTES;
+use crate::shared::storage::StorageUrl;
 
 /// Where the server listens when `BIND_ADDR` is not set.
 const DEFAULT_BIND_ADDR: &str = "0.0.0.0:8080";
@@ -55,6 +64,19 @@ const DEFAULT_MAIL_FROM: &str = "Axum API <no-reply@localhost>";
 
 /// Requests per minute per IP on `/auth` when `AUTH_RATE_LIMIT` is not set.
 const DEFAULT_AUTH_RATE_LIMIT: u32 = 20;
+
+/// The largest upload when `MEDIA_MAX_UPLOAD_BYTES` is not set: 10 MiB.
+const DEFAULT_MEDIA_MAX_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
+
+/// The detected types an upload may have when `MEDIA_ALLOWED_TYPES` is not
+/// set.
+const DEFAULT_MEDIA_ALLOWED_TYPES: &[&str] = &[
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "application/pdf",
+];
 
 /// The log filter: `RUST_LOG` (such as `debug` or `info,sqlx=warn`), else
 /// [`DEFAULT_LOG_FILTER`]. `main.rs` reads it before [`Config::from_env`].
@@ -83,6 +105,9 @@ pub struct Config {
     pub jwt_secret: String,
     /// `JWT_TTL`: how long an issued token lasts.
     pub jwt_ttl: Duration,
+    /// `TOTP_ENCRYPTION_KEY`: the key two-factor secrets are encrypted
+    /// with at rest (AES-256-GCM).
+    pub totp_encryption_key: [u8; TOTP_KEY_BYTES],
     /// `REQUIRE_VERIFIED_EMAIL`: sign-in answers `403` until the email is
     /// verified.
     pub require_verified_email: bool,
@@ -102,6 +127,13 @@ pub struct Config {
     /// `AUTH_RATE_LIMIT`: requests per minute per IP on `/auth`; `0` turns
     /// the limit off.
     pub auth_rate_limit: u32,
+    /// `STORAGE_URL`: where uploaded files are stored.
+    pub storage_url: StorageUrl,
+    /// `MEDIA_MAX_UPLOAD_BYTES`: the largest upload, in bytes.
+    pub media_max_upload_bytes: usize,
+    /// `MEDIA_ALLOWED_TYPES`: the types, detected from the bytes, an upload
+    /// may have (comma-separated).
+    pub media_allowed_types: Vec<String>,
     /// The pool's size and timeouts, `DB_*`.
     pub pool: PoolSettings,
 }
@@ -123,6 +155,16 @@ pub enum ConfigError {
         len: usize,
         /// The least it may be.
         min: usize,
+    },
+    /// A key is not base64 of the bytes it needs.
+    #[error(
+        "environment variable `{name}` is not {bytes} bytes in base64 (try `openssl rand -base64 {bytes}`)"
+    )]
+    NotAKey {
+        /// The variable.
+        name: &'static str,
+        /// The bytes it needs.
+        bytes: usize,
     },
     /// A variable is not a whole number.
     #[error("environment variable `{name}` is `{value}`, which is not a whole number")]
@@ -190,6 +232,7 @@ impl Config {
             bind_addr: var("BIND_ADDR").unwrap_or_else(|| DEFAULT_BIND_ADDR.to_owned()),
             jwt_secret: vars.secret("JWT_SECRET", MIN_JWT_SECRET_BYTES)?,
             jwt_ttl: Duration::from_secs(vars.number("JWT_TTL")?.unwrap_or(DEFAULT_JWT_TTL_SECS)),
+            totp_encryption_key: vars.key("TOTP_ENCRYPTION_KEY")?,
             require_verified_email: vars.flag("REQUIRE_VERIFIED_EMAIL")?.unwrap_or(true),
             app_url: var("APP_URL").unwrap_or_else(|| DEFAULT_APP_URL.to_owned()),
             mail_transport,
@@ -200,6 +243,29 @@ impl Config {
             auth_rate_limit: vars
                 .number("AUTH_RATE_LIMIT")?
                 .unwrap_or(DEFAULT_AUTH_RATE_LIMIT),
+            storage_url: match var("STORAGE_URL") {
+                Some(url) => url.parse().map_err(|_| ConfigError::NotOneOf {
+                    name: "STORAGE_URL",
+                    value: url,
+                    expected: "file://<dir>, s3://<bucket>, memory://",
+                })?,
+                None => StorageUrl::default_for_development(),
+            },
+            media_max_upload_bytes: vars
+                .number("MEDIA_MAX_UPLOAD_BYTES")?
+                .unwrap_or(DEFAULT_MEDIA_MAX_UPLOAD_BYTES),
+            media_allowed_types: match var("MEDIA_ALLOWED_TYPES") {
+                Some(list) => list
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|kind| !kind.is_empty())
+                    .map(str::to_owned)
+                    .collect(),
+                None => DEFAULT_MEDIA_ALLOWED_TYPES
+                    .iter()
+                    .map(|kind| (*kind).to_owned())
+                    .collect(),
+            },
             pool,
         })
     }
@@ -225,6 +291,20 @@ impl Vars<'_> {
             });
         }
         Ok(value)
+    }
+
+    /// A key that must be set: base64 (standard, padded) of exactly
+    /// [`TOTP_KEY_BYTES`] bytes.
+    fn key(&self, name: &'static str) -> Result<[u8; TOTP_KEY_BYTES], ConfigError> {
+        let value = self.required(name)?;
+        STANDARD
+            .decode(value.trim())
+            .ok()
+            .and_then(|bytes| <[u8; TOTP_KEY_BYTES]>::try_from(bytes).ok())
+            .ok_or(ConfigError::NotAKey {
+                name,
+                bytes: TOTP_KEY_BYTES,
+            })
     }
 
     /// A whole number, when the variable is set.
@@ -268,9 +348,13 @@ mod tests {
         Config::from_vars(|name| vars.get(name).cloned())
     }
 
+    /// Base64 of the 32 bytes `01234567890123456789012345678901`.
+    const TOTP_KEY: &str = "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=";
+
     const REQUIRED: &[(&str, &str)] = &[
         ("DATABASE_URL", "postgres://db"),
         ("JWT_SECRET", "a test secret of at least 32 bytes"),
+        ("TOTP_ENCRYPTION_KEY", TOTP_KEY),
     ];
 
     #[test]
@@ -333,7 +417,14 @@ mod tests {
             )
         );
         let secret = "x".repeat(32);
-        assert!(read(&[("DATABASE_URL", "postgres://db"), ("JWT_SECRET", &secret)]).is_ok());
+        assert!(
+            read(&[
+                ("DATABASE_URL", "postgres://db"),
+                ("JWT_SECRET", &secret),
+                ("TOTP_ENCRYPTION_KEY", TOTP_KEY),
+            ])
+            .is_ok()
+        );
     }
 
     #[test]
@@ -363,5 +454,75 @@ mod tests {
                 "environment variable `MAIL_TRANSPORT` is `carrier-pigeon`, which is not one of log, smtp"
             )
         );
+    }
+
+    #[test]
+    fn the_media_settings_default_and_are_read() -> Result<(), ConfigError> {
+        let config = read(REQUIRED)?;
+        assert_eq!(config.storage_url, StorageUrl::default_for_development());
+        assert_eq!(config.media_max_upload_bytes, 10 * 1024 * 1024);
+        assert_eq!(
+            config.media_allowed_types,
+            [
+                "image/jpeg",
+                "image/png",
+                "image/webp",
+                "image/gif",
+                "application/pdf"
+            ]
+        );
+
+        let mut vars = REQUIRED.to_vec();
+        vars.extend([
+            ("STORAGE_URL", "s3://uploads"),
+            ("MEDIA_MAX_UPLOAD_BYTES", "1024"),
+            ("MEDIA_ALLOWED_TYPES", " image/png , application/pdf,"),
+        ]);
+        let config = read(&vars)?;
+        assert_eq!(config.storage_url, StorageUrl::S3("uploads".to_owned()));
+        assert_eq!(config.media_max_upload_bytes, 1024);
+        assert_eq!(config.media_allowed_types, ["image/png", "application/pdf"]);
+
+        let mut vars = REQUIRED.to_vec();
+        vars.push(("STORAGE_URL", "ftp://files"));
+        let error = read(&vars).err().map(|err| err.to_string());
+        assert_eq!(
+            error.as_deref(),
+            Some(
+                "environment variable `STORAGE_URL` is `ftp://files`, which is not one of file://<dir>, s3://<bucket>, memory://"
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_totp_key_is_32_bytes_in_base64() -> Result<(), ConfigError> {
+        assert_eq!(
+            &read(REQUIRED)?.totp_encryption_key,
+            b"01234567890123456789012345678901"
+        );
+        let refusal = Some(
+            "environment variable `TOTP_ENCRYPTION_KEY` is not 32 bytes in base64 (try `openssl rand -base64 32`)",
+        );
+        for key in [
+            "",
+            "not base64!",
+            "c2hvcnQ=",
+            "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEy",
+        ] {
+            let mut vars = REQUIRED.to_vec();
+            vars.retain(|(name, _)| *name != "TOTP_ENCRYPTION_KEY");
+            vars.push(("TOTP_ENCRYPTION_KEY", key));
+            let error = read(&vars).err().map(|err| err.to_string());
+            assert_eq!(error.as_deref(), refusal, "{key}");
+        }
+        let mut vars = REQUIRED.to_vec();
+        vars.retain(|(name, _)| *name != "TOTP_ENCRYPTION_KEY");
+        let error = read(&vars).err().map(|err| err.to_string());
+        assert_eq!(
+            error.as_deref(),
+            Some("environment variable `TOTP_ENCRYPTION_KEY` is not set")
+        );
+        Ok(())
     }
 }

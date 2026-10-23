@@ -26,3 +26,47 @@ where
     .fetch_optional(executor)
     .await
 }
+
+/// Runs the `LockAvatarKey` query (`:maybe_one`).
+pub async fn lock_avatar_key<'e, E>(
+    executor: E,
+    id: UserId,
+) -> Result<Option<Option<String>>, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query_scalar::<_, Option<String>>(
+        r#"
+        SELECT avatar_key
+        FROM users
+        WHERE id = $1 AND deleted_at IS NULL
+        FOR UPDATE
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(executor)
+    .await
+}
+
+/// Runs the `SetAvatarKey` query (`:maybe_one`).
+pub async fn set_avatar_key<'e, E>(
+    executor: E,
+    id: UserId,
+    avatar_key: Option<&str>,
+) -> Result<Option<super::super::users::models::User>, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query_as::<_, super::super::users::models::User>(
+        r#"
+        UPDATE users
+        SET avatar_key = $2
+        WHERE id = $1 AND deleted_at IS NULL
+        RETURNING *
+        "#,
+    )
+    .bind(id)
+    .bind(avatar_key)
+    .fetch_optional(executor)
+    .await
+}

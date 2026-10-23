@@ -5,9 +5,8 @@
 /// Verbatim snapshot of the input schema; never executed.
 pub const SCHEMA_SQL: &str = r#"-- The schema of the target API (api-starter-axum's OpenAPI document), as
 -- far as generation covers it. `users` and `audit_log` have API features;
--- `media` and `api_keys` are here because the hand-written features of a
--- later release use them, and `rok-sqlc.toml` excludes them from the API
--- for now.
+-- `media` and `api_keys` belong to the hand-written `media` and `api_keys`
+-- features, so `rok-sqlc.toml` excludes them from the generated API.
 
 CREATE TYPE role AS ENUM ('user', 'admin');
 CREATE TYPE api_key_scope AS ENUM ('read', 'write');
@@ -126,4 +125,47 @@ CREATE INDEX outbound_mail_due ON outbound_mail (next_attempt_at) WHERE status =
 
 CREATE TRIGGER outbound_mail_touch_updated_at BEFORE UPDATE ON outbound_mail
     FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+-- Two-factor sign-in (TOTP). `users.totp_secret` (from `0001`) holds the
+-- authenticator secret encrypted with AES-256-GCM under
+-- `TOTP_ENCRYPTION_KEY` (base64 of the nonce, then the ciphertext); it is
+-- set while a setup waits for its first code, and `totp_enabled` turns on
+-- once `POST /auth/2fa/enable` confirms one.
+
+-- The time step of the last code accepted, so a code is never accepted
+-- twice.
+ALTER TABLE users ADD COLUMN totp_last_step BIGINT;
+
+-- Single-use recovery codes, issued when two-factor is enabled. Only the
+-- SHA-256 of each is kept; `used_at` spends it.
+CREATE TABLE totp_recovery_codes (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    code_hash TEXT NOT NULL,
+    used_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX totp_recovery_codes_user ON totp_recovery_codes (user_id);
+
+-- A right password on a two-factor account issues a short-lived
+-- `two_factor_pending` token, which `POST /auth/2fa/verify` spends.
+ALTER TABLE auth_tokens DROP CONSTRAINT auth_tokens_purpose_check;
+ALTER TABLE auth_tokens ADD CONSTRAINT auth_tokens_purpose_check CHECK (
+    purpose IN ('email_verification', 'password_reset', 'email_change',
+                'invitation', 'two_factor_pending')
+);
+-- API keys (the `api_keys` feature). Every request sending a key looks it
+-- up by its hash, and a user's active keys are listed and counted.
+
+CREATE UNIQUE INDEX api_keys_key_hash_key ON api_keys (key_hash);
+
+CREATE INDEX api_keys_user_id_active_idx ON api_keys (user_id) WHERE revoked_at IS NULL;
+-- Profile photos. `avatar_key` (0001) is the photo's storage key,
+-- `avatars/<random>.jpg`, set by `PUT /users/me/avatar`; `avatar_url` is
+-- the public URL every user response answers, `/api/v1/avatars/<random>.jpg`
+-- (`GET /avatars/{file}`), or `NULL` without a photo. Computed here, so
+-- the generated `users` feature answers it too; `rok-sqlc.toml` hides the
+-- key.
+ALTER TABLE users ADD COLUMN avatar_url TEXT
+    GENERATED ALWAYS AS ('/api/v1/' || avatar_key) STORED;
 "#;

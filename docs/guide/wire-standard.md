@@ -118,7 +118,9 @@ The scaffolded `src/error.rs` maps each `AppError` variant to its code and
 status. It is yours: add a variant there for a new error case.
 
 The templates (`init --template actix` or `axum`) add four for their
-account flows:
+account flows, and one for uploads (`POST /api/v1/media`). They also
+answer `413` for an upload over its own limit, and `403` for an API key
+that may not call the route:
 
 | Code | Status | When |
 |---|---|---|
@@ -126,6 +128,9 @@ account flows:
 | `wrong_password` | 400 | the current password a flow asks for again doesn't match |
 | `breached_password` | 400 | a new password appears in a known data breach (`BREACH_CHECK=true`) |
 | `too_many_requests` | 429 | over the `/auth` rate limit, `AUTH_RATE_LIMIT` requests a minute per IP; `Retry-After` gives the seconds to wait |
+| `unsupported_media_type` | 415 | an upload whose type, detected from its bytes, is unknown or not in `MEDIA_ALLOWED_TYPES` |
+| `payload_too_large` | 413 | an upload over `MEDIA_MAX_UPLOAD_BYTES` (10 MiB), or a profile photo over 2 MiB |
+| `forbidden` | 403 | an API key on `/api/v1/auth/*` or `/api/v1/api-keys`, or a `read` key on a method other than `GET`, `HEAD` or `OPTIONS` |
 
 These `400`s are flow failures. A body of the wrong shape (an email that
 isn't one, a password outside 8 to 128 characters) is still a `422
@@ -232,6 +237,21 @@ route called by a user answers `403` with `this needs the admin role`.
 These messages come from your `src/shared/auth.rs`. In the actix template, a valid
 token whose account is deleted or disabled, or was signed out by a password
 change or reset, answers `401` with `the token is no longer valid`.
+
+An API key (the templates) that is unknown, revoked or expired, or whose
+owner is disabled or deleted, answers `401` with `the API key is not
+valid`. A valid key answers `403` on `/api/v1/auth/*` and
+`/api/v1/api-keys`, which need a session:
+
+```http
+HTTP/1.1 403 Forbidden
+content-type: application/json
+
+{"error":{"code":"forbidden","message":"an API key can't reach this; sign in instead"}}
+```
+
+and a `read` key answers `403` with `a read API key may only GET, HEAD or
+OPTIONS` on any other method.
 
 ### 404: no such row
 
@@ -359,6 +379,33 @@ content-type: application/json
 
 {"error":{"code":"payload_too_large","message":"the request body is over the size limit"}}
 ```
+
+The templates' uploads name their own limit, in the wire standard's body
+rather than the framework's plain text:
+
+```http
+HTTP/1.1 413 Payload Too Large
+content-type: application/json
+
+{"error":{"code":"payload_too_large","message":"the file is larger than 10485760 bytes"}}
+```
+
+A profile photo over 2 MiB says `the image is larger than 2097152 bytes`.
+
+### 415: unsupported media type (the templates)
+
+An upload's type is detected from its bytes, never from `Content-Type` or
+its name. One that isn't recognised, or isn't in `MEDIA_ALLOWED_TYPES`,
+answers:
+
+```http
+HTTP/1.1 415 Unsupported Media Type
+content-type: application/json
+
+{"error":{"code":"unsupported_media_type","message":"files of type application/vnd.microsoft.portable-executable are not accepted"}}
+```
+
+Bytes of no type it knows say `the file type could not be recognized`.
 
 ### 500: everything else
 

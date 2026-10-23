@@ -35,6 +35,10 @@ pub type TestResult = Result<(), Box<dyn std::error::Error>>;
 /// The JWT secret the test application verifies tokens with.
 const SECRET: &str = "a test secret of at least 32 bytes";
 
+/// The `TOTP_ENCRYPTION_KEY` the test application encrypts two-factor
+/// secrets with: base64 of 32 bytes.
+pub const TOTP_KEY: &str = "dGVzdCBrZXkgb2YgZXhhY3RseSB0aGlydHktdHdvIGI=";
+
 /// The `APP_URL` the test application's mailed links start with.
 pub const APP_URL: &str = "http://app.test";
 
@@ -140,6 +144,36 @@ pub async fn call_with(
     Ok(Answer { status, body })
 }
 
+/// Sends `method uri` like [`call`], with `headers` (name, value) instead
+/// of a bearer token: an `X-API-Key`, say.
+pub async fn call_headers(
+    pool: &PgPool,
+    headers: &[(&str, &str)],
+    method: Method,
+    uri: &str,
+    body: Option<Value>,
+) -> Result<Answer, Box<dyn std::error::Error>> {
+    let mut request = Request::builder().method(method).uri(uri);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    let request = match body {
+        Some(body) => request
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_vec(&body)?))?,
+        None => request.body(Body::empty())?,
+    };
+    let response = router(state(pool)?).oneshot(request).await?;
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await?;
+    let body = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes)?
+    };
+    Ok(Answer { status, body })
+}
+
 /// The keys the test application signs and verifies tokens with.
 pub fn keys() -> JwtKeys {
     JwtKeys::new(SECRET, Duration::from_secs(3600))
@@ -186,14 +220,17 @@ pub async fn user(pool: &PgPool) -> Result<String, Box<dyn std::error::Error>> {
 }
 
 /// The settings the test application runs with: [`SECRET`] for 1h tokens,
-/// links under [`APP_URL`] and the defaults, with `overrides` (such as
+/// links under [`APP_URL`], uploads in memory (`memory://`) and the
+/// defaults, with `overrides` (such as
 /// `("REQUIRE_VERIFIED_EMAIL", "false")`) set on top.
 pub fn config(overrides: &[(&str, &str)]) -> Result<Config, Box<dyn std::error::Error>> {
     let mut vars: HashMap<&str, &str> = HashMap::from([
         ("DATABASE_URL", "postgres://unused"),
         ("JWT_SECRET", SECRET),
+        ("TOTP_ENCRYPTION_KEY", TOTP_KEY),
         ("JWT_TTL", "3600"),
         ("APP_URL", APP_URL),
+        ("STORAGE_URL", "memory://"),
     ]);
     vars.extend(overrides.iter().copied());
     Ok(Config::from_vars(|name| {
@@ -212,7 +249,7 @@ pub fn state_with(
     pool: &PgPool,
     overrides: &[(&str, &str)],
 ) -> Result<AppState, Box<dyn std::error::Error>> {
-    Ok(AppState::new(pool.clone(), &config(overrides)?))
+    Ok(AppState::new(pool.clone(), &config(overrides)?)?)
 }
 
 /// Delivers every due mail in `pool`'s outbox, as the sender would, and
@@ -289,5 +326,125 @@ pub async fn register_verified(
     match answer.body["access_token"].as_str() {
         Some(token) => Ok(token.to_owned()),
         None => Err(format!("login answered {}: {}", answer.status, answer.body).into()),
+    }
+}
+
+/// One answer as bytes: its status, its headers (names lowercase) and its
+/// body, for routes that don't answer JSON.
+#[derive(Debug)]
+pub struct Raw {
+    pub status: StatusCode,
+    pub headers: HashMap<String, String>,
+    pub bytes: Vec<u8>,
+}
+
+impl Raw {
+    /// The body as JSON (`Null` when empty).
+    pub fn json(&self) -> Result<Value, serde_json::Error> {
+        if self.bytes.is_empty() {
+            Ok(Value::Null)
+        } else {
+            serde_json::from_slice(&self.bytes)
+        }
+    }
+
+    /// The header `name` (lowercase), if answered.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).map(String::as_str)
+    }
+}
+
+/// Sends `method uri` with the bearer `token`, the `headers` and the raw
+/// `body` to the application over `state`, and answers bytes.
+pub async fn send(
+    state: &AppState,
+    token: Option<&str>,
+    method: Method,
+    uri: &str,
+    headers: &[(&str, &str)],
+    body: Vec<u8>,
+) -> Result<Raw, Box<dyn std::error::Error>> {
+    let mut request = Request::builder().method(method).uri(uri);
+    if let Some(token) = token {
+        request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    let request = request
+        .header(header::CONTENT_LENGTH, body.len())
+        .body(Body::from(body))?;
+    let response = router(state.clone()).oneshot(request).await?;
+    let status = response.status();
+    let headers = response
+        .headers()
+        .iter()
+        .filter_map(|(name, value)| {
+            Some((name.as_str().to_owned(), value.to_str().ok()?.to_owned()))
+        })
+        .collect();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await?.to_vec();
+    Ok(Raw {
+        status,
+        headers,
+        bytes,
+    })
+}
+
+/// A [`Storage`](axum_api::shared::storage::Storage) in memory that knows
+/// which keys hold an object: swap it in with `AppState::with_storage`,
+/// and read [`Recorded::keys`] to see what was left behind.
+#[derive(Clone)]
+pub struct Recorded {
+    inner: axum_api::shared::storage::ObjectStorage,
+    keys: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
+}
+
+impl Recorded {
+    /// An empty store.
+    pub fn new() -> Self {
+        Recorded {
+            inner: axum_api::shared::storage::ObjectStorage::memory(),
+            keys: Arc::default(),
+        }
+    }
+
+    /// The keys holding an object now.
+    pub fn keys(&self) -> Vec<String> {
+        self.keys
+            .lock()
+            .map(|keys| keys.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+}
+
+#[async_trait::async_trait]
+impl axum_api::shared::storage::Storage for Recorded {
+    async fn put(
+        &self,
+        key: &str,
+        bytes: bytes::Bytes,
+        content_type: &str,
+    ) -> Result<(), axum_api::error::AppError> {
+        self.inner.put(key, bytes, content_type).await?;
+        if let Ok(mut keys) = self.keys.lock() {
+            keys.insert(key.to_owned());
+        }
+        Ok(())
+    }
+
+    async fn get(
+        &self,
+        key: &str,
+    ) -> Result<Option<axum_api::shared::storage::StoredObject>, axum_api::error::AppError> {
+        self.inner.get(key).await
+    }
+
+    async fn delete(&self, key: &str) -> Result<(), axum_api::error::AppError> {
+        self.inner.delete(key).await?;
+        if let Ok(mut keys) = self.keys.lock() {
+            keys.remove(key);
+        }
+        Ok(())
     }
 }

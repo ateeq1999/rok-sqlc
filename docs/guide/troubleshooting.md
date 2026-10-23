@@ -275,6 +275,23 @@ Error: schema directory `migrations` contains no `*.sql` migrations
 
 A fresh `init` project: write a migration first.
 
+### A constraint the model doesn't track
+
+```text
+warning: migrations/0002_nullable.sql:2: table `bookings`: DROP CONSTRAINT: constraint `bookings_room_not_null` is not one rok-sqlc tracks (such as an EXCLUDE or NOT NULL constraint); the statement changes nothing in the generated code
+```
+
+rok-sqlc follows `DROP CONSTRAINT` for primary keys, unique constraints,
+foreign keys and checks. Any other name, such as an `EXCLUDE` constraint
+or the `<table>_<column>_not_null` constraints PostgreSQL 18 names, is
+skipped with this warning, and generation goes on. If the statement
+changes a column (dropping a NOT NULL constraint makes it nullable), say so
+the way rok-sqlc reads: `ALTER TABLE bookings ALTER COLUMN room DROP NOT
+NULL`. `DROP CONSTRAINT IF EXISTS` skips an unknown name silently.
+`RENAME CONSTRAINT` of an unknown name fails its table
+(``RENAME CONSTRAINT: constraint `x` does not exist``), unless the name has the form
+of an untracked kind (`…_not_null`, `…_excl`), which warns.
+
 ### A file that isn't rok-sqlc's
 
 ```text
@@ -492,6 +509,39 @@ easier to guess than the signature is to forge. Generate one with the
 command it names and keep it secret: whoever holds it can sign tokens.
 
 ```text
+error: environment variable `TOTP_ENCRYPTION_KEY` is not set
+```
+
+```text
+error: environment variable `TOTP_ENCRYPTION_KEY` is not 32 bytes in base64 (try `openssl rand -base64 32`)
+```
+
+The templates seal two-factor secrets with this key, and derive the
+recovery codes' HMAC key from it, so they don't start without one:
+exactly 32 random bytes, standard base64 (44 characters ending in `=`).
+Generate it once, keep it with `JWT_SECRET`, and never change it on a
+running system: secrets and recovery codes stored under the old key no
+longer match ([Accounts](auth.md#two-factor-sign-in)).
+
+```text
+error: environment variable `STORAGE_URL` is `storage`, which is not one of file://<dir>, s3://<bucket>, memory://
+```
+
+The templates' uploads go where `STORAGE_URL` says: `file://./storage`
+(relative to the working directory), `file:///srv/uploads`,
+`s3://<bucket>` with no path, or `memory://`
+([Files and storage](files.md#storage)).
+
+```text
+error: Generic LocalFileSystem error: Cannot create a file when that file already exists. (os error 183)
+```
+
+The `file://` directory couldn't be created or opened: here it names a
+file (the message is Windows'; other systems word it their way). The application opens the store at startup and stops when it can't.
+An `s3://` bucket is only reached on the first upload: wrong credentials
+or region show then, as a `500` with the cause in the log.
+
+```text
 error: environment variable `SMTP_URL` is not set
 ```
 
@@ -588,3 +638,22 @@ the slow query, move the work out of the request, or raise the timeout in
 route path without the parameters its handler's `Path` takes (`/notes`
 for `Path<Uuid>`, say) is a wiring bug, not the caller's: the log has
 `internal error` with axum's rejection. Give the route its `{id}`.
+
+**An API key answers `403` with `an API key can't reach this; sign in
+instead`.** Keys never reach `/api/v1/auth/*` or `/api/v1/api-keys`,
+however the path is spelled: sign in for those. `a read API key may only
+GET, HEAD or OPTIONS` means the key's scope is `read`; make a `write` key
+([Accounts](auth.md#api-keys)).
+
+**An API key answers `401` with `the API key is not valid`.** It is
+unknown, revoked or expired, or its owner is disabled or deleted. A
+password reset revokes every key of the account.
+
+**Sign-in answers `requires_totp` instead of a token.** The account has
+two-factor on: post the `pending_token` with a code to
+`/api/v1/auth/2fa/verify` within 5 minutes. A `401` there is a wrong or
+already-used code (each code works once), and counts toward the lockout.
+
+**Every session stopped working after turning two-factor off.** That is
+on purpose: disabling two-factor signs every session out, like a password
+change. Sign in again.
